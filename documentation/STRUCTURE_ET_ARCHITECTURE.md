@@ -145,8 +145,8 @@ alexandria/
 │
 ├── documentation/
 │   ├── STRUCTURE_ET_ARCHITECTURE.md   # Ce fichier
-│   ├── PIPELINE_VEILLE.md             # Pipeline veille détaillée (étapes, décisions, flux)
-│   ├── RAG_REFERENCE.md               # Référence module RAG (ingestion, recherche, génération)
+│   ├── PIPELINE_VEILLE_CONSOLIDE.md   # Pipeline veille (étapes, décisions, flux)
+│   ├── BACK_RAG.md                    # Back RAG (ingestion, recherche, génération, paramètres)
 │   └── HISTORIQUE_DECISIONS.md        # Synthèse des choix
 │
 ├── public/
@@ -221,5 +221,5 @@ Sources très variées → scraping **le plus intelligent possible**, tout en ma
 ## 6. Suite après validation
 
 - **Structure de dossiers et fichiers squelettes** : créée (app, lib, components, api, documentation).
-- **Doc Veille** : voir **PIPELINE_VEILLE.md** pour la pipeline détaillée (étapes, décisions, flux).
+- **Doc Veille** : voir **PIPELINE_VEILLE_CONSOLIDE.md** pour la pipeline détaillée (étapes, décisions, flux).
 - Prochaines étapes : schéma SQL détaillé (migrations Supabase) si besoin ; implémentation par brique : auth → documents/upload → ingestion → RAG → veille.
