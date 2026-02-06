@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+.next/
+out/
+build/
+dist/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# PDFs (dossier local, ne pas versionner le contenu)
+data/pdfs/*.pdf
+
+# Script ingestion (fichier temporaire OCR)
+.tmp_ocr_page.png
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.log
+npm-debug.log*
