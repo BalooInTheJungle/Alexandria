@@ -77,19 +77,14 @@ Segments de documents pour le RAG (FTS + vector). Contenu **anglais** (original)
 | section_title | text           | Ex. "Introduction" (optionnel)              |
 | embedding     | vector(384)    | Embedding du contenu EN (all-MiniLM-L6-v2) |
 | content_tsv   | tsvector       | FTS **anglais**, maintenu par trigger      |
+| content_fr     | text           | Traduction française (ingestion, opus-mt-en-fr) |
+| embedding_fr   | vector(384)    | Embedding du texte français (même modèle)   |
+| content_fr_tsv | tsvector       | FTS **french**, maintenu par trigger       |
 | created_at    | timestamptz    |                                            |
 
-**Prévision bilingue FR/EN** (migrations à venir) :
+**Index** : GIN sur content_tsv et content_fr_tsv ; HNSW sur embedding et embedding_fr.
 
-| Colonne        | Type           | Description                                  |
-|----------------|----------------|----------------------------------------------|
-| content_fr     | text           | Traduction française (ingestion, local)      |
-| embedding_fr   | vector(384)    | Embedding du texte français                  |
-| content_fr_tsv | tsvector       | FTS **french**, maintenu par trigger         |
-
-**Index** : GIN sur content_tsv ; HNSW sur embedding. Prévision : GIN sur content_fr_tsv ; HNSW sur embedding_fr.
-
-**RPC** : `match_chunks` (vector EN), `search_chunks_fts` (FTS english). Prévision : `match_chunks_fr`, `search_chunks_fts_fr`.
+**RPC** : `match_chunks` (vector EN), `search_chunks_fts` (FTS english) ; `match_chunks_fr` (vector FR), `search_chunks_fts_fr` (FTS french).
 
 ---
 
@@ -192,7 +187,7 @@ Paramètres RAG modifiables depuis le panneau admin (clé/valeur).
 | 11 | 20260205100003_rag_settings.sql | Table rag_settings (paramètres RAG). |
 | 12 | 20260205100004_search_chunks_fts.sql | RPC search_chunks_fts (FTS english). |
 | 13 | 20260205100005_rag_settings_hybrid.sql | Clés hybride (fts_weight, vector_weight, rrf_k, hybrid_top_k). |
-| 14 | *(À créer)* | Bilingue FR/EN : colonnes chunks (content_fr, embedding_fr, content_fr_tsv), trigger FTS french, index, RPC match_chunks_fr, search_chunks_fts_fr. |
+| 14 | 20260206100000_chunks_bilingue_fr.sql | Bilingue FR/EN : colonnes content_fr, embedding_fr, content_fr_tsv ; trigger FTS french ; index GIN/HNSW ; RPC match_chunks_fr, search_chunks_fts_fr. |
 
 **Rétention 30 jours** : job/cron supprimant les lignes de `conversations` (et en cascade `messages`) où `updated_at` < now() - interval '30 days'. Pas de notification utilisateur. Voir **BACK_RAG.md** §10 pour les options (Vercel Cron, script manuel).
 

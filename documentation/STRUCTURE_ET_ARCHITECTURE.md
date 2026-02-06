@@ -113,10 +113,12 @@ alexandria/
 │   │   ├── veille.ts
 │   │   └── types.ts
 │   ├── rag/                      # Pipeline RAG
-│   │   ├── search.ts             # FTS + vector + fusion (RRF / pondérée)
-│   │   ├── rerank.ts             # Optionnel
-│   │   ├── embed.ts              # Appel embeddings (Ollama / API)
-│   │   └── citations.ts          # Format réponses sourcées
+│   │   ├── detect-lang.ts        # Détection heuristique FR/EN (requête)
+│   │   ├── search.ts             # FTS + vector + RRF ; selon lang → match_chunks(_fr) + search_chunks_fts(_fr)
+│   │   ├── embed.ts              # Embeddings 384D (Xenova/all-MiniLM-L6-v2)
+│   │   ├── openai.ts             # Génération LLM + instruction langue (FR/EN)
+│   │   ├── citations.ts         # Format réponses sourcées
+│   │   └── settings.ts           # Lecture rag_settings
 │   ├── veille/                    # Pipeline veille (sources 100 % en DB, pas de config fichier)
 │   │   ├── sources.ts            # Récup liste sources depuis Supabase
 │   │   ├── fetch-source-pages.ts # Récup HTML des pages sources (URLs en DB)
@@ -212,7 +214,7 @@ Sources très variées → scraping **le plus intelligent possible**, tout en ma
 
 ## 5. Flux principaux (rappel)
 
-- **RAG** : Requête → embedding → FTS + recherche vectorielle → fusion → (rerank) → sélection context → LLM → réponses + citations + lien Storage PDF.
+- **RAG** : Requête → **détection langue** (fr/en) → embedding → FTS + vector (EN ou FR selon lang) → fusion RRF → context → LLM (instruction « Réponds en français » / « en anglais ») → réponses + citations + lien Storage PDF.
 - **Veille** : Bouton UI → job asynchrone → lecture sources depuis Supabase → fetch HTML pages sources → nettoyage HTML → extraction URLs → **guardrails** (dédup DOI vs DB, pré-filtre URLs avant LLM) → LLM filtre URLs (pages articles uniquement) → pour chaque page article : pré-nettoyage bloc article → LLM extrait titre, auteurs, DOI, abstract, date (schéma fixe) ; skip + log en cas d’erreur → embedding abstract → **similarité vs DB vectorielle** → écriture `veille_items` (last_error si échec) → front affiche liste rankée avec URL.
 - **Documents / Ingestion RAG** : PDFs déposés dans **data/pdfs/** → processus d’ingestion lancé **à la main** → lecture du dossier, parse PDF (métadonnées extraites depuis le PDF), chunking, embeddings → écriture `documents` + `chunks` en base. `storage_path` = chemin relatif vers le fichier. Recherche possible ensuite par titre, DOI, auteurs. (À terme : possibilité d’ajouter des documents via l’interface.)
 
