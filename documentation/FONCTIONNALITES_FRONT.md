@@ -19,7 +19,7 @@
 ### 2.1 Requête et langue
 
 - **Un seul champ de saisie** : l’utilisateur tape sa question **en français ou en anglais** sans choisir la langue dans l’UI.
-- **Détection côté back** : la langue est détectée **sur le texte de la requête** (avant toute recherche). Le front envoie simplement la requête ; il n’y a **pas de sélecteur de langue** à afficher.
+- **Détection côté back** : la langue est détectée **sur le texte de la requête** (avant toute recherche), via `lib/rag/detect-lang.ts` (heuristique FR/EN). Le front envoie simplement la requête ; il n’y a **pas de sélecteur de langue** à afficher.
 - **Réponse dans la même langue** : le back renvoie une réponse **toujours dans la langue de la requête** (FR ou EN). L’utilisateur voit donc sa question et la réponse dans la même langue, sans action de sa part.
 - **Sources (excerpts)** : les extraits affichés dans les citations sont **dans la même langue** que la réponse (contenu EN ou FR selon la détection). Les métadonnées (titre, DOI, section, page) restent celles du document.
 

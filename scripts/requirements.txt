@@ -1,7 +1,9 @@
-# Ingestion Alexandria: PDF + OCR + embeddings + Supabase
+# Ingestion Alexandria: PDF + OCR + embeddings + traduction EN→FR + Supabase
 pymupdf>=1.24.0
 pytesseract>=0.3.10
 pdf2image>=1.17.0
 sentence-transformers>=2.2.0
 supabase>=2.0.0
 python-dotenv>=1.0.0
+transformers>=4.30.0
+torch>=2.0.0

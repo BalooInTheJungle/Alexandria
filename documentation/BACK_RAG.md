@@ -8,12 +8,12 @@
 
 | Thème | Fait | À faire | Priorité |
 |-------|------|---------|----------|
-| **Recherche hybride (FTS + vector + RRF)** | FTS (search_chunks_fts) + vector (match_chunks) + fusion RRF ; paramètres dans rag_settings (fts_weight, vector_weight, rrf_k, hybrid_top_k). | — | — (en place) |
-| **API Chat** | POST /api/rag/chat (query, conversationId, stream) ; garde-fou ; chargement N derniers messages ; persistance ; streaming SSE. | — | — (en place) |
+| **Recherche hybride (FTS + vector + RRF)** | FTS + vector + RRF ; selon lang : match_chunks/search_chunks_fts (EN) ou match_chunks_fr/search_chunks_fts_fr (FR). | — | — (en place) |
+| **API Chat** | POST /api/rag/chat ; détection langue ; garde-fou ; N derniers messages ; persistance ; streaming SSE. | — | — (en place) |
 | **Garde-fou hors domaine** | Seuil (similarity_threshold), message (guard_message) ; pas d’appel LLM si best_similarity < seuil ; enregistrement message user + assistant en base. | Panneau admin pour modifier seuil et message sans SQL. | **P2** |
-| **Ingestion PDF** | Script Python (ingest.py) : PyMuPDF, OCR fallback, chunking par section, embeddings 384D (all-MiniLM-L6-v2), écriture chunks + content_tsv (english). | Traduction locale EN→FR ; content_fr, embedding_fr, content_fr_tsv (french) ; voir Bilingue. | **P1** (avec bilingue) |
-| **Bilingue FR/EN** | — | Détection langue requête ; double index (content_fr, embedding_fr, FTS french) ; RPC match_chunks_fr, search_chunks_fts_fr ; pipeline EN vs FR ; instruction « Réponds en français » / « Réponds en anglais » dans le prompt. | **P1** |
-| **Génération (LLM)** | OpenAI (gpt-4o-mini), contexte (chunks) + historique (N tours) + question ; citations [1], [2] ; streaming. | Ajouter instruction de langue (FR/EN) selon détection (lié bilingue). | **P1** (avec bilingue) |
+| **Ingestion PDF** | Script Python (ingest.py) : PyMuPDF, OCR, chunking, embeddings 384D ; traduction EN→FR (opus-mt-en-fr), content_fr, embedding_fr, content_fr_tsv (trigger french). | — | — (en place) |
+| **Bilingue FR/EN** | Détection heuristique (detect-lang.ts) ; colonnes + RPC FR ; pipeline EN/FR (search.ts) ; instruction langue (openai.ts). | — | — (en place) |
+| **Génération (LLM)** | OpenAI (gpt-4o-mini), contexte + historique + question ; citations [1], [2] ; streaming ; instruction FR/EN selon lang. | — | — (en place) |
 | **Conversations et messages** | Tables conversations, messages ; getOrCreateConversation, insertMessage, getLastMessages ; titre = troncature premier message. | GET /api/rag/conversations ; GET /api/rag/conversations/[id]/messages (pagination cursor) ; PATCH titre ; DELETE conversation. | **P2** |
 | **Paramétrage dynamique (admin)** | Lecture rag_settings (context_turns, similarity_threshold, guard_message, match_count, match_threshold, fts_weight, vector_weight, rrf_k, hybrid_top_k). | API ou page pour lire/écrire rag_settings ; description par paramètre dans l’UI ; validation (bornes). | **P2** |
 | **Rétention 30 jours** | — | Job/cron ou route API (ex. Vercel Cron) supprimant les conversations où updated_at < now() - 30 days ; doc. | **P3** |
@@ -25,10 +25,11 @@
 ### 2.1 Flux actuel (un message utilisateur)
 
 1. Réception **query** (+ optionnel **conversationId**, **stream**).  
-2. **Chargement** des N derniers messages de la conversation (si conversationId) ; N = `rag_settings.context_turns` (ex. 3).  
-3. **Recherche** : embedding de la requête → match_chunks + search_chunks_fts → fusion RRF → top-K chunks ; lecture **bestVectorSimilarity** (premier résultat vectoriel).  
-4. **Garde-fou** : si bestVectorSimilarity < `similarity_threshold` → retour du **guard_message** (pas d’appel OpenAI) ; enregistrement message user + message assistant (garde-fou) en base.  
-5. **Sinon** : construction du prompt (system + N derniers messages + contexte chunks + question) → appel OpenAI Chat Completions (stream ou non) → envoi au client ; à la fin du stream, enregistrement message assistant (content + sources) en base.
+2. **Détection de langue** : heuristique sur la requête → `lang = 'fr' | 'en'` (lib/rag/detect-lang.ts).  
+3. **Chargement** des N derniers messages (si conversationId) ; N = `rag_settings.context_turns`.  
+4. **Recherche** : embedding → selon lang, match_chunks + search_chunks_fts (EN) ou match_chunks_fr + search_chunks_fts_fr (FR) → fusion RRF → top-K chunks ; **bestVectorSimilarity**.  
+5. **Garde-fou** : si bestVectorSimilarity < `similarity_threshold` → retour du **guard_message** (pas d’appel OpenAI) ; enregistrement message user + message assistant (garde-fou) en base.  
+6. **Sinon** : prompt (system + instruction « Réponds en français » / « Réponds en anglais » selon lang + N messages + contexte + question) → OpenAI (stream ou non) ; enregistrement message assistant (content + sources) en base.
 
 ### 2.2 Route et paramètres
 
@@ -41,19 +42,20 @@
 
 ## 3. Recherche hybride (détail)
 
-- **Vector** : RPC `match_chunks(query_embedding, match_threshold, match_count)` sur `chunks.embedding` (384D, cosinus).  
-- **FTS** : RPC `search_chunks_fts(query_text, match_limit)` sur `chunks.content_tsv` (config english).  
-- **Fusion** : RRF dans `lib/rag/search.ts` ; paramètres `fts_weight`, `vector_weight`, `rrf_k`, `hybrid_top_k` (rag_settings).  
+- **Détection langue** : `lib/rag/detect-lang.ts` → `detectQueryLanguage(query)` retourne `'fr'` ou `'en'`.  
+- **Vector** : selon `lang`, RPC `match_chunks` (EN, sur `chunks.embedding`) ou `match_chunks_fr` (FR, sur `chunks.embedding_fr`) ; même signature (query_embedding 384D, match_threshold, match_count).  
+- **FTS** : selon `lang`, RPC `search_chunks_fts` (EN, `content_tsv`, config english) ou `search_chunks_fts_fr` (FR, `content_fr_tsv`, `plainto_tsquery('french', query_text)`).  
+- **Fusion** : RRF dans `lib/rag/search.ts` ; paramètres `fts_weight`, `vector_weight`, `rrf_k`, `hybrid_top_k` (rag_settings). Les chunks retournés ont le bon champ texte (content ou content_fr) pour contexte et citations.  
 - **Garde-fou** : on utilise la **meilleure similarité vectorielle** (avant fusion) pour comparer au `similarity_threshold`.
 
 ---
 
-## 4. Bilingue FR/EN (à implémenter)
+## 4. Bilingue FR/EN (implémenté)
 
 ### 4.1 Détection de la langue
 
-- **Où** : côté back (API chat), **avant** toute recherche.  
-- **Comment** : analyser **uniquement le texte de la requête** → `lang = 'fr' | 'en'`. Pas de décision selon les chunks qui matchent.  
+- **Fichier** : `lib/rag/detect-lang.ts`.  
+- **Fonction** : `detectQueryLanguage(query)` → `'fr' | 'en'`. Heuristique : accents français, mots-outils FR vs EN ; défaut `'en'`. Appelée dans la route chat avant la recherche.  
 - **Implémentation recommandée** : heuristique (accents, mots courants FR vs EN) ; défaut en cas d’ambiguïté : `'en'`.
 
 ### 4.2 Deux pipelines
@@ -64,9 +66,7 @@
 
 ### 4.3 Ingestion (bilingue)
 
-- Pour chaque chunk : **traduction locale** EN→FR (modèle Hugging Face, ex. Helsinki-NLP/opus-mt-en-fr) → `content_fr`.  
-- Calcul **embedding_fr** (même modèle sur content_fr) ; trigger FTS french sur `content_fr_tsv`.  
-- Ré-ingestion nécessaire après ajout des colonnes et des RPC (migration dédiée).
+- **Script** : `scripts/ingest.py`. Traduction EN→FR (Helsinki-NLP/opus-mt-en-fr, batches) ; **embedding_fr** = même modèle sentence-transformers sur content_fr. Insertion content_fr, embedding_fr ; triggers remplissent content_fr_tsv. **Migration** : `20260206100000_chunks_bilingue_fr.sql`. Ré-ingestion des PDF après migration pour remplir content_fr / embedding_fr.
 
 ---
 
@@ -79,9 +79,11 @@
 3. **Métadonnées** : titre (XMP ou première grosse ligne), DOI (regex sur les 10k premiers caractères).  
 4. Insert **document** (status = processing).  
 5. **Chunking** : sections (Abstract, Introduction, Methods, Results, Discussion, Conclusion, References, Acknowledgments) ; à l’intérieur d’une section, blocs CHUNK_SIZE (600) avec CHUNK_OVERLAP (100). Fallback : 1 chunk = texte tronqué à 8000 caractères. **Nettoyage** : `clean_text_for_db` (remplace `\x00` et `\u0000` par un espace) sur full_text, métadonnées, content et section_title avant insertion.  
-6. **Embeddings** : sentence-transformers all-MiniLM-L6-v2, batch ; dimension 384.  
-7. **Écriture** : insert chunks (content, document_id, position, page, section_title, embedding) ; content_tsv par trigger Postgres ; update document (status = done, ingestion_log).  
-- **Stockage PDF** : dossier **data/pdfs/** (fichiers `*.pdf` ignorés par Git) ; `documents.storage_path` = chemin relatif (ex. `data/pdfs/nom.pdf`). Pas de Supabase Storage en POC.
+6. **Embeddings EN** : sentence-transformers all-MiniLM-L6-v2, batch ; dimension 384.  
+7. **Traduction EN→FR** : pipeline Hugging Face (Helsinki-NLP/opus-mt-en-fr), batches de 8 ; troncature ~512 tokens.  
+8. **Embeddings FR** : même modèle sur les textes français → embedding_fr.  
+9. **Écriture** : insert chunks (content, embedding, content_fr, embedding_fr, document_id, position, page, section_title) ; content_tsv et content_fr_tsv par triggers ; update document (status = done, ingestion_log).  
+- **Stockage PDF** : **data/pdfs/** ; `documents.storage_path` = chemin relatif. Pas de Supabase Storage en POC.
 
 ### 5.2 Paramètres (ingest.py)
 

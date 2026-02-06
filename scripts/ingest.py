@@ -4,7 +4,8 @@ Ingestion Alexandria : data/pdfs/ → documents + chunks (Supabase).
 - Parse PDF (PyMuPDF), fallback OCR si peu de texte (PDF scanné).
 - Métadonnées extraites du PDF.
 - Chunking par section ou par taille.
-- Embeddings sentence-transformers (384D).
+- Embeddings sentence-transformers (384D) pour content et content_fr.
+- Traduction EN→FR (Helsinki-NLP/opus-mt-en-fr) pour content_fr.
 """
 import os
 import re
@@ -29,6 +30,8 @@ EMBED_DIM = 384
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
 MIN_TEXT_PER_PAGE = 50  # en dessous, on tente l'OCR pour cette page
+TRANSLATE_BATCH_SIZE = 8  # opus-mt-en-fr par batch
+MAX_INPUT_LENGTH_TRANSLATE = 512  # tokens environ, tronquer pour le traducteur
 
 
 def get_supabase():
@@ -49,6 +52,23 @@ def clean_text_for_db(text: str) -> str:
     if not text:
         return text
     return text.replace("\x00", " ").replace("\u0000", " ")
+
+
+def translate_en_to_fr_batch(texts: list[str], pipe) -> list[str]:
+    """Traduit une liste de textes EN→FR par batch (troncation si trop long)."""
+    if not texts:
+        return []
+    out = []
+    for i in range(0, len(texts), TRANSLATE_BATCH_SIZE):
+        batch = texts[i : i + TRANSLATE_BATCH_SIZE]
+        truncated = [t[: MAX_INPUT_LENGTH_TRANSLATE * 4] for t in batch]  # ~4 chars/token
+        result = pipe(truncated, max_length=512, truncation=True)
+        for r in result:
+            if isinstance(r, dict):
+                out.append(r.get("translation_text", r.get("translated_text", "")))
+            else:
+                out.append(str(r))
+    return out
 
 
 def extract_text_with_ocr_fallback(pdf_path: Path) -> tuple[str, dict[int, str], int]:
@@ -172,9 +192,13 @@ def main():
         print(f"Aucun fichier .pdf dans {PDF_DIR}")
         sys.exit(0)
 
-    print(f"Modèle d'embeddings (chargement unique)...")
+    print("Modèle d'embeddings (chargement unique)...")
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    print("Modèle de traduction EN→FR (chargement unique)...")
+    from transformers import pipeline
+    translate_pipe = pipeline("translation", model="Helsinki-NLP/opus-mt-en-fr")
 
     for pdf_path in pdf_files:
         rel_path = f"data/pdfs/{pdf_path.name}"
@@ -218,15 +242,24 @@ def main():
             document_id = doc_row.data[0]["id"]
 
             chunks_data = chunk_text(full_text, page_texts)
-            embeddings = model.encode([c[0] for c in chunks_data], show_progress_bar=False)
+            contents_en = [c[0] for c in chunks_data]
+            embeddings = model.encode(contents_en, show_progress_bar=False)
 
-            for pos, ((content, page, section_title), emb) in enumerate(zip(chunks_data, embeddings)):
+            contents_fr = translate_en_to_fr_batch(contents_en, translate_pipe)
+            contents_fr_clean = [clean_text_for_db(t) for t in contents_fr]
+            embeddings_fr = model.encode(contents_fr_clean, show_progress_bar=False)
+
+            for pos, ((content, page, section_title), emb, content_fr, emb_fr) in enumerate(
+                zip(chunks_data, embeddings, contents_fr_clean, embeddings_fr)
+            ):
                 row = {
                     "document_id": document_id,
                     "content": clean_text_for_db(content),
                     "position": pos,
                     "section_title": clean_text_for_db(section_title) if section_title else None,
                     "embedding": emb.tolist(),
+                    "content_fr": content_fr,
+                    "embedding_fr": emb_fr.tolist(),
                 }
                 if page is not None:
                     row["page"] = page

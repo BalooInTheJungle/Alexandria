@@ -6,12 +6,18 @@
 
 import OpenAI from "openai";
 import type { MatchedChunk } from "./search";
+import type { DetectedLang } from "./detect-lang";
 
-const SYSTEM_PROMPT = `Tu es un assistant qui répond aux questions en t'appuyant uniquement sur le contexte fourni (extraits de documents scientifiques).
+const SYSTEM_PROMPT_BASE = `Tu es un assistant qui répond aux questions en t'appuyant uniquement sur le contexte fourni (extraits de documents scientifiques).
 Règles :
 - Réponds uniquement à partir du contexte fourni. Si le contexte ne permet pas de répondre, dis-le clairement.
 - Cite tes sources à la fin des phrases concernées avec des références [1], [2], etc., correspondant aux numéros des extraits fournis.
 - Ne invente pas d'information ni de source.`;
+
+function systemPromptWithLang(lang: DetectedLang): string {
+  const langInstruction = lang === "fr" ? "Réponds en français." : "Réponds en anglais.";
+  return `${SYSTEM_PROMPT_BASE}\n- ${langInstruction}`;
+}
 
 function buildContext(chunks: MatchedChunk[]): string {
   return chunks
@@ -27,13 +33,14 @@ export type HistoryMessage = { role: "user" | "assistant"; content: string };
 function buildMessages(
   question: string,
   chunks: MatchedChunk[],
-  history: HistoryMessage[]
+  history: HistoryMessage[],
+  lang: DetectedLang = "en"
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const context = buildContext(chunks);
   const currentUserContent = `Contexte (extraits de documents) :\n\n${context}\n\n---\n\nQuestion : ${question}`;
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPromptWithLang(lang) },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: currentUserContent },
   ];
@@ -50,7 +57,8 @@ const LOG = (msg: string, ...args: unknown[]) => console.log("[RAG/openai]", msg
 export async function generateRagAnswer(
   question: string,
   chunks: MatchedChunk[],
-  history: HistoryMessage[] = []
+  history: HistoryMessage[] = [],
+  lang: DetectedLang = "en"
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -58,8 +66,8 @@ export async function generateRagAnswer(
   }
 
   const client = new OpenAI({ apiKey });
-  const messages = buildMessages(question, chunks, history);
-  LOG("generateRagAnswer", { messagesCount: messages.length, chunksCount: chunks.length });
+  const messages = buildMessages(question, chunks, history, lang);
+  LOG("generateRagAnswer", { messagesCount: messages.length, chunksCount: chunks.length, lang });
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -83,7 +91,8 @@ export async function generateRagAnswer(
 export async function createRagAnswerStream(
   question: string,
   chunks: MatchedChunk[],
-  history: HistoryMessage[] = []
+  history: HistoryMessage[] = [],
+  lang: DetectedLang = "en"
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -91,8 +100,8 @@ export async function createRagAnswerStream(
   }
 
   const client = new OpenAI({ apiKey });
-  const messages = buildMessages(question, chunks, history);
-  LOG("createRagAnswerStream", { messagesCount: messages.length, chunksCount: chunks.length });
+  const messages = buildMessages(question, chunks, history, lang);
+  LOG("createRagAnswerStream", { messagesCount: messages.length, chunksCount: chunks.length, lang });
 
   const stream = await client.chat.completions.create({
     model: "gpt-4o-mini",
