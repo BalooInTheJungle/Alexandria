@@ -40,19 +40,17 @@
 
 ## 3. RAG — Conversation et affichage
 
-### 3.1 Liste des conversations (sidebar)
+### 3.1 Liste des conversations (sidebar) — en place
 
-- **Affichage** : **sidebar** avec la liste des conversations : **titre** + **date** (création ou dernière activité).
-- **Ordre** : **date décroissante** (plus récent en haut).
-- **Actions** : clic pour ouvrir la conversation ; **Nouvelle conversation** (bouton explicite) ; optionnel : **suppression**, **renommage** (titre éditable).
-- **À faire** : appel à `GET /api/rag/conversations` pour alimenter la liste ; PATCH pour le titre ; DELETE avec modal de confirmation.
+- **Affichage** : **sidebar** avec la liste des conversations : **titre** + **date** (dernière activité).
+- **Ordre** : **date décroissante** (plus récent en haut). Appel à `GET /api/rag/conversations?limit=50`.
+- **Actions** : clic pour ouvrir la conversation ; **Nouvelle conversation** (bouton) ; **Renommer** (inline, PATCH) ; **Supprimer** (modal de confirmation, DELETE).
 
-### 3.2 Messages dans une conversation
+### 3.2 Messages dans une conversation — en place
 
-- **Affichage** : messages **user** et **assistant** dans l’ordre chronologique ; **scroll infini** (chargement par page, ex. 20 messages, pagination cursor-based).
-- **Réponses assistant** : affichage des **citations** [1], [2]… dans le texte ; les numéros correspondent aux sources listées en bas ou à côté.
-- **Sources** : pour chaque citation ou bloc de sources, **point « i » (info)** au survol ou au clic : afficher les **infos du document** (titre, auteurs, DOI, journal, date, page/section si disponible, chemin/storage_path si pertinent). Le document est **local** (data/pdfs/) ; pas de lien externe vers un document en ligne ; l’UI peut proposer d’ouvrir le fichier local ou d’afficher le chemin. Les **excerpts** sont dans la **même langue** que la réponse (FR ou EN).
-- **À faire** : appel à `GET /api/rag/conversations/[id]/messages?cursor=...&limit=20` pour le scroll infini.
+- **Affichage** : messages **user** et **assistant** dans l’ordre chronologique ; **scroll infini** (cursor, 20 par page) via `GET /api/rag/conversations/[id]/messages?cursor=...&limit=20`.
+- **Réponses assistant** : affichage des **citations** [1], [2]… dans le texte (sous le champ de saisie pour la dernière réponse).
+- **Sources** : pour chaque citation, infos document (titre, DOI, excerpt) ; évolution possible : point « i » au survol. Les **excerpts** sont dans la **même langue** que la réponse (FR ou EN).
 
 ### 3.3 Streaming de la réponse
 
@@ -60,23 +58,18 @@
 - **Implémentation front** : envoi de la requête avec `stream: true` ; consommation du flux SSE (fetch + `response.body.getReader()` ou EventSource) ; mise à jour progressive du DOM (ou state) à chaque chunk reçu. Quand le stream est terminé, l’événement `done` contient conversationId, messageId, sources ; optionnellement mettre à jour la liste des messages côté client avec le message assistant final (ou le récupérer via les données renvoyées en fin de stream).
 - **Garde-fou** : dans ce cas pas de stream « token par token » ; le message garde-fou peut être affiché en une fois (ou en un seul chunk) pour garder la même forme de réponse côté UI.
 
-### 3.4 Titre de conversation
+### 3.4 Titre de conversation — en place
 
-- **À la création** : le titre est généré côté back (troncature du premier message utilisateur, ex. 50 caractères).
-- **Édition** : le titre est **éditable** dans l’UI (input ou inline) ; sauvegarde via **PATCH** sur la conversation. Pas de bouton « Régénérer le titre » en V1.
+- **À la création** : le titre est généré côté back (troncature du premier message).
+- **Édition** : bouton **Renommer** dans la sidebar ; sauvegarde via **PATCH /api/rag/conversations/[id]**.
 
 ---
 
-## 4. RAG — Panneau admin
+## 4. RAG — Panneau admin — en place
 
-- **Objectif** : modifier les **paramètres du RAG** sans toucher au code (qualité, coût, UX).
-- **Paramètres à exposer** (liste cible) :
-  - **Nombre de tours de contexte** (context_turns) : 1 à 10 — nombre de paires user+assistant envoyées au LLM.
-  - **Seuil de similarité (garde-fou)** (similarity_threshold) : ex. 0,3 à 0,8 — en dessous, affichage du message hors domaine sans appel LLM.
-  - **Message hors domaine** (guard_message) : texte libre affiché lorsque la requête est jugée hors domaine.
-  - **Recherche** : match_count, match_threshold, fts_weight, vector_weight, rrf_k, hybrid_top_k (optionnel en admin).
-- **UI** : chaque paramètre avec une **courte description** (impact sur le comportement) ; **validation** (bornes) ; en cas d’erreur, message sans modifier la base.
-- **À faire** : page ou section dédiée (même utilisateur que le reste, pas de rôle admin séparé en V1) ; appels API pour lire/écrire `rag_settings`.
+- **Page** : **/rag/settings** (lien « Paramètres RAG » depuis la page RAG). Même utilisateur que le reste.
+- **GET /api/rag/settings** : chargement des valeurs ; **PATCH /api/rag/settings** : enregistrement (validation des bornes côté back ; 400 sans modification en base en cas d’erreur).
+- **Paramètres** : context_turns, similarity_threshold, guard_message, match_count, match_threshold, fts_weight, vector_weight, rrf_k, hybrid_top_k — chaque champ avec libellé et bornes (input number ou textarea pour guard_message).
 
 ---
 

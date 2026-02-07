@@ -10,13 +10,13 @@
 |-------|------|---------|----------|
 | **Recherche hybride (FTS + vector + RRF)** | FTS + vector + RRF ; selon lang : match_chunks/search_chunks_fts (EN) ou match_chunks_fr/search_chunks_fts_fr (FR). | — | — (en place) |
 | **API Chat** | POST /api/rag/chat ; détection langue ; garde-fou ; N derniers messages ; persistance ; streaming SSE. | — | — (en place) |
-| **Garde-fou hors domaine** | Seuil (similarity_threshold), message (guard_message) ; pas d’appel LLM si best_similarity < seuil ; enregistrement message user + assistant en base. | Panneau admin pour modifier seuil et message sans SQL. | **P2** |
+| **Garde-fou hors domaine** | Seuil (similarity_threshold), message (guard_message) ; pas d’appel LLM si best_similarity < seuil. Modifiable via PATCH /api/rag/settings. | — | — (en place) |
 | **Ingestion PDF** | Script Python (ingest.py) : PyMuPDF, OCR, chunking, embeddings 384D ; traduction EN→FR (opus-mt-en-fr), content_fr, embedding_fr, content_fr_tsv (trigger french). | — | — (en place) |
 | **Bilingue FR/EN** | Détection heuristique (detect-lang.ts) ; colonnes + RPC FR ; pipeline EN/FR (search.ts) ; instruction langue (openai.ts). | — | — (en place) |
 | **Génération (LLM)** | OpenAI (gpt-4o-mini), contexte + historique + question ; citations [1], [2] ; streaming ; instruction FR/EN selon lang. | — | — (en place) |
-| **Conversations et messages** | Tables conversations, messages ; getOrCreateConversation, insertMessage, getLastMessages ; titre = troncature premier message. | GET /api/rag/conversations ; GET /api/rag/conversations/[id]/messages (pagination cursor) ; PATCH titre ; DELETE conversation. | **P2** |
-| **Paramétrage dynamique (admin)** | Lecture rag_settings (context_turns, similarity_threshold, guard_message, match_count, match_threshold, fts_weight, vector_weight, rrf_k, hybrid_top_k). | API ou page pour lire/écrire rag_settings ; description par paramètre dans l’UI ; validation (bornes). | **P2** |
-| **Rétention 30 jours** | — | Job/cron ou route API (ex. Vercel Cron) supprimant les conversations où updated_at < now() - 30 days ; doc. | **P3** |
+| **Conversations et messages** | Tables + getOrCreateConversation, insertMessage, getLastMessages ; **GET /api/rag/conversations** (liste) ; **GET /api/rag/conversations/[id]/messages** (pagination cursor) ; **PATCH /api/rag/conversations/[id]** (titre) ; **DELETE /api/rag/conversations/[id]** (cascade messages). | — | — (en place) |
+| **Paramétrage dynamique (admin)** | Lecture rag_settings ; **GET /api/rag/settings** (toutes les clés) ; **PATCH /api/rag/settings** (body partiel, validation des bornes ; 400 si invalide, aucune modification en base). | Page admin pour afficher/éditer (optionnel). | — (en place) |
+| **Rétention 30 jours** | GET /api/cron/retention (CRON_SECRET) ; vercel.json cron 4 h UTC ; suppression conversations + cascade. | — | — (en place) |
 
 ---
 
@@ -46,6 +46,7 @@
 - **Vector** : selon `lang`, RPC `match_chunks` (EN, sur `chunks.embedding`) ou `match_chunks_fr` (FR, sur `chunks.embedding_fr`) ; même signature (query_embedding 384D, match_threshold, match_count).  
 - **FTS** : selon `lang`, RPC `search_chunks_fts` (EN, `content_tsv`, config english) ou `search_chunks_fts_fr` (FR, `content_fr_tsv`, `plainto_tsquery('french', query_text)`).  
 - **Fusion** : RRF dans `lib/rag/search.ts` ; paramètres `fts_weight`, `vector_weight`, `rrf_k`, `hybrid_top_k` (rag_settings). Les chunks retournés ont le bon champ texte (content ou content_fr) pour contexte et citations.  
+- **Fallback FR → EN** : si `lang === 'fr'` et `match_chunks_fr` renvoie 0 chunks, le back refait la recherche avec `match_chunks` + `search_chunks_fts` (EN) pour éviter un « hors domaine » quand la base n’a pas encore d’embedding_fr.  
 - **Garde-fou** : on utilise la **meilleure similarité vectorielle** (avant fusion) pour comparer au `similarity_threshold`.
 
 ---
@@ -80,9 +81,9 @@
 4. Insert **document** (status = processing).  
 5. **Chunking** : sections (Abstract, Introduction, Methods, Results, Discussion, Conclusion, References, Acknowledgments) ; à l’intérieur d’une section, blocs CHUNK_SIZE (600) avec CHUNK_OVERLAP (100). Fallback : 1 chunk = texte tronqué à 8000 caractères. **Nettoyage** : `clean_text_for_db` (remplace `\x00` et `\u0000` par un espace) sur full_text, métadonnées, content et section_title avant insertion.  
 6. **Embeddings EN** : sentence-transformers all-MiniLM-L6-v2, batch ; dimension 384.  
-7. **Traduction EN→FR** : pipeline Hugging Face (Helsinki-NLP/opus-mt-en-fr), batches de 8 ; troncature ~512 tokens.  
-8. **Embeddings FR** : même modèle sur les textes français → embedding_fr.  
-9. **Écriture** : insert chunks (content, embedding, content_fr, embedding_fr, document_id, position, page, section_title) ; content_tsv et content_fr_tsv par triggers ; update document (status = done, ingestion_log).  
+7. **Traduction EN→FR** : modèle **MarianMT** (Helsinki-NLP/opus-mt-en-fr) via `MarianMTModel` + `MarianTokenizer` (sans pipeline) ; device MPS (Apple Silicon) ou CUDA ou CPU ; batches de 24 ; troncature ~512 tokens ; décodage greedy (num_beams=1) pour la vitesse. Dépendances : `transformers`, `sentencepiece`, `torch`.  
+8. **Embeddings FR** : même modèle sentence-transformers sur les textes français → embedding_fr.  
+9. **Écriture** : insert chunks par **batch de 50** (content, embedding, content_fr, embedding_fr, document_id, position, page, section_title) ; content_tsv et content_fr_tsv par triggers ; update document (status = done, ingestion_log). En fin de run : log récap (nombre de documents done, chunks total, chunks avec content_fr).  
 - **Stockage PDF** : **data/pdfs/** ; `documents.storage_path` = chemin relatif. Pas de Supabase Storage en POC.
 
 ### 5.2 Paramètres (ingest.py)
@@ -94,6 +95,8 @@
 | CHUNK_SIZE | 600 | Taille cible d’un bloc (caractères). |
 | CHUNK_OVERLAP | 100 | Recouvrement entre deux chunks. |
 | MIN_TEXT_PER_PAGE | 50 | Seuil en dessous duquel on tente l’OCR. |
+| TRANSLATE_BATCH_SIZE | 24 | Nombre de textes par batch de traduction (MarianMT). |
+| TRANSLATE_NUM_BEAMS | 1 | 1 = greedy (rapide), 5 = beam (meilleure qualité). |
 
 ### 5.3 Log d’ingestion (documents.ingestion_log)
 
@@ -124,33 +127,35 @@
 
 - **Règle** : après recherche, si **bestVectorSimilarity < similarity_threshold** → requête hors domaine.  
 - **Comportement** : pas d’appel OpenAI ; retour du **guard_message** ; enregistrement message user + message assistant (garde-fou) en base. Pour garder la même UX que les réponses normales, on peut renvoyer le message en « faux stream » (un seul chunk) au lieu d’un JSON unique.  
-- **Paramètres** (rag_settings) : similarity_threshold, guard_message. À exposer en admin (P2).
+- **Paramètres** (rag_settings) : similarity_threshold, guard_message. Modifiables via **PATCH /api/rag/settings** (voir §9).
 
 ---
 
-## 8. Conversations et messages (APIs à ajouter)
+## 8. Conversations et messages (APIs en place)
+
+Toutes les routes ci‑dessous sont implémentées. Le client Supabase serveur (cookies) + RLS **authenticated** s’appliquent.
 
 ### 8.1 GET liste des conversations
 
 - **Route** : `GET /api/rag/conversations`.  
-- **Réponse** : tableau `{ id, title, created_at, updated_at }` ; ordre updated_at décroissant.  
-- **Pagination** : optionnelle (ex. ?limit=50).
+- **Query** : `?limit=50` (optionnel, max 100).  
+- **Réponse** : tableau `{ id, title, created_at, updated_at }[]` ; ordre **updated_at** décroissant.
 
 ### 8.2 GET messages d’une conversation
 
 - **Route** : `GET /api/rag/conversations/[id]/messages`.  
-- **Query** : pagination **cursor-based** (ex. ?cursor=message_id&limit=20). Curseur = id du dernier message de la page précédente ; requête suivante : `where conversation_id = X and created_at > (select created_at from messages where id = cursor) order by created_at asc limit N`. Ordre **created_at croissant** (plus ancien en premier) pour que le scroll vers le bas charge les messages plus récents.  
-- **Réponse** : tableau `{ id, role, content, sources?, created_at }`. Pas d’aperçu supplémentaire dans la liste ; à l’intérieur de la conversation, l’aperçu est le contenu du message.
+- **Query** : `?cursor=message_id&limit=20`. **Curseur** = id du dernier message de la page précédente ; page suivante = messages avec `created_at` strictement après ce message ; ordre **created_at** croissant.  
+- **Réponse** : tableau `{ id, role, content, sources?, created_at }[]`.
 
 ### 8.3 PATCH titre
 
 - **Route** : `PATCH /api/rag/conversations/[id]`.  
-- **Body** : `{ "title": "Nouveau titre" }`. Renommage **manuel uniquement** (pas de « régénérer le titre » par API en V1). Mise à jour de `conversations.title` et éventuellement `updated_at`. Évolution possible : générer le titre par appel OpenAI à partir du premier message (coût et latence en plus).
+- **Body** : `{ "title": "Nouveau titre" }`. Titre tronqué à 255 caractères. Réponse : `{ id, title }` ou 404.
 
 ### 8.4 DELETE conversation
 
 - **Route** : `DELETE /api/rag/conversations/[id]`.  
-- **Comportement** : suppression en base ; messages en cascade. Côté front : modal de confirmation.
+- **Comportement** : suppression en base ; messages supprimés en **cascade**. Réponse : **204** ou 404.
 
 ---
 
@@ -169,19 +174,22 @@
 | rrf_k | Paramètre k de la formule RRF. | 60 |
 | hybrid_top_k | Nombre de chunks après fusion RRF (envoyés au LLM). | 20 |
 
-### 9.2 À faire (admin)
+### 9.2 API admin (en place)
 
-- **Accès** : pas de protection supplémentaire ; l’admin est accessible depuis l’interface (même utilisateur que le reste). Un seul utilisateur ; pas de rôle admin séparé en V1.  
-- API ou page pour **lire/écrire** ces clés (sans SQL).  
-- **Description** par paramètre dans l’UI (impact sur le comportement), affichée à côté du champ.  
-- **Validation** — bornes recommandées (API ou front) : context_turns 1–10 ; similarity_threshold 0.1–0.9 (float) ; match_count 5–100 (entier) ; match_threshold 0.0–1.0 (float) ; fts_weight, vector_weight ≥ 0 (float) ; rrf_k entier > 0 (ex. 1–200) ; hybrid_top_k 5–100 (entier). En cas de valeur hors bornes : retour d’erreur ou message dans l’UI, **sans modifier** la valeur en base.
+- **GET /api/rag/settings** : retourne toutes les clés avec valeurs parsées (même structure que celle utilisée par le chat). Utilisable pour pré-remplir le panneau admin.  
+- **PATCH /api/rag/settings** : body = objet partiel (ex. `{ "similarity_threshold": 0.4 }`). Seules les clés connues sont prises en compte. **Validation côté back** : si une valeur est hors bornes → **400** avec `{ "error": "message" }` et **aucune modification en base**. Réponse en succès : objet settings complet (après mise à jour).  
+- **Bornes appliquées** (dans `lib/rag/settings.ts`, `RAG_SETTINGS_BOUNDS`) : context_turns 1–10 ; similarity_threshold 0.1–0.9 ; guard_message longueur max 1000 ; match_count 5–100 ; match_threshold 0–1 ; fts_weight, vector_weight 0–10 ; rrf_k 1–200 ; hybrid_top_k 5–100.  
+- **Accès** : même authentification que le reste (RLS authenticated sur rag_settings). Page admin au front optionnelle (affichage + formulaire qui appelle GET puis PATCH).
 
 ---
 
-## 10. Rétention 30 jours
+## 10. Rétention 30 jours (en place)
 
-- **Règle** : supprimer les conversations (et messages en cascade) où **updated_at < now() - 30 days** (pas d’activité depuis 30 jours). On s’appuie sur **updated_at**, pas sur created_at. **Pas de notification** utilisateur lors de la suppression.  
-- **Déclenchement (option gratuite)** : **Vercel Cron** (si déploiement sur Vercel) : route dédiée (ex. GET /api/cron/retention) appelée par Vercel Cron (planification dans `vercel.json`) ; la route vérifie une **clé secrète** (env) pour éviter les appels non autorisés, puis exécute la suppression via Supabase. Sinon : **script manuel** SQL ou Node documenté.
+- **Règle** : supprimer les conversations (et messages en cascade) où **updated_at < now() - 30 days** (pas d’activité depuis 30 jours). On s’appuie sur **updated_at**, pas sur created_at. **Pas de notification** utilisateur.  
+- **Route** : **GET /api/cron/retention**. Protégée par **CRON_SECRET** (variable d’env) : accepter uniquement si `Authorization: Bearer <CRON_SECRET>` ou `?secret=<CRON_SECRET>`. Réponse : `{ deleted: number }` ou 401/500.  
+- **Vercel Cron** : dans `vercel.json`, crons `path: "/api/cron/retention"`, `schedule: "0 4 * * *"` (tous les jours à 4 h UTC). Définir **CRON_SECRET** dans les env du projet Vercel ; Vercel envoie ce secret en `Authorization: Bearer` lors de l’appel.  
+- **Script manuel** : `curl -H "Authorization: Bearer $CRON_SECRET" "https://<ton-domaine>/api/cron/retention"` ou `"?secret=$CRON_SECRET"`.  
+- **Fichier** : `app/api/cron/retention/route.ts` (client Supabase **admin** pour la suppression, sans session utilisateur).
 
 ---
 

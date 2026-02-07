@@ -240,9 +240,9 @@ Paramètres RAG modifiables depuis le panneau admin (clé/valeur).
 
 ### 4.7 Admin — paramètres RAG
 
-1. Front demande la liste des paramètres : back lit **rag_settings** (toutes les lignes).  
-2. Front envoie des modifications : back met à jour **rag_settings** (UPDATE par clé) après validation (bornes).  
-3. Les API RAG relisent **rag_settings** à chaque requête chat.
+1. Front appelle **GET /api/rag/settings** : back lit **rag_settings** et retourne un objet avec toutes les clés (valeurs parsées).  
+2. Front envoie des modifications via **PATCH /api/rag/settings** (body partiel) : back **valide les bornes** ; si une valeur est invalide → 400, **aucune modification en base**. Sinon back met à jour **rag_settings** (UPDATE par clé) et retourne l’objet settings complet.  
+3. Les API RAG (chat, search) relisent **rag_settings** à chaque requête.
 
 ---
 
