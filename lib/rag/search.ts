@@ -137,11 +137,17 @@ export async function searchChunks(
   LOG("Embedding done", { dim: embedding.length });
 
   const supabase = await createClient();
+  const limit = Math.max(matchCount, useFts ? hybridTopK * 2 : hybridTopK);
+
+  let vectorChunks: MatchedChunk[] = [];
+  let bestVectorSimilarity = 0;
+  let effectiveMatchRpc = matchRpc;
+  let effectiveFtsRpc = ftsRpc;
 
   const { data: vectorData, error: vectorError } = await supabase.rpc(matchRpc, {
     query_embedding: embedding,
     match_threshold: threshold,
-    match_count: Math.max(matchCount, useFts ? hybridTopK * 2 : hybridTopK),
+    match_count: limit,
   });
 
   if (vectorError) {
@@ -149,9 +155,27 @@ export async function searchChunks(
     throw new Error(`RAG search failed: ${vectorError.message}`);
   }
 
-  const vectorChunks = (vectorData ?? []) as MatchedChunk[];
-  const bestVectorSimilarity = vectorChunks[0]?.similarity ?? 0;
+  vectorChunks = (vectorData ?? []) as MatchedChunk[];
+  bestVectorSimilarity = vectorChunks[0]?.similarity ?? 0;
   LOG(matchRpc, "result", { count: vectorChunks.length, bestVectorSimilarity });
+
+  if (lang === "fr" && vectorChunks.length === 0) {
+    LOG("FR pipeline returned 0 chunks, fallback to EN (match_chunks + search_chunks_fts)");
+    effectiveMatchRpc = "match_chunks";
+    effectiveFtsRpc = "search_chunks_fts";
+    const { data: enData, error: enError } = await supabase.rpc("match_chunks", {
+      query_embedding: embedding,
+      match_threshold: threshold,
+      match_count: limit,
+    });
+    if (enError) {
+      console.error("[RAG/search] match_chunks (fallback) error", enError);
+      return { chunks: [], bestVectorSimilarity: 0 };
+    }
+    vectorChunks = (enData ?? []) as MatchedChunk[];
+    bestVectorSimilarity = vectorChunks[0]?.similarity ?? 0;
+    LOG("match_chunks (fallback) result", { count: vectorChunks.length, bestVectorSimilarity });
+  }
 
   if (!useFts || vectorChunks.length === 0) {
     return {
@@ -160,13 +184,13 @@ export async function searchChunks(
     };
   }
 
-  const { data: ftsData, error: ftsError } = await supabase.rpc(ftsRpc, {
+  const { data: ftsData, error: ftsError } = await supabase.rpc(effectiveFtsRpc, {
     query_text: query.trim(),
     match_limit: hybridTopK * 2,
   });
 
   if (ftsError) {
-    LOG(ftsRpc, "error (fallback vector only)", ftsError.message);
+    LOG(effectiveFtsRpc, "error (fallback vector only)", ftsError.message);
     return {
       chunks: vectorChunks.slice(0, hybridTopK),
       bestVectorSimilarity,
@@ -174,7 +198,7 @@ export async function searchChunks(
   }
 
   const ftsChunks = (ftsData ?? []) as FtsChunkRow[];
-  LOG(ftsRpc, "result", { count: ftsChunks.length });
+  LOG(effectiveFtsRpc, "result", { count: ftsChunks.length });
 
   const merged = rrfMerge(vectorChunks, ftsChunks, {
     vector_weight: settings.vector_weight,

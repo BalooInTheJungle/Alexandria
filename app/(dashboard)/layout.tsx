@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "./actions";
+import { Button } from "@/components/ui/button";
 
 export default async function DashboardLayout({
   children,
@@ -14,18 +15,24 @@ export default async function DashboardLayout({
 
   return (
     <>
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.5rem 1rem", borderBottom: "1px solid #eee" }}>
-        <nav>
-          <Link href="/rag">RAG</Link>
-          <span> | </span>
-          <Link href="/bibliographie">Bibliographie</Link>
+      <header className="flex items-center justify-between border-b border-border px-4 py-2">
+        <nav className="flex items-center gap-2">
+          <Button variant="link" asChild className="h-auto p-0 font-normal">
+            <Link href="/rag">RAG</Link>
+          </Button>
+          <span className="text-muted-foreground">|</span>
+          <Button variant="link" asChild className="h-auto p-0 font-normal">
+            <Link href="/bibliographie">Bibliographie</Link>
+          </Button>
         </nav>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+        <div className="flex items-center gap-4">
           {user?.email && (
-            <span style={{ fontSize: "0.9rem", color: "#666" }}>{user.email}</span>
+            <span className="text-sm text-muted-foreground">{user.email}</span>
           )}
           <form action={signOut}>
-            <button type="submit">Déconnexion</button>
+            <Button type="submit" variant="outline" size="sm">
+              Déconnexion
+            </Button>
           </form>
         </div>
       </header>

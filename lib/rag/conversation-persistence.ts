@@ -79,6 +79,15 @@ export type MessageRow = {
   created_at: string;
 };
 
+export type MessageWithSources = MessageRow & { sources?: unknown };
+
+export type ConversationRow = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
 /**
  * Récupère les N derniers messages de la conversation (ordre created_at desc).
  * Utilisé pour construire l’historique envoyé au LLM (contexte multi-tours).
@@ -102,4 +111,108 @@ export async function getLastMessages(
   const rows = (data ?? []) as MessageRow[];
   LOG("getLastMessages", { conversationId, limit, count: rows.length });
   return rows;
+}
+
+/**
+ * Liste des conversations (ordre updated_at desc).
+ * Utilisé par GET /api/rag/conversations.
+ */
+export async function listConversations(limit = 50): Promise<ConversationRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("conversations")
+    .select("id, title, created_at, updated_at")
+    .order("updated_at", { ascending: false })
+    .limit(Math.min(Math.max(1, limit), 100));
+
+  if (error) {
+    console.error("[RAG/conversation] listConversations error", error);
+    return [];
+  }
+  return (data ?? []) as ConversationRow[];
+}
+
+/**
+ * Messages d’une conversation avec pagination cursor (ordre created_at asc).
+ * cursor = id du dernier message de la page précédente ; page suivante = messages avec created_at > ce message.
+ */
+export async function getMessagesPaginated(
+  conversationId: string,
+  options: { cursor?: string; limit?: number } = {}
+): Promise<MessageWithSources[]> {
+  const { cursor, limit = 20 } = options;
+  const supabase = await createClient();
+  const pageSize = Math.min(Math.max(1, limit), 100);
+
+  let query = supabase
+    .from("messages")
+    .select("id, role, content, sources, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
+    .limit(pageSize);
+
+  if (cursor) {
+    const { data: cursorRow } = await supabase
+      .from("messages")
+      .select("created_at")
+      .eq("id", cursor)
+      .eq("conversation_id", conversationId)
+      .single();
+    if (cursorRow?.created_at) {
+      query = query.gt("created_at", cursorRow.created_at);
+    }
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[RAG/conversation] getMessagesPaginated error", error);
+    return [];
+  }
+  return (data ?? []) as MessageWithSources[];
+}
+
+/**
+ * Met à jour le titre d’une conversation.
+ * Retourne true si mise à jour, false si conversation introuvable.
+ */
+export async function updateConversationTitle(
+  conversationId: string,
+  title: string
+): Promise<boolean> {
+  const supabase = await createClient();
+  const safeTitle = (title ?? "").trim().slice(0, 255) || "Nouvelle conversation";
+  const { data, error } = await supabase
+    .from("conversations")
+    .update({ title: safeTitle, updated_at: new Date().toISOString() })
+    .eq("id", conversationId)
+    .select("id")
+    .single();
+
+  if (error || !data) {
+    LOG("updateConversationTitle: not found or error", { conversationId, error: error?.message });
+    return false;
+  }
+  LOG("updateConversationTitle", { conversationId, title: safeTitle });
+  return true;
+}
+
+/**
+ * Supprime une conversation (les messages sont supprimés en cascade).
+ * Retourne true si supprimée, false si introuvable.
+ */
+export async function deleteConversation(conversationId: string): Promise<boolean> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("conversations")
+    .delete()
+    .eq("id", conversationId)
+    .select("id");
+
+  if (error) {
+    console.error("[RAG/conversation] deleteConversation error", error);
+    return false;
+  }
+  const deleted = Array.isArray(data) && data.length > 0;
+  if (deleted) LOG("deleteConversation", { conversationId });
+  return deleted;
 }

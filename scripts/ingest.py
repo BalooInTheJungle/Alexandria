@@ -30,8 +30,9 @@ EMBED_DIM = 384
 CHUNK_SIZE = 600
 CHUNK_OVERLAP = 100
 MIN_TEXT_PER_PAGE = 50  # en dessous, on tente l'OCR pour cette page
-TRANSLATE_BATCH_SIZE = 8  # opus-mt-en-fr par batch
+TRANSLATE_BATCH_SIZE = 24  # plus gros batch sur M2 (32GB); moins d’appels model.generate
 MAX_INPUT_LENGTH_TRANSLATE = 512  # tokens environ, tronquer pour le traducteur
+TRANSLATE_NUM_BEAMS = 1  # 1 = greedy (rapide); 5 = beam (lent, meilleure qualité)
 
 
 def get_supabase():
@@ -54,20 +55,36 @@ def clean_text_for_db(text: str) -> str:
     return text.replace("\x00", " ").replace("\u0000", " ")
 
 
-def translate_en_to_fr_batch(texts: list[str], pipe) -> list[str]:
-    """Traduit une liste de textes EN→FR par batch (troncation si trop long)."""
+def _get_translation_device():
+    """MPS (Apple Silicon) > CUDA > CPU pour accélérer la traduction."""
+    try:
+        import torch
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+    except Exception:
+        pass
+    return torch.device("cpu")
+
+
+def translate_en_to_fr_batch(texts: list[str], model, tokenizer, device) -> list[str]:
+    """Traduit une liste de textes EN→FR par batch (MarianMT). Les tensors sont sur device (MPS/CUDA/CPU)."""
     if not texts:
         return []
     out = []
-    for i in range(0, len(texts), TRANSLATE_BATCH_SIZE):
-        batch = texts[i : i + TRANSLATE_BATCH_SIZE]
-        truncated = [t[: MAX_INPUT_LENGTH_TRANSLATE * 4] for t in batch]  # ~4 chars/token
-        result = pipe(truncated, max_length=512, truncation=True)
-        for r in result:
-            if isinstance(r, dict):
-                out.append(r.get("translation_text", r.get("translated_text", "")))
-            else:
-                out.append(str(r))
+    total_batches = (len(texts) + TRANSLATE_BATCH_SIZE - 1) // TRANSLATE_BATCH_SIZE
+    for idx in range(0, len(texts), TRANSLATE_BATCH_SIZE):
+        batch_num = idx // TRANSLATE_BATCH_SIZE + 1
+        if batch_num == 1 or batch_num % 5 == 0 or batch_num == total_batches:
+            print(f"  [traduction] batch {batch_num}/{total_batches} ({min(idx + TRANSLATE_BATCH_SIZE, len(texts))}/{len(texts)} textes)", flush=True)
+        batch = texts[idx : idx + TRANSLATE_BATCH_SIZE]
+        truncated = [t[: MAX_INPUT_LENGTH_TRANSLATE * 4] for t in batch]
+        inputs = tokenizer(truncated, return_tensors="pt", padding=True, truncation=True, max_length=512)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        gen = model.generate(**inputs, max_length=512, num_beams=TRANSLATE_NUM_BEAMS)
+        for ids in gen:
+            out.append(tokenizer.decode(ids, skip_special_tokens=True))
     return out
 
 
@@ -76,11 +93,14 @@ def extract_text_with_ocr_fallback(pdf_path: Path) -> tuple[str, dict[int, str],
     Retourne (full_text, page_texts, ocr_pages_count).
     """
     doc = fitz.open(pdf_path)
+    num_pages = len(doc)
     full_text = []
     page_texts = {}
     ocr_pages_count = 0
     try:
-        for i in range(len(doc)):
+        for i in range(num_pages):
+            if (i + 1) % 50 == 0 or i + 1 == num_pages:
+                print(f"  [extraction] page {i + 1}/{num_pages}", flush=True)
             page = doc[i]
             text = page.get_text()
             page_texts[i + 1] = text
@@ -197,8 +217,12 @@ def main():
     model = SentenceTransformer("all-MiniLM-L6-v2")
 
     print("Modèle de traduction EN→FR (chargement unique)...")
-    from transformers import pipeline
-    translate_pipe = pipeline("translation", model="Helsinki-NLP/opus-mt-en-fr")
+    from transformers import MarianMTModel, MarianTokenizer
+    _trans_model = MarianMTModel.from_pretrained("Helsinki-NLP/opus-mt-en-fr")
+    _trans_tokenizer = MarianTokenizer.from_pretrained("Helsinki-NLP/opus-mt-en-fr")
+    _trans_device = _get_translation_device()
+    _trans_model = _trans_model.to(_trans_device)
+    print(f"  Traduction: device={_trans_device} (MPS=Chip Apple, CUDA=GPU Nvidia, cpu=CPU).", flush=True)
 
     for pdf_path in pdf_files:
         rel_path = f"data/pdfs/{pdf_path.name}"
@@ -218,7 +242,9 @@ def main():
             print(f"  Ré-ingestion (ancien status: {rec.get('status')}).")
 
         try:
+            print("  [1/6] Extraction texte PDF...", flush=True)
             full_text, page_texts, ocr_pages_count = extract_text_with_ocr_fallback(pdf_path)
+            print(f"  [1/6] Texte extrait: {len(page_texts)} pages, {len(full_text)} caractères, OCR: {ocr_pages_count} pages.", flush=True)
             if not full_text.strip():
                 raise ValueError("Aucun texte extrait (PDF vide ou OCR échoué).")
 
@@ -241,14 +267,28 @@ def main():
             }).execute()
             document_id = doc_row.data[0]["id"]
 
+            print("  [2/6] Chunking...", flush=True)
             chunks_data = chunk_text(full_text, page_texts)
+            n_chunks = len(chunks_data)
+            print(f"  [2/6] Chunking: {n_chunks} chunks.", flush=True)
             contents_en = [c[0] for c in chunks_data]
+
+            print("  [3/6] Embeddings EN...", flush=True)
             embeddings = model.encode(contents_en, show_progress_bar=False)
+            print("  [3/6] Embeddings EN: fait.", flush=True)
 
-            contents_fr = translate_en_to_fr_batch(contents_en, translate_pipe)
+            print("  [4/6] Traduction EN→FR...", flush=True)
+            contents_fr = translate_en_to_fr_batch(contents_en, _trans_model, _trans_tokenizer, _trans_device)
             contents_fr_clean = [clean_text_for_db(t) for t in contents_fr]
-            embeddings_fr = model.encode(contents_fr_clean, show_progress_bar=False)
+            print("  [4/6] Traduction: fait.", flush=True)
 
+            print("  [5/6] Embeddings FR...", flush=True)
+            embeddings_fr = model.encode(contents_fr_clean, show_progress_bar=False)
+            print("  [5/6] Embeddings FR: fait.", flush=True)
+
+            INSERT_BATCH = 50
+            print(f"  [6/6] Insert chunks (batches de {INSERT_BATCH})...", flush=True)
+            rows_batch = []
             for pos, ((content, page, section_title), emb, content_fr, emb_fr) in enumerate(
                 zip(chunks_data, embeddings, contents_fr_clean, embeddings_fr)
             ):
@@ -263,7 +303,14 @@ def main():
                 }
                 if page is not None:
                     row["page"] = page
-                supabase.table("chunks").insert(row).execute()
+                rows_batch.append(row)
+                if len(rows_batch) >= INSERT_BATCH:
+                    supabase.table("chunks").insert(rows_batch).execute()
+                    print(f"  [6/6] Insert: {min(pos + 1, n_chunks)}/{n_chunks} chunks.", flush=True)
+                    rows_batch = []
+            if rows_batch:
+                supabase.table("chunks").insert(rows_batch).execute()
+            print(f"  [6/6] Insert: {n_chunks}/{n_chunks} chunks.", flush=True)
 
             # Log d'ingestion (ce qu'on a récupéré ou non)
             ingested_at = datetime.now(timezone.utc).isoformat()
@@ -285,11 +332,11 @@ def main():
                 "updated_at": ingested_at,
             }).eq("id", document_id).execute()
 
-            # Log console
+            # Log console (EN + FR)
             rec = "titre: oui" if meta.get("title") else "titre: non"
             rec += ", DOI: oui" if meta.get("doi") else ", DOI: non"
             rec += ", auteurs: oui" if meta.get("authors") else ", auteurs: non"
-            rec += f", {len(chunks_data)} chunks"
+            rec += f", {len(chunks_data)} chunks (EN+FR)"
             if ocr_pages_count:
                 rec += f", {ocr_pages_count} page(s) OCR"
             print(f"  OK: {rec}.")
@@ -315,6 +362,17 @@ def main():
                     "ingestion_log": ingestion_log,
                 }).execute()
 
+    # Log récap : vérifier que la base est bien peuplée (chunks EN + FR)
+    try:
+        r_docs = supabase.table("documents").select("id", count="exact").eq("status", "done").execute()
+        n_docs = r_docs.count if hasattr(r_docs, "count") and r_docs.count is not None else len(r_docs.data or [])
+        r_chunks = supabase.table("chunks").select("id", count="exact").execute()
+        n_chunks = r_chunks.count if hasattr(r_chunks, "count") and r_chunks.count is not None else len(r_chunks.data or [])
+        r_fr = supabase.table("chunks").select("id", count="exact").not_.is_("content_fr", "null").execute()
+        n_chunks_fr = r_fr.count if hasattr(r_fr, "count") and r_fr.count is not None else len(r_fr.data or [])
+        print("[Ingestion] Base: {} document(s) done, {} chunk(s) total, {} chunk(s) avec content_fr.".format(n_docs, n_chunks, n_chunks_fr))
+    except Exception as e:
+        print(f"[Ingestion] Log récap non disponible: {e}")
     print("Terminé.")
 
 
