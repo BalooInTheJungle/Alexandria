@@ -2,9 +2,10 @@
  * Embedding de la requête utilisateur (384D).
  * Même modèle que l'ingestion : sentence-transformers all-MiniLM-L6-v2 (Xenova/all-MiniLM-L6-v2).
  * Utilisé côté serveur uniquement (API route / server action).
+ * Sur Vercel (serverless), le filesystem est en lecture seule : on redirige le cache vers /tmp.
  */
 
-import { pipeline } from "@xenova/transformers";
+import { pipeline, env } from "@xenova/transformers";
 
 const MODEL = "Xenova/all-MiniLM-L6-v2";
 const DIM = 384;
@@ -13,6 +14,10 @@ let extractor: Awaited<ReturnType<typeof pipeline>> | null = null;
 
 async function getExtractor() {
   if (extractor) return extractor;
+  // Vercel / serverless : le filesystem du déploiement est en lecture seule ; /tmp est inscriptible
+  if (typeof process !== "undefined" && process.env?.VERCEL === "1") {
+    env.cacheDir = "/tmp/transformers-cache";
+  }
   console.log("[RAG/embed] Loading model", MODEL);
   extractor = await pipeline("feature-extraction", MODEL, {
     quantized: true,

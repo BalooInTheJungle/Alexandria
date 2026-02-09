@@ -60,7 +60,7 @@ export async function generateRagAnswer(
   history: HistoryMessage[] = [],
   lang: DetectedLang = "en"
 ): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
   }
@@ -94,7 +94,7 @@ export async function createRagAnswerStream(
   history: HistoryMessage[] = [],
   lang: DetectedLang = "en"
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
   }
