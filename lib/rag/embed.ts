@@ -24,10 +24,17 @@ async function getExtractor() {
 /**
  * Embed un texte (ex. requête utilisateur). Retourne un vecteur 384D.
  */
+// Options supportées à l'exécution par le modèle feature-extraction ; les types @xenova/transformers sont trop stricts
+const EMBED_OPTIONS = { pooling: "mean", normalize: true } as const;
+
+/** Retour du pipeline feature-extraction : tensor avec .data et .dims */
+type EmbeddingTensor = { data: Float32Array; dims: number[] };
+
 export async function embedQuery(text: string): Promise<number[]> {
   const ex = await getExtractor();
-  const out = await ex(text, { pooling: "mean", normalize: true });
-  const arr = Array.from(out.data as Float32Array);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- types pipeline feature-extraction trop stricts
+  const out = (await ex(text, EMBED_OPTIONS as any)) as EmbeddingTensor;
+  const arr = Array.from(out.data);
   if (arr.length !== DIM) throw new Error(`Expected embedding dim ${DIM}, got ${arr.length}`);
   return arr;
 }
@@ -38,10 +45,11 @@ export async function embedQuery(text: string): Promise<number[]> {
 export async function embedQueries(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   const ex = await getExtractor();
-  const out = await ex(texts, { pooling: "mean", normalize: true });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- types pipeline feature-extraction trop stricts (batch)
+  const out = (await (ex as any)(texts, EMBED_OPTIONS)) as EmbeddingTensor;
   const dim = out.dims[out.dims.length - 1] as number;
   const batchSize = out.dims[0] as number;
-  const data = out.data as Float32Array;
+  const data = out.data;
   const result: number[][] = [];
   for (let i = 0; i < batchSize; i++) {
     result.push(Array.from(data.slice(i * dim, (i + 1) * dim)));
