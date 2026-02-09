@@ -7,7 +7,7 @@ import {
 
 /**
  * GET /api/rag/settings
- * Retourne toutes les clés/valeurs des paramètres RAG (pour l’admin).
+ * Retourne toutes les clés/valeurs des paramètres RAG (pour l'admin).
  */
 export async function GET() {
   try {
@@ -25,7 +25,7 @@ export async function GET() {
 /**
  * PATCH /api/rag/settings
  * Met à jour des clés. Body : objet partiel RagSettings.
- * Valide les bornes ; en cas d’erreur retourne 400 sans modifier la base.
+ * Valide les bornes ; en cas d'erreur retourne 400 sans modifier la base.
  */
 export async function PATCH(request: Request) {
   try {

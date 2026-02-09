@@ -9,7 +9,7 @@ const LOG = (msg: string, ...args: unknown[]) => console.log("[RAG/conversation]
 
 /**
  * Récupère une conversation existante ou en crée une nouvelle.
- * - Si conversationId fourni et trouvé : met à jour updated_at et retourne l’id.
+ * - Si conversationId fourni et trouvé : met à jour updated_at et retourne l'id.
  * - Sinon : crée une nouvelle conversation avec le titre donné.
  */
 export async function getOrCreateConversation(
@@ -88,7 +88,7 @@ export type ConversationRow = {
 };
 
 /**
- * Liste les conversations de l’utilisateur (ordre updated_at desc).
+ * Liste les conversations de l'utilisateur (ordre updated_at desc).
  */
 export async function listConversations(limit = 50): Promise<ConversationRow[]> {
   const supabase = await createClient();
@@ -108,7 +108,7 @@ export async function listConversations(limit = 50): Promise<ConversationRow[]> 
 }
 
 /**
- * Récupère les messages d’une conversation avec pagination par cursor.
+ * Récupère les messages d'une conversation avec pagination par cursor.
  * cursor = id du dernier message reçu ; retourne les limit messages suivants (ordre created_at asc).
  */
 export async function getMessages(
@@ -150,7 +150,7 @@ export async function getMessages(
 }
 
 /**
- * Met à jour le titre d’une conversation.
+ * Met à jour le titre d'une conversation.
  */
 export async function updateConversationTitle(
   id: string,
@@ -192,7 +192,7 @@ export async function deleteConversation(
 
 /**
  * Récupère les N derniers messages de la conversation (ordre created_at desc).
- * Utilisé pour construire l’historique envoyé au LLM (contexte multi-tours).
+ * Utilisé pour construire l'historique envoyé au LLM (contexte multi-tours).
  */
 export async function getLastMessages(
   conversationId: string,

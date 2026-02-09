@@ -23,8 +23,8 @@
 | **Recherche hybride** | FTS (`search_chunks_fts`) + vector (`match_chunks`) + fusion RRF dans `lib/rag/search.ts` ; paramètres dans `rag_settings`. |
 | **API Chat** | `POST /api/rag/chat` (query, conversationId, stream) ; garde-fou ; N derniers messages ; persistance ; streaming SSE. |
 | **Garde-fou** | Seuil + message lus depuis `rag_settings` ; pas d’appel LLM si best_similarity < seuil. |
-| **Conversations / messages** | Tables + `getOrCreateConversation`, `insertMessage`, `getLastMessages` ; titre = troncature du premier message. |
-| **Paramètres** | Lecture de tous les `rag_settings` (context_turns, similarity_threshold, guard_message, match_count, match_threshold, fts_weight, vector_weight, rrf_k, hybrid_top_k). |
+| **Conversations / messages** | Tables + persistence ; **GET /api/rag/conversations** (liste) ; **GET /api/rag/conversations/[id]/messages** (cursor) ; **PATCH** titre ; **DELETE** conversation. |
+| **Paramètres** | Lecture `rag_settings` ; **GET /api/rag/settings** (toutes les clés) ; **PATCH /api/rag/settings** (body partiel, validation des bornes → 400 si invalide, pas de modification en base). |
 | **Ingestion PDF** | Script Python `scripts/ingest.py` : PyMuPDF, OCR, chunking, embeddings 384D ; traduction EN→FR (opus-mt-en-fr), content_fr, embedding_fr, content_fr_tsv. |
 | **Bilingue FR/EN** | Détection langue (lib/rag/detect-lang.ts) ; pipeline EN/FR (search.ts) ; instruction langue (openai.ts) ; migration 20260206100000_chunks_bilingue_fr.sql appliquée. |
 
@@ -76,44 +76,32 @@ Objectif : l’utilisateur pose sa question en **français** ou en **anglais** ;
 
 ---
 
-## Priorité 2 (P2) — Conversations, admin, UX back
+## Priorité 2 (P2) — Conversations, admin — **Fait**
 
-### 2.1 API conversations et messages
+### 2.1 API conversations et messages — en place
 
-**À faire** :
+- **GET /api/rag/conversations** : liste `{ id, title, created_at, updated_at }[]` ; `?limit=50` (max 100).
+- **GET /api/rag/conversations/[id]/messages** : messages avec `?cursor=message_id&limit=20` ; ordre `created_at` asc.
+- **PATCH /api/rag/conversations/[id]** : body `{ "title": "..." }` ; réponse `{ id, title }` ou 404.
+- **DELETE /api/rag/conversations/[id]** : suppression + cascade messages ; 204 ou 404.
 
-| Route | Méthode | Description |
-|-------|--------|-------------|
-| Liste des conversations | `GET /api/rag/conversations` | Réponse : `{ id, title, created_at, updated_at }[]` ; ordre `updated_at` desc ; pagination optionnelle `?limit=50`. |
-| Messages d’une conversation | `GET /api/rag/conversations/[id]/messages` | Query : `?cursor=message_id&limit=20` (cursor-based). Réponse : `{ id, role, content, sources?, created_at }[]` ; ordre `created_at` asc. |
-| Modifier le titre | `PATCH /api/rag/conversations/[id]` | Body : `{ "title": "Nouveau titre" }`. |
-| Supprimer une conversation | `DELETE /api/rag/conversations/[id]` | Suppression en base ; messages en cascade. |
+Fichiers : `app/api/rag/conversations/route.ts`, `app/api/rag/conversations/[id]/route.ts`, `app/api/rag/conversations/[id]/messages/route.ts` ; `lib/rag/conversation-persistence.ts` étendu (listConversations, getMessagesPaginated, updateConversationTitle, deleteConversation).
 
-**Fichiers à créer** :
+### 2.2 API admin (rag_settings) — en place
 
-- `app/api/rag/conversations/route.ts` (GET liste).
-- `app/api/rag/conversations/[id]/route.ts` (PATCH, DELETE).
-- `app/api/rag/conversations/[id]/messages/route.ts` (GET messages avec pagination cursor).
+- **GET /api/rag/settings** : retourne toutes les clés avec valeurs parsées (objet utilisé par le chat).
+- **PATCH /api/rag/settings** : body partiel (ex. `{ "similarity_threshold": 0.4 }`) ; **validation des bornes** dans `lib/rag/settings.ts` (`RAG_SETTINGS_BOUNDS`) ; si une valeur est hors bornes → **400** avec `{ "error": "message" }` et **aucune modification en base**. Réponse succès : objet settings complet.
 
-Réutiliser `lib/rag/conversation-persistence.ts` (ou étendre) pour les requêtes de lecture (liste, messages par conversation, mise à jour titre, suppression).
-
-### 2.2 API admin (rag_settings)
-
-**À faire** :
-
-- **GET** : retourner toutes les clés/valeurs de `rag_settings` (pour affichage dans le panneau admin).
-- **PATCH ou PUT** : accepter un body avec des clés à mettre à jour ; **valider les bornes** (context_turns 1–10, similarity_threshold 0.1–0.9, etc.) ; en cas d’erreur, retourner 400 sans modifier la base.
-
-**Fichier à créer** : `app/api/rag/settings/route.ts` (GET + PATCH). Optionnel : fichier de descriptions (clé → texte pour l’UI) ou table dédiée.
+Fichier : `app/api/rag/settings/route.ts`. Bornes : context_turns 1–10, similarity_threshold 0.1–0.9, guard_message max 1000 car., match_count 5–100, match_threshold 0–1, fts_weight/vector_weight 0–10, rrf_k 1–200, hybrid_top_k 5–100.
 
 ---
 
-## Priorité 3 (P3) — Rétention 30 jours
+## Priorité 3 (P3) — Rétention 30 jours — **Fait**
 
-**À faire** :
-
-- Route protégée (ex. `GET /api/cron/retention`) : vérifier une clé secrète (variable d’env) ; si ok, exécuter la suppression des conversations où `updated_at < now() - interval '30 days'` (Supabase client). Documenter l’appel (Vercel Cron ou script manuel).
-- **Fichier à créer** : `app/api/cron/retention/route.ts` (ou équivalent). Référence : BACK_RAG.md §10.
+- **GET /api/cron/retention** : supprime les conversations où `updated_at < now() - 30 days` (messages en cascade). Protégé par **CRON_SECRET** (env) : `Authorization: Bearer <CRON_SECRET>` ou `?secret=<CRON_SECRET>`. Réponse : `{ deleted: number }`.
+- **Fichier** : `app/api/cron/retention/route.ts` (client admin Supabase).
+- **vercel.json** : cron `path: "/api/cron/retention"`, `schedule: "0 4 * * *"` (tous les jours 4 h UTC). Définir CRON_SECRET dans les env Vercel.
+- **Script manuel** : voir BACK_RAG.md §10.
 
 ---
 
@@ -122,14 +110,10 @@ Réutiliser `lib/rag/conversation-persistence.ts` (ou étendre) pour les requêt
 1. ~~**P1.1** — Migration bilingue (DB).~~ **Fait.**  
 2. ~~**P1.2** — Back Node : détection langue + pipeline EN/FR + instruction dans le prompt.~~ **Fait.**  
 3. ~~**P1.3** — Ingestion Python : traduction + embedding_fr + content_fr.~~ **Fait.**  
-4. **P2.1** — API conversations (GET liste, GET messages, PATCH, DELETE). **À faire.**  
-5. **P2.2** — API admin rag_settings (GET + PATCH avec validation). **À faire.**  
+<<<<<<< HEAD
+4. ~~**P2.1** — API conversations (GET liste, GET messages, PATCH, DELETE).~~ **Fait.**  
+5. ~~**P2.2** — API admin rag_settings (GET + PATCH avec validation).~~ **Fait.**  
 6. **P3** — Route rétention 30 jours + doc. **À faire.**
-
-### État du code (vérifié)
-
-- **Présents** : `app/api/rag/chat/route.ts`, `app/api/rag/search/route.ts` ; `lib/rag/conversation-persistence.ts` (getOrCreateConversation, insertMessage, getLastMessages) ; `lib/rag/settings.ts` (getRagSettings uniquement).
-- **Absents** : `app/api/rag/conversations/*`, `app/api/rag/settings/route.ts`, `app/api/cron/retention/route.ts`. Aucune fonction de liste des conversations, messages paginés (cursor), mise à jour titre, suppression conversation, ni mise à jour des rag_settings avec validation.
 
 ---
 

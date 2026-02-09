@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 type SourceItem = {
   index: number;
@@ -17,12 +20,18 @@ type ChatResponse = {
   messageId?: string;
 };
 
-export default function RagChatInput() {
+type Props = {
+  conversationId?: string | null;
+  onConversationCreated?: (id: string) => void;
+  onMessageSent?: () => void;
+};
+
+export default function RagChatInput({ conversationId: propConversationId = null, onConversationCreated, onMessageSent }: Props) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<ChatResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const conversationId = propConversationId ?? null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -50,8 +59,10 @@ export default function RagChatInput() {
         return;
       }
       setResponse(data as ChatResponse);
-      if (data.conversationId) setConversationId(data.conversationId);
-      console.log("[RAG] Response:", data);
+      if (data.conversationId) {
+        onConversationCreated?.(data.conversationId);
+      }
+      onMessageSent?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erreur réseau";
       setError(msg);
@@ -62,52 +73,49 @@ export default function RagChatInput() {
   }
 
   return (
-    <div style={{ maxWidth: 720, margin: "0 auto" }}>
-      <form onSubmit={handleSubmit} style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-        <input
+    <div className="w-full max-w-2xl">
+      <form onSubmit={handleSubmit} className="flex gap-2">
+        <Input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Pose ta question sur le corpus…"
           disabled={loading}
-          style={{
-            flex: 1,
-            padding: "0.5rem 0.75rem",
-            fontSize: "1rem",
-          }}
+          className="flex-1"
         />
-        <button type="submit" disabled={loading} style={{ padding: "0.5rem 1rem" }}>
+        <Button type="submit" disabled={loading}>
           {loading ? "…" : "Envoyer"}
-        </button>
+        </Button>
       </form>
-      {conversationId && (
-        <p style={{ fontSize: "0.85rem", color: "#666", marginBottom: "0.5rem" }}>
-          Conversation : <code>{conversationId.slice(0, 8)}…</code>
-        </p>
-      )}
       {error && (
-        <pre style={{ color: "crimson", fontSize: "0.9rem", whiteSpace: "pre-wrap" }}>{error}</pre>
+        <pre className="mt-2 whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 p-2 text-sm text-destructive">
+          {error}
+        </pre>
       )}
       {response && (
-        <div style={{ marginTop: "1rem", border: "1px solid #eee", padding: "1rem", borderRadius: 4 }}>
-          <h3 style={{ marginTop: 0 }}>Réponse</h3>
-          <pre style={{ whiteSpace: "pre-wrap", fontSize: "0.9rem", margin: 0 }}>{response.answer}</pre>
-          {response.sources?.length > 0 && (
-            <>
-              <h4 style={{ marginTop: "1rem", marginBottom: "0.5rem" }}>Sources</h4>
-              <ul style={{ margin: 0, paddingLeft: "1.25rem", fontSize: "0.9rem" }}>
-                {response.sources.map((s) => (
-                  <li key={s.index}>
-                    [{s.index}] {s.title ?? "Sans titre"} — {s.excerpt.slice(0, 80)}…
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <p style={{ fontSize: "0.8rem", color: "#666", marginTop: "0.5rem", marginBottom: 0 }}>
-            conversationId: {response.conversationId} — messageId: {response.messageId}
-          </p>
-        </div>
+        <Card className="mt-4">
+          <CardHeader className="pb-2">
+            <h3 className="text-sm font-semibold">Réponse</h3>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-0">
+            <pre className="whitespace-pre-wrap break-words text-sm">{response.answer}</pre>
+            {response.sources && response.sources.length > 0 && (
+              <>
+                <h4 className="text-sm font-medium">Sources</h4>
+                <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
+                  {response.sources.map((s) => (
+                    <li key={s.index}>
+                      [{s.index}] {s.title ?? "Sans titre"} — {s.excerpt.slice(0, 80)}…
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <p className="text-xs text-muted-foreground">
+              conversationId: {response.conversationId} — messageId: {response.messageId}
+            </p>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

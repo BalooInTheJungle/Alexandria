@@ -1,6 +1,6 @@
 /**
  * Lecture des paramètres RAG depuis la table rag_settings (admin).
- * Utilisé par l’API chat pour garde-fou, match_count, contexte, etc.
+ * Utilisé par l'API chat pour garde-fou, match_count, contexte, etc.
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -27,6 +27,22 @@ const DEFAULT_SETTINGS: RagSettings = {
   vector_weight: 1,
   rrf_k: 60,
   hybrid_top_k: 20,
+};
+
+/** Bornes de validation pour PATCH admin. Valeur hors bornes → 400 sans modifier la base. */
+export const RAG_SETTINGS_BOUNDS: Record<
+  keyof RagSettings,
+  { min?: number; max?: number; maxLength?: number; type: "integer" | "float" | "string" }
+> = {
+  context_turns: { min: 1, max: 10, type: "integer" },
+  similarity_threshold: { min: 0.1, max: 0.9, type: "float" },
+  guard_message: { maxLength: 1000, type: "string" },
+  match_count: { min: 5, max: 100, type: "integer" },
+  match_threshold: { min: 0, max: 1, type: "float" },
+  fts_weight: { min: 0, max: 10, type: "float" },
+  vector_weight: { min: 0, max: 10, type: "float" },
+  rrf_k: { min: 1, max: 200, type: "integer" },
+  hybrid_top_k: { min: 5, max: 100, type: "integer" },
 };
 
 function parseFloatSafe(value: string | null, fallback: number): number {
@@ -127,7 +143,7 @@ export function validateRagSettings(
 
 /**
  * Met à jour les paramètres RAG en base. Valide les bornes avant écriture.
- * En cas d’erreur de validation, ne modifie rien et retourne { ok: false, error }.
+ * En cas d'erreur de validation, ne modifie rien et retourne { ok: false, error }.
  */
 export async function updateRagSettings(
   partial: Partial<RagSettings>
