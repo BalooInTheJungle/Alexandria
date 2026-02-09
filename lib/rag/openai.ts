@@ -60,7 +60,8 @@ export async function generateRagAnswer(
   history: HistoryMessage[] = [],
   lang: DetectedLang = "en"
 ): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  // Supprimer espaces, retours à la ligne, etc. (collage depuis le dashboard peut ajouter des caractères invalides pour les en-têtes HTTP)
+  const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/\s/g, "").trim();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
   }
@@ -94,7 +95,7 @@ export async function createRagAnswerStream(
   history: HistoryMessage[] = [],
   lang: DetectedLang = "en"
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/\s/g, "").trim();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
   }
