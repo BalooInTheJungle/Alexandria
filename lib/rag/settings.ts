@@ -1,6 +1,6 @@
 /**
  * Lecture des paramètres RAG depuis la table rag_settings (admin).
- * Utilisé par l’API chat pour garde-fou, match_count, contexte, etc.
+ * Utilisé par l'API chat pour garde-fou, match_count, contexte, etc.
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -93,65 +93,94 @@ export async function getRagSettings(): Promise<RagSettings> {
   };
 }
 
-/** Résultat de la validation d’un body PATCH : soit les mises à jour à appliquer, soit une erreur. */
-export type ValidateRagSettingsResult =
-  | { ok: true; updates: Record<string, string> }
-  | { ok: false; error: string };
+/** Bornes de validation pour chaque clé (min, max). */
+const BOUNDS: Record<
+  keyof RagSettings,
+  { min: number; max: number } | null
+> = {
+  context_turns: { min: 1, max: 10 },
+  similarity_threshold: { min: 0.1, max: 0.9 },
+  guard_message: null,
+  match_count: { min: 5, max: 100 },
+  match_threshold: { min: 0, max: 1 },
+  fts_weight: { min: 0, max: 10 },
+  vector_weight: { min: 0, max: 10 },
+  rrf_k: { min: 1, max: 200 },
+  hybrid_top_k: { min: 5, max: 100 },
+};
 
 /**
- * Valide un body partiel pour PATCH rag_settings. N’accepte que les clés connues ; valeurs hors bornes → error.
- * En cas d’erreur, aucune modification en base ne doit être faite.
+ * Valide un objet partiel de paramètres RAG. Retourne une erreur texte si invalide.
  */
-export function validateRagSettingsPatch(body: unknown): ValidateRagSettingsResult {
-  if (body == null || typeof body !== "object" || Array.isArray(body)) {
-    return { ok: false, error: "Body must be an object" };
-  }
-  const updates: Record<string, string> = {};
-  const keys = Object.keys(RAG_SETTINGS_BOUNDS) as (keyof RagSettings)[];
-  for (const key of keys) {
-    const v = (body as Record<string, unknown>)[key];
-    if (v === undefined) continue;
-    const bounds = RAG_SETTINGS_BOUNDS[key];
-    if (bounds.type === "string") {
-      const s = typeof v === "string" ? v : String(v);
-      if (bounds.maxLength != null && s.length > bounds.maxLength) {
-        return { ok: false, error: `${key} must be at most ${bounds.maxLength} characters` };
+export function validateRagSettings(
+  partial: Partial<RagSettings>
+): { ok: true } | { ok: false; error: string } {
+  for (const key of Object.keys(partial) as (keyof RagSettings)[]) {
+    const value = partial[key];
+    if (value === undefined) continue;
+    const b = BOUNDS[key];
+    if (key === "guard_message") {
+      if (typeof value !== "string") {
+        return { ok: false, error: `guard_message doit être une chaîne` };
       }
-      updates[key] = s;
       continue;
     }
-    const n = bounds.type === "integer" ? parseInt(String(v), 10) : Number(v);
-    if (!Number.isFinite(n)) {
-      return { ok: false, error: `${key} must be a valid number` };
+    if (b) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) {
+        return { ok: false, error: `${key} doit être un nombre` };
+      }
+      if (n < b.min || n > b.max) {
+        return {
+          ok: false,
+          error: `${key} doit être entre ${b.min} et ${b.max} (reçu: ${n})`,
+        };
+      }
     }
-    if (bounds.min != null && n < bounds.min) {
-      return { ok: false, error: `${key} must be >= ${bounds.min}` };
-    }
-    if (bounds.max != null && n > bounds.max) {
-      return { ok: false, error: `${key} must be <= ${bounds.max}` };
-    }
-    updates[key] = String(bounds.type === "integer" ? Math.round(n) : n);
   }
-  return { ok: true, updates };
+  return { ok: true };
 }
 
 /**
- * Met à jour la table rag_settings avec les paires key/value fournies.
- * Chaque clé doit déjà exister en base (UPDATE uniquement, pas d’INSERT).
+ * Met à jour les paramètres RAG en base. Valide les bornes avant écriture.
+ * En cas d'erreur de validation, ne modifie rien et retourne { ok: false, error }.
  */
-export async function updateRagSettings(updates: Record<string, string>): Promise<void> {
-  if (Object.keys(updates).length === 0) return;
+export async function updateRagSettings(
+  partial: Partial<RagSettings>
+): Promise<RagSettings | { ok: false; error: string }> {
+  const validation = validateRagSettings(partial);
+  if (!validation.ok) return validation;
+
   const supabase = await createClient();
-  const now = new Date().toISOString();
-  for (const [key, value] of Object.entries(updates)) {
+  const keys: (keyof RagSettings)[] = [
+    "context_turns",
+    "similarity_threshold",
+    "guard_message",
+    "match_count",
+    "match_threshold",
+    "fts_weight",
+    "vector_weight",
+    "rrf_k",
+    "hybrid_top_k",
+  ];
+
+  for (const key of keys) {
+    const value = partial[key];
+    if (value === undefined) continue;
     const { error } = await supabase
       .from("rag_settings")
-      .update({ value, updated_at: now })
+      .update({
+        value: String(value),
+        updated_at: new Date().toISOString(),
+      })
       .eq("key", key);
+
     if (error) {
       LOG("updateRagSettings error", key, error.message);
-      throw new Error(`Failed to update rag_settings.${key}: ${error.message}`);
+      return { ok: false, error: error.message };
     }
   }
-  LOG("updateRagSettings", { keys: Object.keys(updates) });
+
+  LOG("updateRagSettings ok", Object.keys(partial));
+  return getRagSettings();
 }

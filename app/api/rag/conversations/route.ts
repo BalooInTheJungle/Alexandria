@@ -3,21 +3,23 @@ import { listConversations } from "@/lib/rag/conversation-persistence";
 
 /**
  * GET /api/rag/conversations
- * Liste des conversations (ordre updated_at desc).
- * Query: ?limit=50 (optionnel, défaut 50, max 100).
+ * Liste des conversations : { id, title, created_at, updated_at }[], ordre updated_at desc.
+ * Query : ?limit=50 (défaut 50, max 100).
  */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const limitParam = searchParams.get("limit");
-    const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10) || 50)) : 50;
+    const limit = Math.min(
+      Math.max(1, parseInt(searchParams.get("limit") ?? "50", 10) || 50),
+      100
+    );
 
-    const conversations = await listConversations(limit);
-    return NextResponse.json(conversations);
+    const list = await listConversations(limit);
+    return NextResponse.json(list);
   } catch (e) {
-    console.error("[RAG/conversations] GET error", e);
+    console.error("[API] GET /api/rag/conversations", e);
     return NextResponse.json(
-      { error: "Failed to list conversations" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

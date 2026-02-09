@@ -1,38 +1,41 @@
 import { NextResponse } from "next/server";
-import { updateConversationTitle, deleteConversation } from "@/lib/rag/conversation-persistence";
+import {
+  updateConversationTitle,
+  deleteConversation,
+} from "@/lib/rag/conversation-persistence";
 
-type RouteParams = { params: Promise<{ id: string }> };
+type Params = { params: Promise<{ id: string }> };
 
 /**
  * PATCH /api/rag/conversations/[id]
- * Body: { "title": "Nouveau titre" }
+ * Modifier le titre. Body : { "title": "Nouveau titre" }.
  */
-export async function PATCH(request: Request, { params }: RouteParams) {
+export async function PATCH(request: Request, { params }: Params) {
   try {
     const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Missing conversation id" }, { status: 400 });
     }
 
-    const body = await request.json().catch(() => ({}));
-    const title = typeof body?.title === "string" ? body.title : undefined;
+    const body = await request.json();
+    const title =
+      typeof body?.title === "string" ? body.title.trim() : undefined;
     if (title === undefined) {
       return NextResponse.json(
-        { error: "Body must include 'title' (string)" },
+        { error: "Body must include { \"title\": \"...\" }" },
         { status: 400 }
       );
     }
 
-    const updated = await updateConversationTitle(id, title);
-    if (!updated) {
-      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    const result = await updateConversationTitle(id, title);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
-    const safeTitle = (title ?? "").trim().slice(0, 255) || "Nouvelle conversation";
-    return NextResponse.json({ id, title: safeTitle });
+    return NextResponse.json({ ok: true });
   } catch (e) {
-    console.error("[RAG/conversations/[id]] PATCH error", e);
+    console.error("[API] PATCH /api/rag/conversations/[id]", e);
     return NextResponse.json(
-      { error: "Failed to update conversation" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }
@@ -42,22 +45,22 @@ export async function PATCH(request: Request, { params }: RouteParams) {
  * DELETE /api/rag/conversations/[id]
  * Supprime la conversation (messages en cascade).
  */
-export async function DELETE(_request: Request, { params }: RouteParams) {
+export async function DELETE(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
     if (!id) {
       return NextResponse.json({ error: "Missing conversation id" }, { status: 400 });
     }
 
-    const deleted = await deleteConversation(id);
-    if (!deleted) {
-      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    const result = await deleteConversation(id);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
-    return new NextResponse(null, { status: 204 });
+    return NextResponse.json({ ok: true });
   } catch (e) {
-    console.error("[RAG/conversations/[id]] DELETE error", e);
+    console.error("[API] DELETE /api/rag/conversations/[id]", e);
     return NextResponse.json(
-      { error: "Failed to delete conversation" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

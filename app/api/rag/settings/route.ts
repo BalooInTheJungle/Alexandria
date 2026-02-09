@@ -1,23 +1,22 @@
 import { NextResponse } from "next/server";
 import {
   getRagSettings,
-  validateRagSettingsPatch,
   updateRagSettings,
+  type RagSettings,
 } from "@/lib/rag/settings";
 
 /**
  * GET /api/rag/settings
- * Retourne toutes les clés/valeurs des paramètres RAG (pour le panneau admin).
- * Même structure que celle utilisée par le chat (nombres parsés, défauts appliqués).
+ * Retourne toutes les clés/valeurs des paramètres RAG (pour l'admin).
  */
 export async function GET() {
   try {
     const settings = await getRagSettings();
     return NextResponse.json(settings);
   } catch (e) {
-    console.error("[RAG/settings] GET error", e);
+    console.error("[API] GET /api/rag/settings", e);
     return NextResponse.json(
-      { error: "Failed to load settings" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }
@@ -25,32 +24,56 @@ export async function GET() {
 
 /**
  * PATCH /api/rag/settings
- * Body : objet partiel avec les clés à mettre à jour (ex. { "similarity_threshold": 0.4 }).
- * Validation des bornes ; en cas d’erreur → 400 sans modifier la base.
- * Clés acceptées : context_turns, similarity_threshold, guard_message, match_count,
- * match_threshold, fts_weight, vector_weight, rrf_k, hybrid_top_k.
+ * Met à jour des clés. Body : objet partiel RagSettings.
+ * Valide les bornes ; en cas d'erreur retourne 400 sans modifier la base.
  */
 export async function PATCH(request: Request) {
   try {
-    const body = await request.json().catch(() => null);
-    const validation = validateRagSettingsPatch(body);
-    if (!validation.ok) {
+    const body = await request.json();
+    if (body === null || typeof body !== "object") {
       return NextResponse.json(
-        { error: validation.error },
+        { error: "Body must be a JSON object" },
         { status: 400 }
       );
     }
-    if (Object.keys(validation.updates).length === 0) {
-      const settings = await getRagSettings();
-      return NextResponse.json(settings);
+
+    const partial: Partial<RagSettings> = {};
+    const allowed: (keyof RagSettings)[] = [
+      "context_turns",
+      "similarity_threshold",
+      "guard_message",
+      "match_count",
+      "match_threshold",
+      "fts_weight",
+      "vector_weight",
+      "rrf_k",
+      "hybrid_top_k",
+    ];
+
+    for (const key of allowed) {
+      if (body[key] !== undefined) {
+        (partial as Record<string, unknown>)[key] = body[key];
+      }
     }
-    await updateRagSettings(validation.updates);
-    const settings = await getRagSettings();
-    return NextResponse.json(settings);
+
+    if (Object.keys(partial).length === 0) {
+      return NextResponse.json(
+        { error: "Body must include at least one setting key" },
+        { status: 400 }
+      );
+    }
+
+    const result = await updateRagSettings(partial);
+
+    if ("ok" in result && result.ok === false) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    return NextResponse.json(result);
   } catch (e) {
-    console.error("[RAG/settings] PATCH error", e);
+    console.error("[API] PATCH /api/rag/settings", e);
     return NextResponse.json(
-      { error: "Failed to update settings" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

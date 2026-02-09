@@ -9,7 +9,7 @@ const LOG = (msg: string, ...args: unknown[]) => console.log("[RAG/conversation]
 
 /**
  * Récupère une conversation existante ou en crée une nouvelle.
- * - Si conversationId fourni et trouvé : met à jour updated_at et retourne l’id.
+ * - Si conversationId fourni et trouvé : met à jour updated_at et retourne l'id.
  * - Sinon : crée une nouvelle conversation avec le titre donné.
  */
 export async function getOrCreateConversation(
@@ -76,10 +76,9 @@ export type MessageRow = {
   id: string;
   role: string;
   content: string;
+  sources?: unknown;
   created_at: string;
 };
-
-export type MessageWithSources = MessageRow & { sources?: unknown };
 
 export type ConversationRow = {
   id: string;
@@ -89,33 +88,7 @@ export type ConversationRow = {
 };
 
 /**
- * Récupère les N derniers messages de la conversation (ordre created_at desc).
- * Utilisé pour construire l’historique envoyé au LLM (contexte multi-tours).
- */
-export async function getLastMessages(
-  conversationId: string,
-  limit: number
-): Promise<MessageRow[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("messages")
-    .select("id, role, content, created_at")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    console.error("[RAG/conversation] getLastMessages error", error);
-    return [];
-  }
-  const rows = (data ?? []) as MessageRow[];
-  LOG("getLastMessages", { conversationId, limit, count: rows.length });
-  return rows;
-}
-
-/**
- * Liste des conversations (ordre updated_at desc).
- * Utilisé par GET /api/rag/conversations.
+ * Liste les conversations de l'utilisateur (ordre updated_at desc).
  */
 export async function listConversations(limit = 50): Promise<ConversationRow[]> {
   const supabase = await createClient();
@@ -129,18 +102,20 @@ export async function listConversations(limit = 50): Promise<ConversationRow[]> 
     console.error("[RAG/conversation] listConversations error", error);
     return [];
   }
-  return (data ?? []) as ConversationRow[];
+  const rows = (data ?? []) as ConversationRow[];
+  LOG("listConversations", { count: rows.length });
+  return rows;
 }
 
 /**
- * Messages d’une conversation avec pagination cursor (ordre created_at asc).
- * cursor = id du dernier message de la page précédente ; page suivante = messages avec created_at > ce message.
+ * Récupère les messages d'une conversation avec pagination par cursor.
+ * cursor = id du dernier message reçu ; retourne les limit messages suivants (ordre created_at asc).
  */
-export async function getMessagesPaginated(
+export async function getMessages(
   conversationId: string,
-  options: { cursor?: string; limit?: number } = {}
-): Promise<MessageWithSources[]> {
-  const { cursor, limit = 20 } = options;
+  opts: { cursor?: string; limit?: number } = {}
+): Promise<MessageRow[]> {
+  const { cursor, limit = 20 } = opts;
   const supabase = await createClient();
   const pageSize = Math.min(Math.max(1, limit), 100);
 
@@ -164,55 +139,78 @@ export async function getMessagesPaginated(
   }
 
   const { data, error } = await query;
+
   if (error) {
-    console.error("[RAG/conversation] getMessagesPaginated error", error);
+    console.error("[RAG/conversation] getMessages error", error);
     return [];
   }
-  return (data ?? []) as MessageWithSources[];
+  const rows = (data ?? []) as MessageRow[];
+  LOG("getMessages", { conversationId, cursor: !!cursor, count: rows.length });
+  return rows;
 }
 
 /**
- * Met à jour le titre d’une conversation.
- * Retourne true si mise à jour, false si conversation introuvable.
+ * Met à jour le titre d'une conversation.
  */
 export async function updateConversationTitle(
-  conversationId: string,
+  id: string,
   title: string
-): Promise<boolean> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const supabase = await createClient();
   const safeTitle = (title ?? "").trim().slice(0, 255) || "Nouvelle conversation";
-  const { data, error } = await supabase
+
+  const { error } = await supabase
     .from("conversations")
     .update({ title: safeTitle, updated_at: new Date().toISOString() })
-    .eq("id", conversationId)
-    .select("id")
-    .single();
+    .eq("id", id);
 
-  if (error || !data) {
-    LOG("updateConversationTitle: not found or error", { conversationId, error: error?.message });
-    return false;
+  if (error) {
+    LOG("updateConversationTitle error", id, error.message);
+    return { ok: false, error: error.message };
   }
-  LOG("updateConversationTitle", { conversationId, title: safeTitle });
-  return true;
+  LOG("updateConversationTitle", { id, title: safeTitle });
+  return { ok: true };
 }
 
 /**
  * Supprime une conversation (les messages sont supprimés en cascade).
- * Retourne true si supprimée, false si introuvable.
  */
-export async function deleteConversation(conversationId: string): Promise<boolean> {
+export async function deleteConversation(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("conversations")
-    .delete()
-    .eq("id", conversationId)
-    .select("id");
+
+  const { error } = await supabase.from("conversations").delete().eq("id", id);
 
   if (error) {
-    console.error("[RAG/conversation] deleteConversation error", error);
-    return false;
+    LOG("deleteConversation error", id, error.message);
+    return { ok: false, error: error.message };
   }
-  const deleted = Array.isArray(data) && data.length > 0;
-  if (deleted) LOG("deleteConversation", { conversationId });
-  return deleted;
+  LOG("deleteConversation", { id });
+  return { ok: true };
+}
+
+/**
+ * Récupère les N derniers messages de la conversation (ordre created_at desc).
+ * Utilisé pour construire l'historique envoyé au LLM (contexte multi-tours).
+ */
+export async function getLastMessages(
+  conversationId: string,
+  limit: number
+): Promise<MessageRow[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id, role, content, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[RAG/conversation] getLastMessages error", error);
+    return [];
+  }
+  const rows = (data ?? []) as MessageRow[];
+  LOG("getLastMessages", { conversationId, limit, count: rows.length });
+  return rows;
 }

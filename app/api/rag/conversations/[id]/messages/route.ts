@@ -1,31 +1,36 @@
 import { NextResponse } from "next/server";
-import { getMessagesPaginated } from "@/lib/rag/conversation-persistence";
+import { getMessages } from "@/lib/rag/conversation-persistence";
 
-type RouteParams = { params: Promise<{ id: string }> };
+type Params = { params: Promise<{ id: string }> };
 
 /**
  * GET /api/rag/conversations/[id]/messages
- * Messages de la conversation (ordre created_at asc), pagination cursor.
- * Query: ?cursor=message_id&limit=20 (cursor = id du dernier message de la page précédente).
+ * Messages de la conversation, pagination par cursor.
+ * Query : ?cursor=message_id&limit=20 (ordre created_at asc).
  */
-export async function GET(request: Request, { params }: RouteParams) {
+export async function GET(request: Request, { params }: Params) {
   try {
     const { id: conversationId } = await params;
     if (!conversationId) {
-      return NextResponse.json({ error: "Missing conversation id" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing conversation id" },
+        { status: 400 }
+      );
     }
 
     const { searchParams } = new URL(request.url);
     const cursor = searchParams.get("cursor") ?? undefined;
-    const limitParam = searchParams.get("limit");
-    const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10) || 20)) : 20;
+    const limit = Math.min(
+      Math.max(1, parseInt(searchParams.get("limit") ?? "20", 10) || 20),
+      100
+    );
 
-    const messages = await getMessagesPaginated(conversationId, { cursor, limit });
+    const messages = await getMessages(conversationId, { cursor, limit });
     return NextResponse.json(messages);
   } catch (e) {
-    console.error("[RAG/conversations/[id]/messages] GET error", e);
+    console.error("[API] GET /api/rag/conversations/[id]/messages", e);
     return NextResponse.json(
-      { error: "Failed to get messages" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

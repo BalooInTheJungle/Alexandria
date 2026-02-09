@@ -4,6 +4,18 @@
 
 ---
 
+## Ce qu’il te reste à faire (résumé)
+
+| Priorité | Étape | Statut | Action |
+|----------|--------|--------|--------|
+| **P2.1** | API conversations & messages | **À faire** | Créer `app/api/rag/conversations/route.ts` (GET liste), `app/api/rag/conversations/[id]/route.ts` (PATCH, DELETE), `app/api/rag/conversations/[id]/messages/route.ts` (GET avec cursor). Étendre `lib/rag/conversation-persistence.ts` si besoin (liste, messages paginés, mise à jour titre, suppression). |
+| **P2.2** | API admin rag_settings | **À faire** | Créer `app/api/rag/settings/route.ts` (GET + PATCH). Ajouter dans `lib/rag/settings.ts` une fonction de mise à jour avec **validation des bornes** (context_turns 1–10, etc.) ; en erreur → 400 sans modifier la base. |
+| **P3** | Rétention 30 jours | **À faire** | Créer `app/api/cron/retention/route.ts` : vérifier `CRON_SECRET`, supprimer les conversations où `updated_at < now() - 30 days`. Documenter l’appel (Vercel Cron ou script manuel). |
+
+**Déjà en place** : P1 (bilingue FR/EN) — migration DB, back Node (detect-lang, search, openai), ingestion Python. Chat, garde-fou, persistance conversation/messages côté écriture, lecture des paramètres RAG pour le chat.
+
+---
+
 ## Déjà en place (back)
 
 | Élément | Détail |
@@ -98,9 +110,10 @@ Fichier : `app/api/rag/settings/route.ts`. Bornes : context_turns 1–10, simila
 1. ~~**P1.1** — Migration bilingue (DB).~~ **Fait.**  
 2. ~~**P1.2** — Back Node : détection langue + pipeline EN/FR + instruction dans le prompt.~~ **Fait.**  
 3. ~~**P1.3** — Ingestion Python : traduction + embedding_fr + content_fr.~~ **Fait.**  
+<<<<<<< HEAD
 4. ~~**P2.1** — API conversations (GET liste, GET messages, PATCH, DELETE).~~ **Fait.**  
 5. ~~**P2.2** — API admin rag_settings (GET + PATCH avec validation).~~ **Fait.**  
-6. ~~**P3** — Route rétention 30 jours + doc.~~ **Fait.**
+6. **P3** — Route rétention 30 jours + doc. **À faire.**
 
 ---
 
