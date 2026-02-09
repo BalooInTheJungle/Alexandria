@@ -5,14 +5,15 @@
  * Sur Vercel (serverless), le filesystem est en lecture seule : on redirige le cache vers /tmp.
  */
 
-import { pipeline, env } from "@xenova/transformers";
+import { pipeline } from "@xenova/transformers";
 
 const MODEL = "Xenova/all-MiniLM-L6-v2";
 const DIM = 384;
 
-// Vercel / serverless : définir le cache dès le chargement du module (avant tout appel au pipeline)
+// Vercel : filesystem du déploiement en lecture seule ; passer cache_dir dans les options du pipeline
+const PIPELINE_OPTS: { quantized: boolean; cache_dir?: string } = { quantized: true };
 if (typeof process !== "undefined" && process.env?.VERCEL === "1") {
-  env.cacheDir = "/tmp/transformers-cache";
+  PIPELINE_OPTS.cache_dir = "/tmp/transformers-cache";
 }
 
 let extractor: Awaited<ReturnType<typeof pipeline>> | null = null;
@@ -20,9 +21,7 @@ let extractor: Awaited<ReturnType<typeof pipeline>> | null = null;
 async function getExtractor() {
   if (extractor) return extractor;
   console.log("[RAG/embed] Loading model", MODEL);
-  extractor = await pipeline("feature-extraction", MODEL, {
-    quantized: true,
-  });
+  extractor = await pipeline("feature-extraction", MODEL, PIPELINE_OPTS);
   console.log("[RAG/embed] Model loaded");
   return extractor;
 }
