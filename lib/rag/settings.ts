@@ -76,3 +76,95 @@ export async function getRagSettings(): Promise<RagSettings> {
     hybrid_top_k: parseIntSafe(map.get("hybrid_top_k") ?? null, DEFAULT_SETTINGS.hybrid_top_k),
   };
 }
+
+/** Bornes de validation pour chaque clé (min, max). */
+const BOUNDS: Record<
+  keyof RagSettings,
+  { min: number; max: number } | null
+> = {
+  context_turns: { min: 1, max: 10 },
+  similarity_threshold: { min: 0.1, max: 0.9 },
+  guard_message: null,
+  match_count: { min: 5, max: 100 },
+  match_threshold: { min: 0, max: 1 },
+  fts_weight: { min: 0, max: 10 },
+  vector_weight: { min: 0, max: 10 },
+  rrf_k: { min: 1, max: 200 },
+  hybrid_top_k: { min: 5, max: 100 },
+};
+
+/**
+ * Valide un objet partiel de paramètres RAG. Retourne une erreur texte si invalide.
+ */
+export function validateRagSettings(
+  partial: Partial<RagSettings>
+): { ok: true } | { ok: false; error: string } {
+  for (const key of Object.keys(partial) as (keyof RagSettings)[]) {
+    const value = partial[key];
+    if (value === undefined) continue;
+    const b = BOUNDS[key];
+    if (key === "guard_message") {
+      if (typeof value !== "string") {
+        return { ok: false, error: `guard_message doit être une chaîne` };
+      }
+      continue;
+    }
+    if (b) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) {
+        return { ok: false, error: `${key} doit être un nombre` };
+      }
+      if (n < b.min || n > b.max) {
+        return {
+          ok: false,
+          error: `${key} doit être entre ${b.min} et ${b.max} (reçu: ${n})`,
+        };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Met à jour les paramètres RAG en base. Valide les bornes avant écriture.
+ * En cas d’erreur de validation, ne modifie rien et retourne { ok: false, error }.
+ */
+export async function updateRagSettings(
+  partial: Partial<RagSettings>
+): Promise<RagSettings | { ok: false; error: string }> {
+  const validation = validateRagSettings(partial);
+  if (!validation.ok) return validation;
+
+  const supabase = await createClient();
+  const keys: (keyof RagSettings)[] = [
+    "context_turns",
+    "similarity_threshold",
+    "guard_message",
+    "match_count",
+    "match_threshold",
+    "fts_weight",
+    "vector_weight",
+    "rrf_k",
+    "hybrid_top_k",
+  ];
+
+  for (const key of keys) {
+    const value = partial[key];
+    if (value === undefined) continue;
+    const { error } = await supabase
+      .from("rag_settings")
+      .update({
+        value: String(value),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("key", key);
+
+    if (error) {
+      LOG("updateRagSettings error", key, error.message);
+      return { ok: false, error: error.message };
+    }
+  }
+
+  LOG("updateRagSettings ok", Object.keys(partial));
+  return getRagSettings();
+}
