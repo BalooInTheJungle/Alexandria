@@ -49,6 +49,18 @@ function buildMessages(
 
 const LOG = (msg: string, ...args: unknown[]) => console.log("[RAG/openai]", msg, ...args);
 
+/** Normalise la clé API pour éviter "not a legal HTTP header value" (newlines/espaces depuis les env Vercel). */
+function getSanitizedOpenAIKey(): string {
+  const raw = process.env.OPENAI_API_KEY ?? "";
+  // Première ligne seulement (évite newline/carriage return collés au copier-coller)
+  const firstLine = raw.split(/\r?\n/)[0] ?? "";
+  // Retirer un préfixe "Bearer " si présent (évite double "Bearer Bearer ...")
+  const withoutBearer = firstLine.replace(/^\s*Bearer\s+/i, "").trim();
+  // Ne garder que caractères ASCII imprimables (RFC 7230)
+  const apiKey = withoutBearer.replace(/[^\x20-\x7E]/g, "").trim();
+  return apiKey;
+}
+
 /**
  * Appelle l’API OpenAI avec le contexte (chunks) et la question.
  * Retourne le contenu du message assistant (réponse avec citations [1], [2]…).
@@ -60,8 +72,7 @@ export async function generateRagAnswer(
   history: HistoryMessage[] = [],
   lang: DetectedLang = "en"
 ): Promise<string> {
-  // Caractères non imprimables / newlines rendent l'en-tête HTTP invalide ; ne garder que l'ASCII imprimable
-  const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/[^\x20-\x7E]/g, "").trim();
+  const apiKey = getSanitizedOpenAIKey();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
   }
@@ -95,7 +106,7 @@ export async function createRagAnswerStream(
   history: HistoryMessage[] = [],
   lang: DetectedLang = "en"
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-  const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/[^\x20-\x7E]/g, "").trim();
+  const apiKey = getSanitizedOpenAIKey();
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
   }
