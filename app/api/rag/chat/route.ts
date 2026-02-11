@@ -62,17 +62,25 @@ export async function POST(request: Request) {
       (chunks.length === 0 || bestVectorSimilarity < settings.similarity_threshold);
     // Quand le garde-fou est désactivé : on n’utilise le mode "contexte uniquement" que si la
     // similarité est vraiment élevée (sinon des chunks bruit donnent quand même une réponse "rien dans le contexte").
+    const bestSimilarityInChunks =
+      chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
     const MIN_SIMILARITY_FOR_STRICT_RAG = 0.35;
     const contextRelevant =
       chunks.length > 0 &&
-      bestVectorSimilarity >=
+      bestSimilarityInChunks >=
         (settings.use_similarity_guard
           ? settings.similarity_threshold
           : MIN_SIMILARITY_FOR_STRICT_RAG);
     const allowGeneralKnowledge =
       !settings.use_similarity_guard && !contextRelevant;
 
-    LOG("Search result", { chunksCount: chunks.length, bestVectorSimilarity, isOutOfDomain, allowGeneralKnowledge });
+    LOG("Search result", {
+      chunksCount: chunks.length,
+      bestVectorSimilarity,
+      bestSimilarityInChunks,
+      isOutOfDomain,
+      allowGeneralKnowledge,
+    });
 
     const conversationTitle = query.slice(0, 50) + (query.length > 50 ? "…" : "");
     const { id: convId } = await getOrCreateConversation(conversationId, conversationTitle);
