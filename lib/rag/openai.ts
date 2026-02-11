@@ -14,9 +14,15 @@ Règles :
 - Cite tes sources à la fin des phrases concernées avec des références [1], [2], etc., correspondant aux numéros des extraits fournis.
 - Ne invente pas d'information ni de source.`;
 
-function systemPromptWithLang(lang: DetectedLang): string {
+const SYSTEM_PROMPT_GENERAL_KNOWLEDGE = `Tu es un assistant qui répond aux questions. Le contexte fourni (corpus de documents) est vide ou peu pertinent pour cette question.
+Règles :
+- Tu peux répondre en t'appuyant sur tes connaissances générales. Indique brièvement en début ou fin de réponse que ta réponse ne provient pas des documents du corpus (ex. : "D'après mes connaissances générales…" ou "Cette information ne figure pas dans le corpus fourni ; voici ce que je peux en dire : …").
+- Sois utile, factuel et concis. Ne cite pas de numéros [1], [2] puisqu'il n'y a pas d'extraits fournis.`;
+
+function systemPromptWithLang(lang: DetectedLang, allowGeneralKnowledge: boolean): string {
+  const base = allowGeneralKnowledge ? SYSTEM_PROMPT_GENERAL_KNOWLEDGE : SYSTEM_PROMPT_BASE;
   const langInstruction = lang === "fr" ? "Réponds en français." : "Réponds en anglais.";
-  return `${SYSTEM_PROMPT_BASE}\n- ${langInstruction}`;
+  return `${base}\n- ${langInstruction}`;
 }
 
 function buildContext(chunks: MatchedChunk[]): string {
@@ -34,13 +40,17 @@ function buildMessages(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[],
-  lang: DetectedLang = "en"
+  lang: DetectedLang = "en",
+  allowGeneralKnowledge = false
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
-  const context = buildContext(chunks);
+  const context =
+    chunks.length > 0
+      ? buildContext(chunks)
+      : "Aucun extrait pertinent dans le corpus pour cette question.";
   const currentUserContent = `Contexte (extraits de documents) :\n\n${context}\n\n---\n\nQuestion : ${question}`;
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPromptWithLang(lang) },
+    { role: "system", content: systemPromptWithLang(lang, allowGeneralKnowledge) },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: currentUserContent },
   ];
@@ -58,7 +68,8 @@ export async function generateRagAnswer(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[] = [],
-  lang: DetectedLang = "en"
+  lang: DetectedLang = "en",
+  allowGeneralKnowledge = false
 ): Promise<string> {
   // Caractères non imprimables / newlines rendent l'en-tête HTTP invalide ; ne garder que l'ASCII imprimable
   const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/[^\x20-\x7E]/g, "").trim();
@@ -67,8 +78,8 @@ export async function generateRagAnswer(
   }
 
   const client = new OpenAI({ apiKey });
-  const messages = buildMessages(question, chunks, history, lang);
-  LOG("generateRagAnswer", { messagesCount: messages.length, chunksCount: chunks.length, lang });
+  const messages = buildMessages(question, chunks, history, lang, allowGeneralKnowledge);
+  LOG("generateRagAnswer", { messagesCount: messages.length, chunksCount: chunks.length, lang, allowGeneralKnowledge });
 
   const response = await client.chat.completions.create({
     model: "gpt-4o-mini",
@@ -93,7 +104,8 @@ export async function createRagAnswerStream(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[] = [],
-  lang: DetectedLang = "en"
+  lang: DetectedLang = "en",
+  allowGeneralKnowledge = false
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
   const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/[^\x20-\x7E]/g, "").trim();
   if (!apiKey) {
@@ -101,8 +113,8 @@ export async function createRagAnswerStream(
   }
 
   const client = new OpenAI({ apiKey });
-  const messages = buildMessages(question, chunks, history, lang);
-  LOG("createRagAnswerStream", { messagesCount: messages.length, chunksCount: chunks.length, lang });
+  const messages = buildMessages(question, chunks, history, lang, allowGeneralKnowledge);
+  LOG("createRagAnswerStream", { messagesCount: messages.length, chunksCount: chunks.length, lang, allowGeneralKnowledge });
 
   const stream = await client.chat.completions.create({
     model: "gpt-4o-mini",

@@ -56,11 +56,15 @@ export async function POST(request: Request) {
       settings,
     });
 
+    const contextRelevant =
+      chunks.length > 0 && bestVectorSimilarity >= settings.similarity_threshold;
     const isOutOfDomain =
       settings.use_similarity_guard &&
       (chunks.length === 0 || bestVectorSimilarity < settings.similarity_threshold);
+    const allowGeneralKnowledge =
+      !settings.use_similarity_guard && !contextRelevant;
 
-    LOG("Search result", { chunksCount: chunks.length, bestVectorSimilarity, isOutOfDomain });
+    LOG("Search result", { chunksCount: chunks.length, bestVectorSimilarity, isOutOfDomain, allowGeneralKnowledge });
 
     const conversationTitle = query.slice(0, 50) + (query.length > 50 ? "…" : "");
     const { id: convId } = await getOrCreateConversation(conversationId, conversationTitle);
@@ -94,7 +98,7 @@ export async function POST(request: Request) {
     if (!useStream) {
       const { generateRagAnswer } = await import("@/lib/rag/openai");
       LOG("Calling OpenAI (non-stream)");
-      const answer = await generateRagAnswer(query, chunks, history, lang);
+      const answer = await generateRagAnswer(query, chunks, history, lang, allowGeneralKnowledge);
       const { id: msgId } = await insertMessage(convId, "assistant", answer, sources);
       LOG("Assistant message inserted", { msgId, answerLength: answer.length });
       return NextResponse.json<ChatResponse>({
@@ -106,7 +110,7 @@ export async function POST(request: Request) {
     }
 
     LOG("Calling OpenAI (stream)");
-    const stream = await createRagAnswerStream(query, chunks, history, lang);
+    const stream = await createRagAnswerStream(query, chunks, history, lang, allowGeneralKnowledge);
 
     const encoder = new TextEncoder();
     let fullContent = "";
