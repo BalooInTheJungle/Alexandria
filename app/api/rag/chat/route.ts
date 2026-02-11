@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     // similarité est vraiment élevée (sinon des chunks bruit donnent quand même une réponse "rien dans le contexte").
     const bestSimilarityInChunks =
       chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
-    const MIN_SIMILARITY_FOR_STRICT_RAG = 0.35;
+    const MIN_SIMILARITY_FOR_STRICT_RAG = 0.5;
     const contextRelevant =
       chunks.length > 0 &&
       bestSimilarityInChunks >=

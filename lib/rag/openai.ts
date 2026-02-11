@@ -14,10 +14,11 @@ Règles :
 - Cite tes sources à la fin des phrases concernées avec des références [1], [2], etc., correspondant aux numéros des extraits fournis.
 - Ne invente pas d'information ni de source.`;
 
-const SYSTEM_PROMPT_GENERAL_KNOWLEDGE = `Tu es un assistant qui répond aux questions. Le contexte fourni (corpus de documents) est vide ou peu pertinent pour cette question.
+const SYSTEM_PROMPT_GENERAL_KNOWLEDGE = `Tu es un assistant qui répond aux questions. Pour cette requête, le corpus de documents fourni est volontairement vide ou hors-sujet : l'utilisateur souhaite une réponse à partir de tes connaissances générales.
 Règles :
-- Tu peux répondre en t'appuyant sur tes connaissances générales. Indique brièvement en début ou fin de réponse que ta réponse ne provient pas des documents du corpus (ex. : "D'après mes connaissances générales…" ou "Cette information ne figure pas dans le corpus fourni ; voici ce que je peux en dire : …").
-- Sois utile, factuel et concis. Ne cite pas de numéros [1], [2] puisqu'il n'y a pas d'extraits fournis.`;
+- Tu DOIS répondre à la question de manière utile et factuelle. Ne dis jamais "Le contexte ne contient pas d'information" ou "Je ne peux pas répondre" : réponds au contraire en t'appuyant sur tes connaissances.
+- Tu peux indiquer brièvement que ta réponse ne provient pas du corpus (ex. "D'après mes connaissances générales…") puis donne la réponse.
+- Sois concis. Ne cite pas de numéros [1], [2].`;
 
 function systemPromptWithLang(lang: DetectedLang, allowGeneralKnowledge: boolean): string {
   const base = allowGeneralKnowledge ? SYSTEM_PROMPT_GENERAL_KNOWLEDGE : SYSTEM_PROMPT_BASE;
@@ -47,7 +48,10 @@ function buildMessages(
     allowGeneralKnowledge || chunks.length === 0
       ? "Aucun extrait pertinent dans le corpus pour cette question."
       : buildContext(chunks);
-  const currentUserContent = `Contexte (extraits de documents) :\n\n${context}\n\n---\n\nQuestion : ${question}`;
+  const generalInstruction = allowGeneralKnowledge
+    ? "Réponds à la question ci-dessous avec tes connaissances générales (ne dis pas que le contexte ne contient pas d'information).\n\n"
+    : "";
+  const currentUserContent = `${generalInstruction}Contexte (extraits de documents) :\n\n${context}\n\n---\n\nQuestion : ${question}`;
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPromptWithLang(lang, allowGeneralKnowledge) },
