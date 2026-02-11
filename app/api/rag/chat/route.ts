@@ -56,11 +56,19 @@ export async function POST(request: Request) {
       settings,
     });
 
-    const contextRelevant =
-      chunks.length > 0 && bestVectorSimilarity >= settings.similarity_threshold;
+    // Quand le garde-fou est activé : blocage si pas de chunks ou similarité < seuil.
     const isOutOfDomain =
       settings.use_similarity_guard &&
       (chunks.length === 0 || bestVectorSimilarity < settings.similarity_threshold);
+    // Quand le garde-fou est désactivé : on n’utilise le mode "contexte uniquement" que si la
+    // similarité est vraiment élevée (sinon des chunks bruit donnent quand même une réponse "rien dans le contexte").
+    const MIN_SIMILARITY_FOR_STRICT_RAG = 0.35;
+    const contextRelevant =
+      chunks.length > 0 &&
+      bestVectorSimilarity >=
+        (settings.use_similarity_guard
+          ? settings.similarity_threshold
+          : MIN_SIMILARITY_FOR_STRICT_RAG);
     const allowGeneralKnowledge =
       !settings.use_similarity_guard && !contextRelevant;
 
