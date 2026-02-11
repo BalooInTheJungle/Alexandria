@@ -182,17 +182,17 @@ export async function updateRagSettings(
     "hybrid_top_k",
   ];
 
+  const now = new Date().toISOString();
   for (const key of keys) {
     const value = partial[key];
     if (value === undefined) continue;
     const valueStr = key === "use_similarity_guard" ? (value ? "true" : "false") : String(value);
     const { error } = await supabase
       .from("rag_settings")
-      .update({
-        value: valueStr,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("key", key);
+      .upsert(
+        { key, value: valueStr, updated_at: now },
+        { onConflict: "key" }
+      );
 
     if (error) {
       LOG("updateRagSettings error", key, error.message);
