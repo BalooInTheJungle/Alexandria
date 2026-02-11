@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
     const settings = await getRagSettings();
     const lang = detectQueryLanguage(query);
-    LOG("Settings", { context_turns: settings.context_turns, similarity_threshold: settings.similarity_threshold, match_count: settings.match_count, lang });
+    LOG("Settings", { use_similarity_guard: settings.use_similarity_guard, context_turns: settings.context_turns, similarity_threshold: settings.similarity_threshold, match_count: settings.match_count, lang });
 
     const { chunks, bestVectorSimilarity } = await searchChunks(query, {
       lang,
@@ -57,7 +57,8 @@ export async function POST(request: Request) {
     });
 
     const isOutOfDomain =
-      chunks.length === 0 || bestVectorSimilarity < settings.similarity_threshold;
+      settings.use_similarity_guard &&
+      (chunks.length === 0 || bestVectorSimilarity < settings.similarity_threshold);
 
     LOG("Search result", { chunksCount: chunks.length, bestVectorSimilarity, isOutOfDomain });
 

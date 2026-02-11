@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 type RagSettings = {
+  use_similarity_guard: boolean;
   context_turns: number;
   similarity_threshold: number;
   guard_message: string;
@@ -21,6 +22,7 @@ type RagSettings = {
 };
 
 const LABELS: Record<keyof RagSettings, string> = {
+  use_similarity_guard: "Activer le garde-fou par similarité",
   context_turns: "Nombre de tours de conversation envoyés au modèle",
   similarity_threshold: "Seuil de similarité (détection hors-sujet)",
   guard_message: "Message affiché quand la question est hors-sujet",
@@ -33,6 +35,8 @@ const LABELS: Record<keyof RagSettings, string> = {
 };
 
 const DESCRIPTIONS: Record<keyof RagSettings, string> = {
+  use_similarity_guard:
+    "Si activé : les questions dont la similarité est sous le seuil reçoivent le message hors-sujet et n'appellent pas le modèle. Si désactivé : le modèle répond toujours (le seuil n'est pas utilisé pour bloquer).",
   context_turns:
     "Combien d’échanges récents (question + réponse) sont renvoyés au modèle pour garder le fil de la conversation. Plus c’est élevé, plus le contexte est long.",
   similarity_threshold:
@@ -57,6 +61,7 @@ const BOUNDS: Record<
   keyof RagSettings,
   { min: number; max: number; step?: number } | null
 > = {
+  use_similarity_guard: null,
   context_turns: { min: 1, max: 10, step: 1 },
   similarity_threshold: { min: 0.1, max: 0.9, step: 0.1 },
   guard_message: null,
@@ -171,7 +176,20 @@ export default function RagSettingsPage() {
                       {bounds.step !== undefined && bounds.step < 1 && " (décimales autorisées)"}.
                     </p>
                   )}
-                  {key === "guard_message" ? (
+                  {key === "use_similarity_guard" ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        id={key}
+                        type="checkbox"
+                        checked={!!form[key]}
+                        onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.checked }))}
+                        className="h-4 w-4 rounded border-input"
+                      />
+                      <Label htmlFor={key} className="cursor-pointer text-sm font-normal">
+                        {form[key] ? "Activé (seuil utilisé)" : "Désactivé (toujours répondre)"}
+                      </Label>
+                    </div>
+                  ) : key === "guard_message" ? (
                     <Textarea
                       id={key}
                       value={String(form[key] ?? "")}

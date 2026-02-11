@@ -6,6 +6,7 @@
 import { createClient } from "@/lib/supabase/server";
 
 export type RagSettings = {
+  use_similarity_guard: boolean;
   context_turns: number;
   similarity_threshold: number;
   guard_message: string;
@@ -18,6 +19,7 @@ export type RagSettings = {
 };
 
 const DEFAULT_SETTINGS: RagSettings = {
+  use_similarity_guard: true,
   context_turns: 3,
   similarity_threshold: 0.5,
   guard_message: "Requête trop éloignée de la recherche fondamentale.",
@@ -29,11 +31,18 @@ const DEFAULT_SETTINGS: RagSettings = {
   hybrid_top_k: 20,
 };
 
+function parseBool(value: string | null, fallback: boolean): boolean {
+  if (value == null || value === "") return fallback;
+  const v = value.toLowerCase().trim();
+  return v === "true" || v === "1" || v === "yes";
+}
+
 /** Bornes de validation pour PATCH admin. Valeur hors bornes → 400 sans modifier la base. */
 export const RAG_SETTINGS_BOUNDS: Record<
   keyof RagSettings,
-  { min?: number; max?: number; maxLength?: number; type: "integer" | "float" | "string" }
+  { min?: number; max?: number; maxLength?: number; type: "integer" | "float" | "string" | "boolean" }
 > = {
+  use_similarity_guard: { type: "boolean" },
   context_turns: { min: 1, max: 10, type: "integer" },
   similarity_threshold: { min: 0.1, max: 0.9, type: "float" },
   guard_message: { maxLength: 1000, type: "string" },
@@ -81,6 +90,7 @@ export async function getRagSettings(): Promise<RagSettings> {
   LOG("Loaded", { keys: Array.from(map.keys()) });
 
   return {
+    use_similarity_guard: parseBool(map.get("use_similarity_guard") ?? null, DEFAULT_SETTINGS.use_similarity_guard),
     context_turns: parseIntSafe(map.get("context_turns") ?? null, DEFAULT_SETTINGS.context_turns),
     similarity_threshold: parseFloatSafe(map.get("similarity_threshold") ?? null, DEFAULT_SETTINGS.similarity_threshold),
     guard_message: (map.get("guard_message") ?? "").trim() || DEFAULT_SETTINGS.guard_message,
@@ -98,6 +108,7 @@ const BOUNDS: Record<
   keyof RagSettings,
   { min: number; max: number } | null
 > = {
+  use_similarity_guard: null,
   context_turns: { min: 1, max: 10 },
   similarity_threshold: { min: 0.1, max: 0.9 },
   guard_message: null,
@@ -122,6 +133,12 @@ export function validateRagSettings(
     if (key === "guard_message") {
       if (typeof value !== "string") {
         return { ok: false, error: `guard_message doit être une chaîne` };
+      }
+      continue;
+    }
+    if (key === "use_similarity_guard") {
+      if (typeof value !== "boolean") {
+        return { ok: false, error: `use_similarity_guard doit être true ou false` };
       }
       continue;
     }
@@ -153,6 +170,7 @@ export async function updateRagSettings(
 
   const supabase = await createClient();
   const keys: (keyof RagSettings)[] = [
+    "use_similarity_guard",
     "context_turns",
     "similarity_threshold",
     "guard_message",
@@ -167,10 +185,11 @@ export async function updateRagSettings(
   for (const key of keys) {
     const value = partial[key];
     if (value === undefined) continue;
+    const valueStr = key === "use_similarity_guard" ? (value ? "true" : "false") : String(value);
     const { error } = await supabase
       .from("rag_settings")
       .update({
-        value: String(value),
+        value: valueStr,
         updated_at: new Date().toISOString(),
       })
       .eq("key", key);

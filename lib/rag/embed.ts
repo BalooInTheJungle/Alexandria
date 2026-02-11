@@ -35,12 +35,6 @@ type EmbeddingTensor = { data: Float32Array; dims: number[] };
 /**
  * Embed un texte (ex. requête utilisateur). Retourne un vecteur 384D.
  */
-// Options supportées à l'exécution par le modèle feature-extraction ; les types @xenova/transformers sont trop stricts
-const EMBED_OPTIONS = { pooling: "mean", normalize: true } as const;
-
-/** Retour du pipeline feature-extraction : tensor avec .data et .dims */
-type EmbeddingTensor = { data: Float32Array; dims: number[] };
-
 export async function embedQuery(text: string): Promise<number[]> {
   const ex = await getExtractor();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- types pipeline feature-extraction trop stricts
