@@ -44,9 +44,9 @@ function buildMessages(
   allowGeneralKnowledge = false
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const context =
-    chunks.length > 0
-      ? buildContext(chunks)
-      : "Aucun extrait pertinent dans le corpus pour cette question.";
+    allowGeneralKnowledge || chunks.length === 0
+      ? "Aucun extrait pertinent dans le corpus pour cette question."
+      : buildContext(chunks);
   const currentUserContent = `Contexte (extraits de documents) :\n\n${context}\n\n---\n\nQuestion : ${question}`;
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [

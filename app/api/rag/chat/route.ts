@@ -101,7 +101,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const sources = chunksToSources(chunks);
+    const sources = allowGeneralKnowledge ? [] : chunksToSources(chunks);
 
     const lastRows = await getLastMessages(convId, 2 * settings.context_turns + 1);
     const historyRows = lastRows
