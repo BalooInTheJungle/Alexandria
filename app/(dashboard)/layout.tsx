@@ -24,6 +24,10 @@ export default async function DashboardLayout({
           <Button variant="link" asChild className="h-auto p-0 font-normal">
             <Link href="/bibliographie">Bibliographie</Link>
           </Button>
+          <span className="text-muted-foreground">|</span>
+          <Button variant="link" asChild className="h-auto p-0 font-normal">
+            <Link href="/veille">Veille</Link>
+          </Button>
         </nav>
         <div className="flex items-center gap-4">
           {user?.email && (

@@ -110,15 +110,21 @@ Fichier : `app/api/rag/settings/route.ts`. Bornes : context_turns 1–10, simila
 1. ~~**P1.1** — Migration bilingue (DB).~~ **Fait.**  
 2. ~~**P1.2** — Back Node : détection langue + pipeline EN/FR + instruction dans le prompt.~~ **Fait.**  
 3. ~~**P1.3** — Ingestion Python : traduction + embedding_fr + content_fr.~~ **Fait.**  
-<<<<<<< HEAD
 4. ~~**P2.1** — API conversations (GET liste, GET messages, PATCH, DELETE).~~ **Fait.**  
 5. ~~**P2.2** — API admin rag_settings (GET + PATCH avec validation).~~ **Fait.**  
-6. **P3** — Route rétention 30 jours + doc. **À faire.**
+6. ~~**P3** — Route rétention 30 jours + doc.~~ **Fait.**
+
+---
+
+## Veille
+
+La pipeline veille (RSS + parse HTML → LLM, garde-fous, scores) est **implémentée**. Référence unique : **VEILLE.md** (flux, stratégies, structure du code, tests).
 
 ---
 
 ## Références
 
 - **BACK_RAG.md** — détail de chaque thème (flux, paramètres, spécifications).  
+- **VEILLE.md** — pipeline veille (flux, stratégies RSS/HTML, garde-fous, comment tester).  
 - **SCHEMA_DB_ET_DONNEES.md** — structure des tables, migrations, flows.  
 - **FONCTIONNALITES_FRONT.md** — besoins front (sidebar, scroll infini, admin) qui consomment ces APIs.

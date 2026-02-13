@@ -28,13 +28,14 @@ Si tu n’utilises pas le CLI : exécuter **manuellement** chaque fichier de `su
 
 URLs des pages à scraper pour la veille. Tout est en base (pas de config fichier).
 
-| Colonne          | Type         | Description           |
-|------------------|--------------|-----------------------|
-| id               | uuid (PK)    |                       |
-| url              | text         | URL de la page source |
-| name             | text         | Optionnel (label)     |
-| created_at       | timestamptz  |                       |
-| last_checked_at  | timestamptz  | Dernier scrape        |
+| Colonne          | Type         | Description                                           |
+|------------------|--------------|-------------------------------------------------------|
+| id               | uuid (PK)    |                                                       |
+| url              | text         | URL de la page source (HTML ou flux RSS/Atom)        |
+| name             | text         | Optionnel (label)                                     |
+| fetch_strategy   | text         | Optionnel : `auto` (défaut), `fetch`, `rss`          |
+| created_at       | timestamptz  |                                                       |
+| last_checked_at  | timestamptz  | Dernier scrape                                        |
 
 **Peuplement** : si tu as déjà des tables `publications` ou `source_url`, tu peux insérer dans `sources` : `INSERT INTO sources (url, created_at, last_checked_at) SELECT url, created_at, last_checked_at FROM publications;` (et idem depuis source_url si pertinent).
 
@@ -118,11 +119,12 @@ Articles récupérés par la veille. Dédup par DOI/URL gérée en app (guardrai
 | doi              | text         |                            |
 | abstract         | text         |                            |
 | published_at     | date         |                            |
+| heuristic_score  | real         | Score heuristique (à définir). Migration à prévoir si absent. |
 | similarity_score | real         | Vs DB vectorielle          |
 | last_error       | text         | Log en cas d’échec (POC)   |
 | created_at       | timestamptz  |                            |
 
-**Index** : veille_items(run_id), veille_items(source_id), veille_items(doi), veille_items(url).
+**Index** : veille_items(run_id), veille_items(source_id), veille_items(doi), veille_items(url). **Intégré en DB** : dérivé côté app (match DOI ou URL avec `documents`).
 
 ---
 
@@ -235,7 +237,7 @@ Paramètres RAG modifiables depuis le panneau admin (clé/valeur).
 
 1. Back ou job lit **sources** (liste des URLs).  
 2. Back crée **veille_runs** (status = running, started_at).  
-3. Pour chaque source : fetch HTML, extraction URLs, guardrails (dédup vs **veille_items** / documents par DOI), filtrage LLM, extraction article LLM ; pour chaque article : insertion **veille_items** (run_id, source_id, url, title, authors, doi, abstract, published_at, similarity_score, last_error si échec).  
+3. Pour chaque source : fetch HTTP (HTML ou XML). Si XML (RSS/Atom/RDF) → extraction URLs par parse XML ; sinon parse HTML. Puis guardrails (dédup vs **veille_items** / documents par DOI), filtrage LLM, extraction article LLM ; pour chaque article : insertion **veille_items** (run_id, source_id, url, title, authors, doi, abstract, published_at, similarity_score, last_error si échec).  
 4. Back met à jour **veille_runs** (status = completed ou failed, completed_at, error_message).
 
 ### 4.7 Admin — paramètres RAG
@@ -258,5 +260,5 @@ Toutes les tables sont en RLS. **Utilisateur authentifié** : SELECT / INSERT / 
 |----------|---------|
 | **Vue d’ensemble projet** | Flows d’usage, structure. |
 | **Back RAG** | Détail des API et de l’usage des tables/RPC. |
-| **Pipeline veille** | Usage de sources, veille_runs, veille_items. |
+| **Veille** | Flux, usage de sources, veille_runs, veille_items. Fichier : `VEILLE.md`. |
 | **Back RAG** §4 | Détail colonnes et RPC bilingues (détection langue, pipelines EN/FR). |

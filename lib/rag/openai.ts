@@ -2,9 +2,11 @@
  * Génération de réponses RAG via l’API OpenAI (Chat Completions).
  * Contexte = chunks récupérés ; historique = N derniers messages (multi-tours).
  * Support streaming pour affichage progressif côté client.
+ * Utilise le client partagé lib/openai.
  */
 
 import OpenAI from "openai";
+import { getOpenAIClient, RAG_MODEL } from "@/lib/openai";
 import type { MatchedChunk } from "./search";
 import type { DetectedLang } from "./detect-lang";
 
@@ -75,18 +77,18 @@ export async function generateRagAnswer(
   lang: DetectedLang = "en",
   allowGeneralKnowledge = false
 ): Promise<string> {
-  // Caractères non imprimables / newlines rendent l'en-tête HTTP invalide ; ne garder que l'ASCII imprimable
-  const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/[^\x20-\x7E]/g, "").trim();
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
-  }
-
-  const client = new OpenAI({ apiKey });
+  const client = getOpenAIClient();
   const messages = buildMessages(question, chunks, history, lang, allowGeneralKnowledge);
-  LOG("generateRagAnswer", { messagesCount: messages.length, chunksCount: chunks.length, lang, allowGeneralKnowledge });
+  LOG("generateRagAnswer", {
+    messagesCount: messages.length,
+    chunksCount: chunks.length,
+    lang,
+    allowGeneralKnowledge,
+    model: RAG_MODEL,
+  });
 
   const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: RAG_MODEL,
     messages,
     temperature: 0.3,
     max_tokens: 1024,
@@ -96,7 +98,10 @@ export async function generateRagAnswer(
   if (!choice?.message?.content) {
     throw new Error("OpenAI returned no content");
   }
-  LOG("generateRagAnswer done", { contentLength: choice.message.content.length });
+  LOG("generateRagAnswer done", {
+    contentLength: choice.message.content.length,
+    usage: response.usage,
+  });
   return choice.message.content;
 }
 
@@ -111,17 +116,18 @@ export async function createRagAnswerStream(
   lang: DetectedLang = "en",
   allowGeneralKnowledge = false
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-  const apiKey = (process.env.OPENAI_API_KEY ?? "").replace(/[^\x20-\x7E]/g, "").trim();
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set");
-  }
-
-  const client = new OpenAI({ apiKey });
+  const client = getOpenAIClient();
   const messages = buildMessages(question, chunks, history, lang, allowGeneralKnowledge);
-  LOG("createRagAnswerStream", { messagesCount: messages.length, chunksCount: chunks.length, lang, allowGeneralKnowledge });
+  LOG("createRagAnswerStream", {
+    messagesCount: messages.length,
+    chunksCount: chunks.length,
+    lang,
+    allowGeneralKnowledge,
+    model: RAG_MODEL,
+  });
 
   const stream = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: RAG_MODEL,
     messages,
     stream: true,
     temperature: 0.3,

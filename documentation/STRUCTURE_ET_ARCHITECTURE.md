@@ -121,8 +121,9 @@ alexandria/
 │   │   └── settings.ts           # Lecture rag_settings
 │   ├── veille/                    # Pipeline veille (sources 100 % en DB, pas de config fichier)
 │   │   ├── sources.ts            # Récup liste sources depuis Supabase
-│   │   ├── fetch-source-pages.ts # Récup HTML des pages sources (URLs en DB)
-│   │   ├── extract-urls.ts       # Nettoyer HTML → extraire URLs (candidates article)
+│   │   ├── fetch-source-pages.ts # Récup HTML/XML des pages sources (fetch HTTP uniquement)
+│   │   ├── extract-urls.ts       # RSS/Atom/RDF → parse XML ; HTML → parse (cheerio) → URLs candidates
+│   │   ├── detect-bot-challenge.ts # Détection page anti-bot (0 URL, titre type « Client Challenge ») → log suggestion RSS
 │   │   ├── guardrails.ts         # Dédup DOI vs DB ; pré-filtre URLs avant LLM ; rate limit, quotas
 │   │   ├── filter-urls-llm.ts    # LLM : ne garder que les URLs de pages articles (après guardrails)
 │   │   ├── extract-article-llm.ts# Pré-nettoyage bloc article (trafilatura) → LLM : titre, auteurs, DOI, abstract, date (schéma fixe)
@@ -147,7 +148,7 @@ alexandria/
 │
 ├── documentation/
 │   ├── STRUCTURE_ET_ARCHITECTURE.md   # Ce fichier
-│   ├── PIPELINE_VEILLE_CONSOLIDE.md   # Pipeline veille (étapes, décisions, flux)
+│   ├── VEILLE.md                     # Veille : flux, stratégies RSS/HTML, garde-fous, tests
 │   ├── BACK_RAG.md                    # Back RAG (ingestion, recherche, génération, paramètres)
 │   └── HISTORIQUE_DECISIONS.md        # Synthèse des choix
 │
@@ -223,5 +224,5 @@ Sources très variées → scraping **le plus intelligent possible**, tout en ma
 ## 6. Suite après validation
 
 - **Structure de dossiers et fichiers squelettes** : créée (app, lib, components, api, documentation).
-- **Doc Veille** : voir **PIPELINE_VEILLE_CONSOLIDE.md** pour la pipeline détaillée (étapes, décisions, flux).
+- **Doc Veille** : voir **VEILLE.md** (flux, stratégies, structure du code, tests).
 - Prochaines étapes : schéma SQL détaillé (migrations Supabase) si besoin ; implémentation par brique : auth → documents/upload → ingestion → RAG → veille.

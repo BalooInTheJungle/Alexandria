@@ -88,7 +88,7 @@
 - **Hébergement** : Supabase (Postgres, pgvector, Storage, Auth) ; front (ex. Vercel ou équivalent).  
 - **Centralisation** : une seule app — RAG + Bibliographie (veille) + gestion des documents ; une seule base Supabase.  
 - **Stockage PDF** : en POC les PDFs sont dans le projet (**data/pdfs/**) ; `documents.storage_path` = chemin relatif. À terme possiblement Supabase Storage.  
-- **Veille** : HTML scraping uniquement ; liste des sources en base ; similarité sur l’**abstract** uniquement.
+- **Veille** : extraction des URLs par **flux RSS/Atom** (parse XML) ou **pages HTML** (parse HTML) ; fetch HTTP uniquement (pas de navigateur). Liste des sources en base ; similarité sur l’**abstract** uniquement.
 
 ---
 
@@ -120,7 +120,7 @@
 ### 8.2 Flow « Veille / Bibliographie »
 
 1. **Job** (cron ou manuel) : récupère la **liste des sources** depuis Supabase.  
-2. **Scraping HTML** : pour chaque source, extraction **titre, abstract, URL** (et métadonnées si dispo).  
+2. **Récupération** : pour chaque source, fetch HTTP (HTML ou XML). Si flux RSS/Atom → extraction des URLs par parse XML ; sinon parse HTML. Puis filtrage LLM, extraction **titre, abstract, URL** (et métadonnées) par LLM.  
 3. **Déduplication** (DOI / titre).  
 4. **Embedding** des abstracts → **score de similarité** vs corpus (ou index abstracts).  
 5. **Enregistrement** des items (veille_runs, veille_items) avec score.  
@@ -147,7 +147,7 @@
 
 - **Une app Next.js** : `app/` (Auth, Dashboard avec RAG + Bibliographie, API routes).  
 - **RAG** : `app/rag/` (page) ; `app/api/rag/` (chat, search) ; `lib/rag/` (search, embed, openai, citations, conversation-persistence, settings, rerank).  
-- **Veille** : `app/api/veille/` (scrape, list) ; `lib/veille/` (sources, fetch, extract, guardrails, LLM, score).  
+- **Veille** : `app/api/veille/` (scrape, list) ; `lib/veille/` (sources, fetch HTTP, extract-urls RSS+HTML, guardrails, filter-urls-llm, extract-article-llm, score).  
 - **Documents / Ingestion** : `app/api/documents/upload/`, `app/api/ingestion/` ; `lib/ingestion/` (parse-pdf, chunk, index) ; `lib/db/` (documents, chunks, sources, veille, types).  
 - **Données** : `data/pdfs/` (PDFs à indexer) ; **Supabase** : Postgres (documents, chunks, sources, veille_runs, veille_items, conversations, messages, rag_settings), pgvector, Auth.  
 
@@ -179,7 +179,7 @@ Détail des dossiers, schéma DB et flows back ↔ DB : voir **Schéma DB et don
 | **Stack et technologies** | Technologies utilisées dans le projet et leur rôle (Next.js, Supabase, embeddings, FTS, pgvector, LLM, etc.). Fichier : `STACK_ET_TECHNOLOGIES.md`. |
 | **Back RAG** | API RAG, ingestion des données, génération de réponses, paramétrage dynamique (rag_settings), multilingue (FR/EN), conversations et messages ; récap par thème avec priorité. Fichier : `BACK_RAG.md`. |
 | **Fonctionnalités Front** | RAG (chat, sources, citations, langue, garde-fou, streaming) + Veille (liste rankée, URLs) ; pages, composants, à faire. Fichier : `FONCTIONNALITES_FRONT.md`. |
-| **Pipeline veille** | Étapes du scraping, extraction, garde-fous, similarité vs DB, décisions. Fichier : `PIPELINE_VEILLE_CONSOLIDE.md`. |
+| **Veille** | Flux, stratégies RSS/HTML, garde-fous, tests. Fichier : `VEILLE.md`. |
 | **Schéma DB et données** | Tables Supabase, colonnes, tableau des migrations, flows numérotés back ↔ DB ; prévision bilingue. Fichier : `SCHEMA_DB_ET_DONNEES.md`. |
 
 Ces documents sont à utiliser ensemble pour avoir le schéma fonctionnel complet du projet.

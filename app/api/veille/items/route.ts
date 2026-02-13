@@ -3,12 +3,14 @@ import { listVeilleItems } from "@/lib/db/veille";
 import { filterItemsForArticleDisplay } from "@/lib/veille/filter-article-display";
 
 const LOG = (msg: string, ...args: unknown[]) =>
-  console.log("[API] GET /api/veille/list", msg, ...args);
+  console.log("[API] GET /api/veille/items", msg, ...args);
 
 /**
- * GET /api/veille/list
- * Liste des veille_items (alias vers la même logique que GET /api/veille/items).
- * Garde-fou : ne retourne que les items considérés comme articles (voir filterItemsForArticleDisplay).
+ * GET /api/veille/items
+ * Liste des veille_items avec nom source et document_id si intégré en DB (match DOI).
+ * Garde-fou : ne retourne que les items considérés comme articles (titre ou abstract ou DOI extraits,
+ * et titre pas dans la liste des pages institutionnelles) pour que la synthèse n'affiche pas de lignes parasites.
+ * Query: runId?, sourceId?, limit (défaut 100), offset (défaut 0).
  */
 export async function GET(request: Request) {
   try {
@@ -20,8 +22,8 @@ export async function GET(request: Request) {
     LOG("GET", { runId, sourceId, limit, offset });
     const rawItems = await listVeilleItems({ runId, sourceId, limit, offset });
     const items = filterItemsForArticleDisplay(rawItems);
-    LOG("ok", { count: items.length });
-    return NextResponse.json({ items });
+    LOG("ok", { count: items.length, filtered: rawItems.length - items.length });
+    return NextResponse.json(items);
   } catch (e) {
     LOG("error", e);
     return NextResponse.json(

@@ -23,16 +23,24 @@ export type Chunk = {
   created_at?: string;
 };
 
+/** Stratégie de récupération du contenu source : auto (fetch), fetch, rss. */
+export type SourceFetchStrategy = "auto" | "fetch" | "rss";
+
 export type Source = {
   id: string;
   url: string;
-  name?: string;
+  name?: string | null;
+  fetch_strategy?: SourceFetchStrategy | null;
   created_at?: string;
+  last_checked_at?: string | null;
 };
 
 export type VeilleRun = {
   id: string;
-  status: string;
+  status: "pending" | "running" | "completed" | "failed";
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
   created_at?: string;
 };
 
@@ -41,12 +49,13 @@ export type VeilleItem = {
   run_id: string;
   source_id: string;
   url: string;
-  title?: string;
-  authors?: string[];
-  doi?: string;
-  abstract?: string;
-  date?: string;
-  similarity_score?: number;
-  last_error?: string;
+  title?: string | null;
+  authors?: string[] | null;
+  doi?: string | null;
+  abstract?: string | null;
+  published_at?: string | null;
+  heuristic_score?: number | null;
+  similarity_score?: number | null;
+  last_error?: string | null;
   created_at?: string;
 };

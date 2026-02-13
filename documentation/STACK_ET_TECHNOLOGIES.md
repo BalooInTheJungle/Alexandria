@@ -88,7 +88,7 @@
 
 | Technologie | Rôle (actuel ou prévu) |
 |-------------|------------------------|
-| **HTML / fetch** | Récupération des pages sources (URLs en base). Playwright ou équivalent pour sites avec JS. |
+| **HTML / fetch** | Récupération des pages sources (URLs en base) par fetch HTTP. Pour les sites à contenu JS-only (ex. Nature search), privilégier les flux RSS (même pipeline, détection XML automatique). |
 | **Parsing HTML** | BeautifulSoup4 / lxml, trafilatura ou similar pour extraire titre, abstract, DOI (et nettoyer le bloc article avant LLM). |
 | **LLM (extraction)** | Appel API (ex. OpenAI) pour extraire métadonnées structurées depuis le HTML (schéma fixe) et filtrer les URLs (pages articles uniquement). |
 | **Dédup** | DOI (et fuzzy sur titre si besoin, ex. rapidfuzz) pour éviter doublons ; garde-fous avant envoi au LLM. |
@@ -120,5 +120,5 @@
 | **Vue d’ensemble projet** | Besoins, utilisateurs, flows, structure haute. |
 | **Back RAG** | API, ingestion, génération, paramétrage, multilingue, conversations (récap par thème et priorité). Fichier : `BACK_RAG.md`. |
 | **Fonctionnalités Front** | RAG + Veille côté UI (langue, recherche, garde-fou, streaming). Fichier : `FONCTIONNALITES_FRONT.md`. |
-| **Pipeline veille** | Étapes détaillées du scraping et de la veille. Fichier : `PIPELINE_VEILLE_CONSOLIDE.md`. |
+| **Veille** | Pipeline veille (flux, RSS/HTML, garde-fous). Fichier : `VEILLE.md`. |
 | **Schéma DB et données** | Tables, migrations, flows back ↔ DB. Fichier : `SCHEMA_DB_ET_DONNEES.md`. |
