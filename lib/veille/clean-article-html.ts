@@ -30,7 +30,7 @@ const MAIN_SELECTORS = [
   "#content",
 ];
 
-function extractText($: cheerio.CheerioAPI, root: cheerio.Cheerio<cheerio.Element>, maxChars: number): string {
+function extractText($: cheerio.CheerioAPI, root: cheerio.Cheerio<any>, maxChars: number): string {
   root.find("script, style, nav, footer, aside, form, iframe").remove();
   const text = root.text().replace(/\s+/g, " ").trim();
   return text.slice(0, maxChars);
@@ -42,12 +42,12 @@ function extractText($: cheerio.CheerioAPI, root: cheerio.Cheerio<cheerio.Elemen
  */
 export function cleanArticleHtml(html: string, _url?: string): CleanedArticle | null {
   try {
-    const $ = cheerio.load(html, { decodeEntities: true });
+    const $ = cheerio.load(html);
     let title: string | null =
       $("meta[property='og:title']").attr("content")?.trim() ?? $("title").first().text()?.trim() ?? null;
     if (title) title = title.slice(0, 500);
 
-    let mainRoot = $([]);
+    let mainRoot: cheerio.Cheerio<any> = $([]);
     for (const sel of MAIN_SELECTORS) {
       const el = $(sel).first();
       if (el.length && extractText($, el, 500).length >= 100) {

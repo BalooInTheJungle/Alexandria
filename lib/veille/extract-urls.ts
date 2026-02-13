@@ -32,7 +32,7 @@ export function extractUrlsFromRss(content: string, baseUrl: string): string[] {
   const seen = new Set<string>();
   const urls: string[] = [];
 
-  const $ = cheerio.load(content, { xmlMode: true, decodeEntities: true });
+  const $ = cheerio.load(content, { xmlMode: true });
 
   $("item").each((_, el) => {
     const $el = $(el);
@@ -87,7 +87,7 @@ export function extractUrlsFromHtml(html: string, baseUrl: string): string[] {
   const seen = new Set<string>();
   const urls: string[] = [];
 
-  const $ = cheerio.load(html, { decodeEntities: true });
+  const $ = cheerio.load(html);
   $("a[href]").each((_, el) => {
     const href = $(el).attr("href");
     if (!href) return;
@@ -180,7 +180,7 @@ function extractUrlsFromRawHtml(html: string, base: URL): string[] {
   const origin = base.origin;
   const out: string[] = [];
   const seen = new Set<string>();
-  const matches = html.matchAll(URL_IN_TEXT);
+  const matches = Array.from(html.matchAll(URL_IN_TEXT));
   const articleLike = /\.(com|org)\/(articles?|content\/article|content\/articlelanding|articlelanding)[\/\?]/i;
   for (const m of matches) {
     const raw = m[0].replace(/[)"'>\],]+$/, "").trim();
