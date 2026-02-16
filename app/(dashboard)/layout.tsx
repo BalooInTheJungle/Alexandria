@@ -18,15 +18,15 @@ export default async function DashboardLayout({
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <nav className="flex items-center gap-2">
           <Button variant="link" asChild className="h-auto p-0 font-normal">
-            <Link href="/rag">RAG</Link>
+            <Link href="/rag">Chatbot</Link>
+          </Button>
+          <span className="text-muted-foreground">|</span>
+          <Button variant="link" asChild className="h-auto p-0 font-normal">
+            <Link href="/database">Database</Link>
           </Button>
           <span className="text-muted-foreground">|</span>
           <Button variant="link" asChild className="h-auto p-0 font-normal">
             <Link href="/bibliographie">Bibliographie</Link>
-          </Button>
-          <span className="text-muted-foreground">|</span>
-          <Button variant="link" asChild className="h-auto p-0 font-normal">
-            <Link href="/veille">Veille</Link>
           </Button>
         </nav>
         <div className="flex items-center gap-4">

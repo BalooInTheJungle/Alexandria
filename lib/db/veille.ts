@@ -9,6 +9,8 @@ const LOG = (msg: string, ...args: unknown[]) => console.log("[db/veille]", msg,
 
 export type VeilleRunRow = VeilleRun;
 
+export type VeilleRunWithCount = VeilleRunRow & { items_count: number };
+
 export type VeilleItemWithMeta = VeilleItem & {
   source_name: string | null;
   /** document_id si l'article est déjà ingéré (match DOI avec documents) */
@@ -29,6 +31,23 @@ export async function listVeilleRuns(limit = 50): Promise<VeilleRunRow[]> {
   }
   LOG("listVeilleRuns", { count: (data ?? []).length, limit });
   return (data ?? []) as VeilleRunRow[];
+}
+
+/** Liste des runs avec nombre d'items par run (pour Historique). Utilise l'RPC get_veille_runs_with_counts. */
+export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWithCount[]> {
+  const supabase = await createClient();
+  const lim = Math.max(1, Math.min(100, limit));
+  const { data, error } = await supabase.rpc("get_veille_runs_with_counts", { lim });
+  if (error) {
+    LOG("listVeilleRunsWithCounts error", error.message);
+    throw error;
+  }
+  const rows = (data ?? []) as (VeilleRunRow & { items_count: string })[];
+  LOG("listVeilleRunsWithCounts", { count: rows.length });
+  return rows.map((r) => ({
+    ...r,
+    items_count: typeof r.items_count === "number" ? r.items_count : parseInt(String(r.items_count), 10) || 0,
+  }));
 }
 
 export type ListVeilleItemsOptions = {

@@ -3,11 +3,11 @@
  */
 
 import { createClient } from "@/lib/supabase/server";
-import type { Source } from "@/lib/db/types";
+import type { Source, SourceFetchStrategy } from "@/lib/db/types";
 
 const LOG = (msg: string, ...args: unknown[]) => console.log("[db/sources]", msg, ...args);
 
-export type SourceInsert = Pick<Source, "url"> & { name?: string | null };
+export type SourceInsert = Pick<Source, "url"> & { name?: string | null; fetch_strategy?: SourceFetchStrategy | null };
 export type SourceUpdate = Partial<Pick<Source, "url" | "name" | "fetch_strategy">>;
 
 export async function listSources(): Promise<Source[]> {
@@ -30,7 +30,11 @@ export async function createSource(row: SourceInsert): Promise<Source> {
   LOG("createSource", { url: row.url?.slice(0, 50), name: row.name ?? null });
   const { data, error } = await supabase
     .from("sources")
-    .insert({ url: row.url, name: row.name ?? null })
+    .insert({
+      url: row.url,
+      name: row.name ?? null,
+      ...(row.fetch_strategy != null && { fetch_strategy: row.fetch_strategy }),
+    })
     .select("id, url, name, fetch_strategy, created_at, last_checked_at")
     .single();
 

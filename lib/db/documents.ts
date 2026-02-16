@@ -76,3 +76,16 @@ export async function updateDocument(
     throw error;
   }
 }
+
+/** Nombre total de documents en base (pour la page Database). */
+export async function countDocuments(): Promise<number> {
+  const supabase = await createClient();
+  const { count, error } = await supabase
+    .from("documents")
+    .select("id", { count: "exact", head: true });
+  if (error) {
+    LOG("countDocuments error", error.message);
+    throw error;
+  }
+  return count ?? 0;
+}

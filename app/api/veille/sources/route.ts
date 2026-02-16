@@ -32,6 +32,9 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const url = typeof body?.url === "string" ? body.url.trim() : "";
     const name = typeof body?.name === "string" ? body.name.trim() || null : null;
+    const fetch_strategy = body?.fetch_strategy === "rss" || body?.fetch_strategy === "fetch" || body?.fetch_strategy === "auto"
+      ? body.fetch_strategy
+      : null;
 
     if (!url) {
       return NextResponse.json(
@@ -41,7 +44,7 @@ export async function POST(request: Request) {
     }
 
     LOG("POST create", { url: url.slice(0, 50) });
-    const source = await createSource({ url, name });
+    const source = await createSource({ url, name, fetch_strategy: fetch_strategy ?? undefined });
     LOG("POST ok", { id: source.id });
     return NextResponse.json(source);
   } catch (e) {
