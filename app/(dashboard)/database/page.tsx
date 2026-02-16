@@ -11,6 +11,7 @@ type UploadResult = {
   status: string;
   chunksCount: number;
   error?: string;
+  skipped?: boolean;
 };
 
 export default function DatabasePage() {
@@ -113,7 +114,9 @@ export default function DatabasePage() {
               <ul className="text-sm space-y-1">
                 {uploadResults.map((r, i) => (
                   <li key={i}>
-                    {r.filename} → {r.status} {r.chunksCount > 0 ? `(${r.chunksCount} chunks)` : ""}
+                    {r.filename} → {r.status}
+                    {r.skipped && " — Déjà en base (DOI identique)"}
+                    {r.chunksCount > 0 ? ` (${r.chunksCount} chunks)` : ""}
                     {r.error && ` — ${r.error}`}
                   </li>
                 ))}

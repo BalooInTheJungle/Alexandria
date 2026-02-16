@@ -123,11 +123,75 @@ def extract_text_with_ocr_fallback(pdf_path: Path) -> tuple[str, dict[int, str],
     return full_joined, page_texts_clean, ocr_pages_count
 
 
+def _parse_authors_from_metadata(author_str: str) -> list[str]:
+    """Parse XMP/PDF metadata author string (semicolon or comma separated)."""
+    if not author_str or not author_str.strip():
+        return []
+    # Split by ; or , and clean
+    parts = re.split(r"[;,]", author_str)
+    out = []
+    for p in parts:
+        name = p.strip()
+        if name and len(name) > 1 and len(name) < 200:
+            out.append(name)
+    return out[:50]  # cap
+
+def _extract_authors_from_first_page(full_text: str, title: str | None) -> list[str]:
+    """Heuristic: lines between title and Abstract/Introduction often are authors."""
+    head = full_text[:4000]
+    lines = [ln.strip() for ln in head.split("\n") if ln.strip()]
+    # Find first section header
+    section_start = None
+    for i, ln in enumerate(lines):
+        if re.match(
+            r"^(Abstract|Introduction|Keywords|1\.\s|I\.\s)",
+            ln,
+            re.IGNORECASE,
+        ):
+            section_start = i
+            break
+    if section_start is None:
+        section_start = len(lines)
+    # Candidate author lines: before section, not the title, not too long
+    title_lower = (title or "").lower()
+    candidates = []
+    for i in range(min(section_start, 15)):
+        ln = lines[i]
+        if not ln or len(ln) > 150:
+            continue
+        if title_lower and ln.lower() == title_lower:
+            continue
+        if re.match(r"^(DOI|https?://|©|Copyright|Published|Received|Accepted)\b", ln, re.IGNORECASE):
+            continue
+        if re.match(r"^\d+\.?\s*$", ln):
+            continue
+        candidates.append(ln)
+    if not candidates:
+        return []
+    # One line with commas/semicolons → split; several lines → one author per line
+    if len(candidates) == 1:
+        return _parse_authors_from_metadata(candidates[0].replace(" and ", "; "))
+    authors = []
+    for c in candidates[:10]:
+        # "Name1, Name2, and Name3" or "Name1 & Name2"
+        for part in re.split(r",\s*and\s+|\s+and\s+|&", c):
+            part = part.strip().rstrip(".,")
+            if part and 2 <= len(part) <= 120:
+                authors.append(part)
+    return authors[:30] if authors else []
+
+
 def extract_metadata(doc: fitz.Document, full_text: str) -> dict:
     """Métadonnées depuis le PDF (XMP / première page)."""
     meta = doc.metadata or {}
     title = (meta.get("title") or "").strip()
     authors: list[str] = []
+
+    # Auteurs : d'abord XMP
+    author_meta = (meta.get("author") or meta.get("authors") or "").strip()
+    if author_meta:
+        authors = _parse_authors_from_metadata(author_meta)
+
     doi = None
     journal = None
     published_at = None
@@ -145,6 +209,10 @@ def extract_metadata(doc: fitz.Document, full_text: str) -> dict:
             title = line[:500]
             break
 
+    # Auteurs depuis la première page si pas trouvés en XMP
+    if not authors:
+        authors = _extract_authors_from_first_page(full_text, title or None)
+
     return {
         "title": (clean_text_for_db(title).strip() or None) if title else None,
         "authors": authors,
@@ -154,34 +222,41 @@ def extract_metadata(doc: fitz.Document, full_text: str) -> dict:
     }
 
 
-def chunk_text(text: str, _page_texts: dict[int, str]) -> list[tuple[str, int | None, str | None]]:
-    """Découpe en chunks (sections si détectées, sinon taille fixe + overlap). (content, page, section_title)."""
-    section_pattern = re.compile(
-        r"^(Abstract|Introduction|Methods?|Results|Discussion|Conclusion|References|Acknowledgments?)\s*$",
-        re.IGNORECASE | re.MULTILINE,
-    )
-    chunks_out = []
-    current = []
+# Sections reconnues : numérotées (1. Introduction) ou non, avec variantes
+_SECTION_PATTERN = re.compile(
+    r"^(?:\d+\.?\s*)?"
+    r"(Abstract|Introduction|Methods?|Materials?\s+and\s+Methods?|Results?|Discussion|Conclusion|Conclusions?|References|Acknowledgments?|Acknowledgements?|Experimental|Background|Summary)\s*"
+    r"(?:\s+and\s+Discussion)?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _chunk_one_page_text(text: str) -> list[tuple[str, str | None]]:
+    """Découpe le texte d'une page en chunks (content, section_title)."""
+    chunks_out: list[tuple[str, str | None]] = []
+    current: list[str] = []
     current_len = 0
-    section_title = None
+    section_title: str | None = None
 
     lines = text.split("\n")
     for line in lines:
-        if section_pattern.match(line.strip()):
+        stripped = line.strip()
+        match = _SECTION_PATTERN.match(stripped) if stripped else None
+        if match:
             if current:
                 block = "\n".join(current).strip()
                 if block:
-                    chunks_out.append((block, None, section_title))
+                    chunks_out.append((block, section_title))
             current = [line]
             current_len = len(line) + 1
-            section_title = line.strip()
+            section_title = stripped
             continue
         current.append(line)
         current_len += len(line) + 1
         if current_len >= CHUNK_SIZE:
             block = "\n".join(current).strip()
             if block:
-                chunks_out.append((block, None, section_title))
+                chunks_out.append((block, section_title))
             overlap_lines = []
             overlap_len = 0
             for ll in reversed(current):
@@ -195,9 +270,37 @@ def chunk_text(text: str, _page_texts: dict[int, str]) -> list[tuple[str, int | 
     if current:
         block = "\n".join(current).strip()
         if block:
-            chunks_out.append((block, None, section_title))
+            chunks_out.append((block, section_title))
 
-    return chunks_out if chunks_out else [(text[:8000].strip(), None, None)]
+    return chunks_out
+
+
+def chunk_text(text: str, page_texts: dict[int, str]) -> list[tuple[str, int | None, str | None]]:
+    """Découpe en chunks par page pour avoir un numéro de page par chunk. (content, page, section_title)."""
+    chunks_out: list[tuple[str, int | None, str | None]] = []
+    if not page_texts:
+        # Fallback sans page_texts : une seule "page"
+        one_page_chunks = _chunk_one_page_text(text)
+        for content, section_title in one_page_chunks:
+            chunks_out.append((content, 1, section_title))
+        return chunks_out if chunks_out else [(text[:8000].strip(), 1, None)]
+
+    last_section: str | None = None
+    for page_num in sorted(page_texts.keys()):
+        page_content = page_texts[page_num]
+        if not page_content.strip():
+            continue
+        page_chunks = _chunk_one_page_text(page_content)
+        for content, section_title in page_chunks:
+            # Propager la dernière section connue si ce chunk n'a pas de titre (début de page)
+            title = section_title if section_title is not None else last_section
+            if section_title is not None:
+                last_section = section_title
+            chunks_out.append((content, page_num, title))
+
+    if not chunks_out:
+        chunks_out = [(text[:8000].strip(), 1, None)]
+    return chunks_out
 
 
 def main():
@@ -254,6 +357,16 @@ def main():
             finally:
                 doc_fitz.close()
 
+            # Log métadonnées documents (vérifier ce qu'on récupère)
+            print("  [documents] Métadonnées extraites:", flush=True)
+            title_val = meta.get("title") or "(vide)"
+            print(f"    • title: {repr(title_val[:100])}{'...' if len(title_val) > 100 else ''}", flush=True)
+            auth_list = meta.get("authors") or []
+            print(f"    • authors: {len(auth_list)} auteur(s) → {auth_list[:3]}{' ...' if len(auth_list) > 3 else ''}", flush=True)
+            print(f"    • doi: {repr(meta.get('doi') or '(vide)')}", flush=True)
+            print(f"    • journal: {repr(meta.get('journal') or '(vide)')}", flush=True)
+            print(f"    • published_at: {repr(meta.get('published_at') or '(vide)')}", flush=True)
+
             # Insert document (processing)
             doc_row = supabase.table("documents").insert({
                 "title": meta["title"],
@@ -271,6 +384,20 @@ def main():
             chunks_data = chunk_text(full_text, page_texts)
             n_chunks = len(chunks_data)
             print(f"  [2/6] Chunking: {n_chunks} chunks.", flush=True)
+
+            # Log chunks (page, section_title)
+            with_page = sum(1 for _, p, _ in chunks_data if p is not None)
+            with_section = sum(1 for _, _, st in chunks_data if st)
+            section_counts: dict[str, int] = {}
+            for _, _, st in chunks_data:
+                if st:
+                    section_counts[st] = section_counts.get(st, 0) + 1
+            print("  [chunks] Statistiques:", flush=True)
+            print(f"    • avec page: {with_page}/{n_chunks}", flush=True)
+            print(f"    • avec section_title: {with_section}/{n_chunks}", flush=True)
+            if section_counts:
+                print(f"    • sections: {dict(sorted(section_counts.items(), key=lambda x: -x[1]))}", flush=True)
+
             contents_en = [c[0] for c in chunks_data]
 
             print("  [3/6] Embeddings EN...", flush=True)
@@ -332,11 +459,12 @@ def main():
                 "updated_at": ingested_at,
             }).eq("id", document_id).execute()
 
-            # Log console (EN + FR)
+            # Log console récap
             rec = "titre: oui" if meta.get("title") else "titre: non"
             rec += ", DOI: oui" if meta.get("doi") else ", DOI: non"
             rec += ", auteurs: oui" if meta.get("authors") else ", auteurs: non"
-            rec += f", {len(chunks_data)} chunks (EN+FR)"
+            rec += f", {len(chunks_data)} chunks"
+            rec += f" (page: {with_page}/{n_chunks}, section: {with_section}/{n_chunks})"
             if ocr_pages_count:
                 rec += f", {ocr_pages_count} page(s) OCR"
             print(f"  OK: {rec}.")

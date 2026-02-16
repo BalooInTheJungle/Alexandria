@@ -39,3 +39,17 @@ export async function insertChunks(rows: ChunkInsert[]): Promise<void> {
   }
   LOG("insertChunks ok");
 }
+
+/** Nombre de chunks pour un document (pour réponse API upload en cas de skip doublon). */
+export async function countChunksByDocumentId(documentId: string): Promise<number> {
+  const supabase = await createClient();
+  const { count, error } = await supabase
+    .from("chunks")
+    .select("id", { count: "exact", head: true })
+    .eq("document_id", documentId);
+  if (error) {
+    LOG("countChunksByDocumentId error", error.message);
+    throw error;
+  }
+  return count ?? 0;
+}

@@ -77,6 +77,31 @@ export async function updateDocument(
   }
 }
 
+/**
+ * Trouve un document par DOI et statut (pour éviter les doublons à l'upload).
+ * Retourne null si aucun document ne correspond.
+ */
+export async function findDocumentByDoiAndStatus(
+  doi: string,
+  status: "done" | "processing" | "pending" | "error"
+): Promise<DocumentRow | null> {
+  const normalized = doi.trim();
+  if (!normalized) return null;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("documents")
+    .select("id, title, authors, doi, journal, published_at, storage_path, status, error_message, ingestion_log, created_at, updated_at")
+    .eq("doi", normalized)
+    .eq("status", status)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    LOG("findDocumentByDoiAndStatus error", error.message);
+    throw error;
+  }
+  return data as DocumentRow | null;
+}
+
 /** Nombre total de documents en base (pour la page Database). */
 export async function countDocuments(): Promise<number> {
   const supabase = await createClient();

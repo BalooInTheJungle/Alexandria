@@ -15,6 +15,8 @@ export type UploadResultItem = {
   status: "done" | "error";
   chunksCount: number;
   error?: string;
+  /** true si le document était déjà en base (même DOI), pas de doublon créé. */
+  skipped?: boolean;
 };
 
 /**
@@ -69,6 +71,7 @@ export async function POST(request: Request) {
         status: result.status,
         chunksCount: result.chunksCount,
         error: result.error,
+        skipped: result.skipped,
       });
     }
 
