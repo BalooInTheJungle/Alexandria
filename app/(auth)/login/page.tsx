@@ -1,12 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LOGO_PATH } from "@/lib/design";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -42,18 +44,25 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm space-y-8">
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <div className="flex flex-col items-center gap-2">
+          <Image
+            src={LOGO_PATH}
+            alt="Alexandria"
+            width={180}
+            height={60}
+            className="h-24 w-auto"
+            priority
+          />
+          <p className="text-3xl font-title font-bold text-brand-dark">
             Alexandria
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Recherche et veille documentaire
           </p>
         </div>
 
         <Card className="border-border shadow-sm">
           <CardHeader>
-            <CardTitle className="text-xl">Connexion</CardTitle>
+            <CardTitle className="text-xl font-title text-brand-dark">
+              Connexion
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -91,7 +100,7 @@ export default function LoginPage() {
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full"
+                className="w-full font-title font-semibold"
               >
                 {loading ? "Connexion…" : "Se connecter"}
               </Button>

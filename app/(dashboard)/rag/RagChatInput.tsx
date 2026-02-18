@@ -3,33 +3,26 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-
-type SourceItem = {
-  index: number;
-  title: string | null;
-  doi: string | null;
-  storage_path: string;
-  excerpt: string;
-};
-
-type ChatResponse = {
-  answer: string;
-  sources: SourceItem[];
-  conversationId?: string;
-  messageId?: string;
-};
 
 type Props = {
   conversationId?: string | null;
+  onSending?: (query: string) => void;
+  onStreamChunk?: (delta: string) => void;
+  onStreamDone?: () => void;
   onConversationCreated?: (id: string) => void;
   onMessageSent?: () => void;
 };
 
-export default function RagChatInput({ conversationId: propConversationId = null, onConversationCreated, onMessageSent }: Props) {
+export default function RagChatInput({
+  conversationId: propConversationId = null,
+  onSending,
+  onStreamChunk,
+  onStreamDone,
+  onConversationCreated,
+  onMessageSent,
+}: Props) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [response, setResponse] = useState<ChatResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const conversationId = propConversationId ?? null;
 
@@ -37,85 +30,87 @@ export default function RagChatInput({ conversationId: propConversationId = null
     e.preventDefault();
     const q = query.trim();
     if (!q) return;
+
     setError(null);
-    setResponse(null);
+    setQuery("");
     setLoading(true);
+    onSending?.(q);
+
     try {
       const body: { query: string; stream?: boolean; conversationId?: string } = {
         query: q,
-        stream: false,
+        stream: true,
       };
       if (conversationId) body.conversationId = conversationId;
+
       const res = await fetch("/api/rag/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+
       if (!res.ok) {
-        setError(data.error ?? `Erreur ${res.status}`);
-        console.error("[RAG] API error:", res.status, data);
-        return;
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `Erreur ${res.status}`);
       }
-      setResponse(data as ChatResponse);
-      if (data.conversationId) {
-        onConversationCreated?.(data.conversationId);
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) throw new Error("Pas de stream");
+
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const json = JSON.parse(line.slice(6));
+            if (json.text) onStreamChunk?.(json.text);
+            if (json.done) {
+              if (json.conversationId) onConversationCreated?.(json.conversationId);
+              onStreamDone?.();
+              onMessageSent?.();
+            }
+            if (json.error) throw new Error(json.error);
+          } catch (err) {
+            if (err instanceof SyntaxError) continue;
+            throw err;
+          }
+        }
       }
-      onMessageSent?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erreur réseau";
       setError(msg);
-      console.error("[RAG] Fetch error:", err);
+      onStreamDone?.();
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="w-full max-w-2xl">
-      <form onSubmit={handleSubmit} className="flex gap-2">
+    <div className="w-full">
+      <form onSubmit={handleSubmit} className="flex w-full gap-2">
         <Input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Pose ta question sur le corpus…"
           disabled={loading}
-          className="flex-1"
+          className="min-w-0 flex-1"
         />
         <Button type="submit" disabled={loading}>
           {loading ? "…" : "Envoyer"}
         </Button>
       </form>
       {error && (
-        <pre className="mt-2 whitespace-pre-wrap rounded-md border border-destructive/50 bg-destructive/10 p-2 text-sm text-destructive">
+        <p className="mt-2 text-sm text-destructive" role="alert">
           {error}
-        </pre>
-      )}
-      {response && (
-        <Card className="mt-4">
-          <CardHeader className="pb-2">
-            <h3 className="text-sm font-semibold">Réponse</h3>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            <pre className="whitespace-pre-wrap break-words text-sm">{response.answer}</pre>
-            {response.sources && response.sources.length > 0 && (
-              <>
-                <h4 className="text-sm font-medium">Sources</h4>
-                <ul className="list-inside list-disc space-y-1 text-sm text-muted-foreground">
-                  {response.sources.map((s) => (
-                    <li key={s.index}>
-                      [{s.index}] {s.title ?? "Sans titre"} — {s.excerpt.slice(0, 80)}…
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            <p className="text-xs text-muted-foreground">
-              conversationId: {response.conversationId} — messageId: {response.messageId}
-            </p>
-          </CardContent>
-        </Card>
+        </p>
       )}
     </div>
   );

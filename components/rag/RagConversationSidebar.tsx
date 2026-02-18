@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { Pencil, Trash2, PanelLeftClose, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,13 +26,20 @@ type Props = {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   refreshTrigger?: number;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
 export default function RagConversationSidebar({
   selectedId,
   onSelect,
   refreshTrigger = 0,
+  open: controlledOpen,
+  onOpenChange,
 }: Props) {
+  const [internalOpen, setInternalOpen] = useState(true);
+  const isOpen = controlledOpen ?? internalOpen;
+  const setIsOpen = onOpenChange ?? setInternalOpen;
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [deleteModal, setDeleteModal] = useState<{ id: string; title: string } | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -98,8 +106,16 @@ export default function RagConversationSidebar({
   };
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-muted/30">
-      <div className="border-b border-border p-3">
+    <>
+      <aside
+        className={cn(
+          "flex shrink-0 flex-col border-r border-border bg-muted/30 transition-[width] duration-200",
+          "w-64 min-w-[260px] max-w-[90vw]",
+          "max-lg:fixed max-lg:left-0 max-lg:top-[60px] max-lg:z-50 max-lg:h-[calc(100vh-60px)] max-lg:shadow-lg",
+          !isOpen && "max-lg:w-0 max-lg:min-w-0 max-lg:overflow-hidden max-lg:border-0"
+        )}
+      >
+        <div className="border-b border-border p-3">
         <Button onClick={handleNew} className="w-full" variant="outline" size="sm">
           + Nouvelle conversation
         </Button>
@@ -142,33 +158,39 @@ export default function RagConversationSidebar({
                     <div className="truncate text-sm font-medium">
                       {c.title || "Sans titre"}
                     </div>
-                    <div className="mt-0.5 text-xs text-muted-foreground">{formatDate(c.updated_at)}</div>
-                    <div className="mt-2 flex gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRenameId(c.id);
-                          setRenameValue(c.title || "");
-                        }}
-                      >
-                        Renommer
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteModal({ id: c.id, title: c.title || "Sans titre" });
-                        }}
-                      >
-                        Supprimer
-                      </Button>
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {formatDate(c.updated_at)}
+                      </span>
+                      <div className="flex shrink-0 gap-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 touch-manipulation"
+                          title="Renommer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenameId(c.id);
+                            setRenameValue(c.title || "");
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" aria-hidden />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 touch-manipulation text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          title="Supprimer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteModal({ id: c.id, title: c.title || "Sans titre" });
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden />
+                        </Button>
+                      </div>
                     </div>
                   </>
                 )}
@@ -197,5 +219,15 @@ export default function RagConversationSidebar({
         </DialogContent>
       </Dialog>
     </aside>
+    <Button
+      variant="ghost"
+      size="icon"
+      className="fixed left-2 top-[68px] z-40 lg:hidden"
+      title={isOpen ? "Masquer la liste" : "Afficher la liste"}
+      onClick={() => setIsOpen(!isOpen)}
+    >
+      {isOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
+    </Button>
+    </>
   );
 }

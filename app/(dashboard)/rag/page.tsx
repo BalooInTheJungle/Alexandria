@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import RagConversationSidebar from "@/components/rag/RagConversationSidebar";
 import RagMessageList from "@/components/rag/RagMessageList";
@@ -11,6 +11,14 @@ export default function RagPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [messageSentTrigger, setMessageSentTrigger] = useState(0);
+  const [tailUserMessage, setTailUserMessage] = useState<string | null>(null);
+  const [streamingContent, setStreamingContent] = useState<string>("");
+
+  const handleStreamDone = useCallback(() => {
+    setTailUserMessage(null);
+    setStreamingContent("");
+    setMessageSentTrigger((t) => t + 1);
+  }, []);
 
   return (
     <div className="flex h-[calc(100vh-60px)] overflow-hidden">
@@ -29,10 +37,18 @@ export default function RagPage() {
         <RagMessageList
           conversationId={selectedId}
           messageSentTrigger={messageSentTrigger}
+          tailUserMessage={tailUserMessage}
+          streamingContent={streamingContent}
         />
         <div className="border-t border-border p-4">
           <RagChatInput
             conversationId={selectedId}
+            onSending={(query) => {
+              setTailUserMessage(query);
+              setStreamingContent("");
+            }}
+            onStreamChunk={(delta) => setStreamingContent((prev) => prev + delta)}
+            onStreamDone={handleStreamDone}
             onConversationCreated={(id) => {
               setSelectedId(id);
               setRefreshTrigger((t) => t + 1);

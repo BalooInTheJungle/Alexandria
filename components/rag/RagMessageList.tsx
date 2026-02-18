@@ -17,9 +17,18 @@ const PAGE_SIZE = 20;
 type Props = {
   conversationId: string | null;
   messageSentTrigger?: number;
+  /** Message utilisateur en cours d'envoi (optimistic) */
+  tailUserMessage?: string | null;
+  /** Contenu assistant en cours de streaming */
+  streamingContent?: string;
 };
 
-export default function RagMessageList({ conversationId, messageSentTrigger = 0 }: Props) {
+export default function RagMessageList({
+  conversationId,
+  messageSentTrigger = 0,
+  tailUserMessage = null,
+  streamingContent = "",
+}: Props) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -81,7 +90,16 @@ export default function RagMessageList({ conversationId, messageSentTrigger = 0 
     return () => obs.disconnect();
   }, [cursor, hasMore, loading, loadPage]);
 
-  if (!conversationId) {
+  const hasTail = !!tailUserMessage || !!streamingContent;
+  const showEmptyPrompt = !conversationId && !hasTail;
+
+  useEffect(() => {
+    if (hasTail && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [hasTail, tailUserMessage, streamingContent, messages.length]);
+
+  if (showEmptyPrompt) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground">
         Choisissez une conversation ou créez-en une nouvelle.
@@ -91,7 +109,7 @@ export default function RagMessageList({ conversationId, messageSentTrigger = 0 
 
   return (
     <div ref={scrollRef} className="flex flex-1 flex-col gap-3 overflow-auto p-4">
-      {messages.map((m) => (
+      {(conversationId ? messages : []).map((m) => (
         <Card
           key={m.id}
           className={cn(
@@ -107,12 +125,31 @@ export default function RagMessageList({ conversationId, messageSentTrigger = 0 
           </CardContent>
         </Card>
       ))}
+      {tailUserMessage && (
+        <Card className="ml-auto max-w-[85%] bg-primary/10">
+          <CardContent className="p-3">
+            <div className="mb-1 text-xs text-muted-foreground">Vous</div>
+            <pre className="whitespace-pre-wrap break-words font-sans text-sm">{tailUserMessage}</pre>
+          </CardContent>
+        </Card>
+      )}
+      {streamingContent && (
+        <Card className="mr-auto max-w-[85%] bg-muted">
+          <CardContent className="p-3">
+            <div className="mb-1 text-xs text-muted-foreground">Assistant</div>
+            <pre className="whitespace-pre-wrap break-words font-sans text-sm">
+              {streamingContent}
+              <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-foreground" aria-hidden />
+            </pre>
+          </CardContent>
+        </Card>
+      )}
       {hasMore && (
         <div ref={loadMoreRef} className="py-2 text-center text-sm text-muted-foreground">
           {loading ? "Chargement…" : "—"}
         </div>
       )}
-      {messages.length === 0 && !loading && (
+      {messages.length === 0 && !hasTail && !loading && (
         <p className="text-center text-sm text-muted-foreground">Aucun message. Envoyez une question.</p>
       )}
     </div>

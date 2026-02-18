@@ -2,28 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Typographie Alexandria : Anuphan (titres), Montserrat (texte) */
+@font-face {
+  font-family: "Anuphan";
+  src: url("/assets/Typo/Anuphan-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat";
+  src: url("/assets/Typo/Montserrat-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 @layer base {
   :root {
+    /* Charte Alexandria : action #FDC843, sombre #1C1404, fond blanc */
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --foreground: 40 79% 6%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 40 79% 6%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --popover-foreground: 40 79% 6%;
+    --primary: 45 98% 63%;
+    --primary-foreground: 40 79% 6%;
+    --secondary: 45 98% 95%;
+    --secondary-foreground: 40 79% 6%;
+    --muted: 45 30% 96%;
+    --muted-foreground: 40 20% 35%;
+    --accent: 45 98% 90%;
+    --accent-foreground: 40 79% 6%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    --border: 45 20% 90%;
+    --input: 45 20% 90%;
+    --ring: 45 98% 63%;
     --radius: 0.5rem;
+    /* Couleurs nommées pour usage direct */
+    --action: 45 98% 63%;
+    --brand-dark: 40 79% 6%;
   }
   .dark {
     --background: 222.2 84% 4.9%;
@@ -53,6 +72,6 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
   }
 }
