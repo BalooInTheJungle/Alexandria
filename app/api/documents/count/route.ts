@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { countDocuments } from "@/lib/db/documents";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/documents/count
  * Retourne le nombre de documents en base (pour la page Database).
