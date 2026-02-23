@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { listVeilleRunsWithCounts, listVeilleRuns } from "@/lib/db/veille";
 
+export const dynamic = "force-dynamic";
+
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[API] GET /api/veille/runs", msg, ...args);
 

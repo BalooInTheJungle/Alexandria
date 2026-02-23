@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { listVeilleItems } from "@/lib/db/veille";
 import { filterItemsForArticleDisplay } from "@/lib/veille/filter-article-display";
 
+export const dynamic = "force-dynamic";
+
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[API] GET /api/veille/items", msg, ...args);
 
