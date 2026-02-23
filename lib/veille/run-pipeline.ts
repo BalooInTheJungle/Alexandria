@@ -20,10 +20,12 @@ import { extractArticleFromUrl } from "./extract-article-llm";
 import { computeScores } from "./score";
 
 const LOG = (msg: string, ...args: unknown[]) =>
-  console.log("[veille/run-pipeline]", msg, ...args);
+  console.log("[veille/run-pipeline]", new Date().toISOString(), msg, ...args);
 
 export async function runVeillePipeline(runId: string): Promise<void> {
-  LOG("runVeillePipeline start", { runId });
+  const startTime = Date.now();
+  LOG("START", { runId });
+
   const supabase = createAdminClient();
 
   try {
@@ -32,14 +34,15 @@ export async function runVeillePipeline(runId: string): Promise<void> {
       .update({ status: "running", started_at: new Date().toISOString() })
       .eq("id", runId);
     if (updateErr) {
-      LOG("runVeillePipeline update status error", updateErr.message);
+      LOG("ERROR: update status to running failed", updateErr.message);
       throw updateErr;
     }
-    LOG("runVeillePipeline status=running");
+    LOG("status=running", { elapsedMs: Date.now() - startTime });
 
     const sources = await listSourcesFromDb(supabase);
+    LOG("sources loaded", { count: sources.length, elapsedMs: Date.now() - startTime });
     if (sources.length === 0) {
-      LOG("runVeillePipeline no sources, completing");
+      LOG("no sources, completing");
       await supabase
         .from("veille_runs")
         .update({
@@ -80,7 +83,7 @@ export async function runVeillePipeline(runId: string): Promise<void> {
         });
       }
     }
-    LOG("runVeillePipeline urls extracted", { total: sourceUrls.length });
+    LOG("urls extracted", { total: sourceUrls.length, elapsedMs: Date.now() - startTime });
 
     const filtered = filterArticleCandidateUrls(sourceUrls);
     LOG("runVeillePipeline urls after prefilter", {
@@ -93,7 +96,7 @@ export async function runVeillePipeline(runId: string): Promise<void> {
     LOG("runVeillePipeline after LLM filter", { count: filteredByLlm.length });
     const existingDois = await getExistingDois(supabase);
     const toProcess = applyUrlQuotas(filteredByLlm, existingDois);
-    LOG("runVeillePipeline after guardrails", { toProcess: toProcess.length });
+    LOG("after guardrails", { toProcess: toProcess.length, elapsedMs: Date.now() - startTime });
 
     if (toProcess.length === 0) {
       LOG("runVeillePipeline no URLs to process, completing run");
@@ -164,12 +167,12 @@ export async function runVeillePipeline(runId: string): Promise<void> {
         completed_at: new Date().toISOString(),
       })
       .eq("id", runId);
-    if (completeErr) LOG("runVeillePipeline complete update error", completeErr.message);
-    LOG("runVeillePipeline run completed", { runId, inserted, totalProcessed: toProcess.length });
+    if (completeErr) LOG("ERROR: complete update failed", completeErr.message);
+    LOG("COMPLETED", { runId, inserted, totalProcessed: toProcess.length, elapsedMs: Date.now() - startTime });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    LOG("runVeillePipeline failed", { runId, err: msg });
-    LOG("runVeillePipeline setting run status to failed");
+    LOG("FAILED", { runId, err: msg, elapsedMs: Date.now() - startTime });
+    console.error("[veille/run-pipeline] exception:", new Date().toISOString(), err);
     await supabase
       .from("veille_runs")
       .update({

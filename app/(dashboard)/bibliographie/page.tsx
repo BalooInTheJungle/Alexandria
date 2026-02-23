@@ -69,6 +69,8 @@ export default function BibliographiePage() {
   const [loadingItems, setLoadingItems] = useState(true);
   const [runId, setRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<string | null>(null);
+  const [runMessage, setRunMessage] = useState<string | null>(null);
+  const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [scraping, setScraping] = useState(false);
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
@@ -118,6 +120,8 @@ export default function BibliographiePage() {
     }
   }, []);
 
+  const [pendingElapsed, setPendingElapsed] = useState<number>(0);
+
   useEffect(() => {
     fetchSources();
   }, [fetchSources]);
@@ -128,16 +132,32 @@ export default function BibliographiePage() {
     fetchItems();
   }, [fetchItems]);
 
+  useEffect(() => {
+    if (!pendingSince || (runStatus !== "pending" && runStatus !== "running")) {
+      setPendingElapsed(0);
+      return;
+    }
+    const tick = () => setPendingElapsed(Math.round((Date.now() - pendingSince) / 1000));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [pendingSince, runStatus]);
+
   const pollRunStatus = useCallback(
-    async (id: string) => {
+    async (id: string, pollCount = 0) => {
       const res = await fetch(`/api/veille/runs/${id}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.warn("[bibliographie] poll run status failed", { id, status: res.status });
+        return;
+      }
       const run = await res.json();
       setRunStatus(run.status);
       if (run.status === "running" || run.status === "pending") {
-        setTimeout(() => pollRunStatus(id), 2000);
+        setTimeout(() => pollRunStatus(id, pollCount + 1), 2000);
       } else {
+        console.log("[bibliographie] run finished", { id, status: run.status, pollCount });
         setScraping(false);
+        setPendingSince(null);
         fetchRuns();
         fetchItems();
       }
@@ -148,6 +168,9 @@ export default function BibliographiePage() {
   const startScrape = async () => {
     setScraping(true);
     setRunStatus("pending");
+    setRunId(null);
+    setPendingSince(Date.now());
+    console.log("[bibliographie] starting scrape", { wait: false });
     try {
       const res = await fetch("/api/veille/scrape", {
         method: "POST",
@@ -155,14 +178,25 @@ export default function BibliographiePage() {
         body: JSON.stringify({ wait: false }),
       });
       const data = await res.json();
+      console.log("[bibliographie] scrape response", {
+        status: res.status,
+        runId: data.runId,
+        message: data.message,
+        error: data.error,
+      });
       if (data.runId) {
         setRunId(data.runId);
+        setRunMessage(data.message ?? null);
         pollRunStatus(data.runId);
       } else {
+        console.warn("[bibliographie] no runId in response", data);
         setScraping(false);
+        setPendingSince(null);
       }
-    } catch {
+    } catch (err) {
+      console.error("[bibliographie] scrape error", err);
       setScraping(false);
+      setPendingSince(null);
     }
   };
 
@@ -282,10 +316,26 @@ export default function BibliographiePage() {
                 {scraping ? "Lancement…" : "Lancer la recherche"}
               </Button>
               {runStatus && (
-                <p className="text-sm text-muted-foreground">
-                  Statut : <span className="font-medium">{runStatus}</span>
-                  {runId && ` (run ${runId.slice(0, 8)}…)`}
-                </p>
+                <div className="space-y-1 text-sm text-muted-foreground">
+                  {runMessage && (
+                    <p className="text-xs italic">{runMessage}</p>
+                  )}
+                  <p>
+                    Statut : <span className="font-medium">{runStatus}</span>
+                    {runId && ` (run ${runId.slice(0, 8)}…)`}
+                    {pendingElapsed > 0 && (runStatus === "pending" || runStatus === "running") && (
+                      <span className="ml-2">— depuis {pendingElapsed} s</span>
+                    )}
+                  </p>
+                  {runStatus === "pending" && pendingElapsed > 60 && (
+                    <p className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-200">
+                      Cette run est en attente depuis plus d&apos;une minute. Sur Vercel (serverless), les fonctions
+                      s&apos;arrêtent dès que la réponse est envoyée : le travail en arrière-plan est interrompu.
+                      La pipeline n&apos;a donc pas pu s&apos;exécuter. Consultez les logs Vercel ou utilisez{" "}
+                      <code className="rounded bg-muted px-1">wait: true</code> en local pour tester.
+                    </p>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>
