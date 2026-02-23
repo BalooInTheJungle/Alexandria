@@ -17,7 +17,7 @@ import {
 } from "./guardrails";
 import { filterUrlsWithLlm } from "./filter-urls-llm";
 import { extractArticleFromUrl } from "./extract-article-llm";
-import { computeScores } from "./score";
+import { computeScores, getCorpusTopTerms } from "./score";
 
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[veille/run-pipeline]", new Date().toISOString(), msg, ...args);
@@ -114,6 +114,9 @@ export async function runVeillePipeline(runId: string): Promise<void> {
       return;
     }
 
+    const corpusTerms = await getCorpusTopTerms(supabase, 80);
+    LOG("runVeillePipeline corpus terms loaded", { count: corpusTerms.length });
+
     LOG("runVeillePipeline processing items", { count: toProcess.length });
     let inserted = 0;
     for (let i = 0; i < toProcess.length; i++) {
@@ -130,7 +133,8 @@ export async function runVeillePipeline(runId: string): Promise<void> {
         supabase,
         url,
         article.title,
-        article.abstract
+        article.abstract,
+        corpusTerms
       );
       const { error: insertErr } = await supabase.from("veille_items").insert({
         run_id: runId,

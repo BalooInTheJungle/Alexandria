@@ -10,11 +10,75 @@ const LOG = (msg: string, ...args: unknown[]) =>
 
 export type ScoreResult = { heuristic_score: number; similarity_score: number };
 
+/** Domaines réputés (journal) : bonus léger. */
+const REPUTED_DOMAINS = [
+  "nature.com",
+  "science.org",
+  "pubs.rsc.org",
+  "pubs.acs.org",
+  "wiley.com",
+  "springer.com",
+  "elsevier.com",
+  "frontiersin.org",
+  "mdpi.com",
+  "plos.org",
+];
+
 /**
- * Heuristique : pour l'instant 0. À définir (mots-clés, regex, position).
+ * Récupère les termes les plus fréquents du corpus (chunks).
+ * Utilise ts_stat sur content_tsv et content_fr_tsv.
  */
-export function computeHeuristicScore(_url: string, _title: string | null): number {
-  return 0;
+export async function getCorpusTopTerms(
+  supabase: SupabaseClient,
+  limit = 80
+): Promise<string[]> {
+  try {
+    const { data, error } = await supabase.rpc("get_corpus_top_terms", { lim: limit });
+    if (error) {
+      LOG("getCorpusTopTerms error", error.message);
+      return [];
+    }
+    const words = (data as { word: string }[] ?? []).map((r) => r.word).filter(Boolean);
+    LOG("getCorpusTopTerms", { count: words.length, sample: words.slice(0, 10) });
+    return words;
+  } catch (err) {
+    LOG("getCorpusTopTerms exception", err);
+    return [];
+  }
+}
+
+/**
+ * Heuristique : domaine réputé + termes du corpus (les plus fréquents dans les documents).
+ * corpusTerms : lexèmes issus de ts_stat (stemmed). On matche par inclusion (ex. "molecul" matche "molecular").
+ * Score entre 0 et 1 (cap).
+ */
+export function computeHeuristicScore(
+  url: string,
+  title: string | null,
+  abstract: string | null | undefined,
+  corpusTerms: string[] = []
+): number {
+  let score = 0;
+
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (REPUTED_DOMAINS.some((d) => host.includes(d))) {
+      score += 0.15;
+    }
+  } catch {
+    // URL invalide
+  }
+
+  const text = `${title ?? ""} ${abstract ?? ""}`.toLowerCase();
+  if (!text.trim()) return Math.min(1, score);
+
+  let hits = 0;
+  for (const term of corpusTerms) {
+    if (term.length >= 3 && text.includes(term)) hits++;
+  }
+  score += Math.min(0.5, hits * 0.06);
+
+  return Math.min(1, Math.round(score * 100) / 100);
 }
 
 /**
@@ -55,10 +119,11 @@ export async function computeScores(
   supabase: SupabaseClient,
   url: string,
   title: string | null,
-  abstract: string | null
+  abstract: string | null,
+  corpusTerms: string[] = []
 ): Promise<ScoreResult> {
-  LOG("computeScores start", { url: url.slice(0, 50), hasTitle: !!title, hasAbstract: !!abstract });
-  const heuristic_score = computeHeuristicScore(url, title);
+  LOG("computeScores start", { url: url.slice(0, 50), hasTitle: !!title, hasAbstract: !!abstract, corpusTermsCount: corpusTerms.length });
+  const heuristic_score = computeHeuristicScore(url, title, abstract, corpusTerms);
   const textForVector = (abstract || title || "").trim();
   const similarity_score = await computeSimilarityScore(supabase, textForVector);
   LOG("computeScores done", { heuristic_score, similarity_score });
