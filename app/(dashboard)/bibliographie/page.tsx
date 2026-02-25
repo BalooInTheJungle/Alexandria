@@ -187,19 +187,21 @@ export default function BibliographiePage() {
       console.log("[bibliographie] scrape response", {
         status: res.status,
         runId: data.runId,
+        runStatus: data.status,
         message: data.message,
         error: data.error,
       });
       if (data.runId) {
         setRunId(data.runId);
-        setRunStatus(data.status ?? "pending");
+        setRunStatus(data.status ?? "completed");
         setRunMessage(data.message ?? null);
-        pollRunStatus(data.runId);
+        setPendingSince(null);
+        fetchRuns();
+        fetchItems();
       } else {
         console.warn("[bibliographie] no runId in response", data);
-        setScraping(false);
-        setPendingSince(null);
       }
+      setScraping(false);
     } catch (err) {
       console.error("[bibliographie] scrape error", err);
       setScraping(false);
