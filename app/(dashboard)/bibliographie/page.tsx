@@ -193,15 +193,14 @@ export default function BibliographiePage() {
       });
       if (data.runId) {
         setRunId(data.runId);
-        setRunStatus(data.status ?? "completed");
+        setRunStatus(data.status ?? "pending");
         setRunMessage(data.message ?? null);
-        setPendingSince(null);
-        fetchRuns();
-        fetchItems();
+        pollRunStatus(data.runId);
       } else {
         console.warn("[bibliographie] no runId in response", data);
+        setScraping(false);
+        setPendingSince(null);
       }
-      setScraping(false);
     } catch (err) {
       console.error("[bibliographie] scrape error", err);
       setScraping(false);

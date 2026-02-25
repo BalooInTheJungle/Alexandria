@@ -1,3 +1,4 @@
+import { waitUntil } from "@vercel/functions";
 import { NextResponse } from "next/server";
 import { createRun } from "@/lib/db/veille";
 import { runVeillePipeline } from "@/lib/veille/run-pipeline";
@@ -10,8 +11,8 @@ const LOG = (msg: string, ...args: unknown[]) =>
 
 /**
  * POST /api/veille/scrape
- * Exécute la pipeline de façon synchrone (wait: true). Sur Vercel, after() n'existe pas en Next.js 14.
- * Le bouton Stop reste disponible via POST /api/veille/runs/[id]/stop si on passe en mode async plus tard.
+ * Crée une run, retourne 202 avec runId immédiatement, puis exécute la pipeline via waitUntil.
+ * Le frontend peut poller le statut et utiliser le bouton Stop.
  */
 export async function POST(request: Request) {
   const startTime = Date.now();
@@ -22,18 +23,22 @@ export async function POST(request: Request) {
     const runId = run.id;
     LOG("run created", { runId, status: run.status, elapsedMs: Date.now() - startTime });
 
-    await runVeillePipeline(runId);
+    waitUntil(
+      runVeillePipeline(runId).catch((err) => {
+        console.error("[veille/scrape] pipeline error:", new Date().toISOString(), err);
+      })
+    );
 
     const elapsed = Date.now() - startTime;
-    LOG("pipeline finished", { runId, elapsedMs: elapsed });
-    const { getRunById } = await import("@/lib/db/veille");
-    const updated = await getRunById(runId);
-    return NextResponse.json({
-      runId,
-      status: updated?.status ?? run.status,
-      message: "Run terminée",
-      elapsedMs: elapsed,
-    });
+    LOG("returning 202", { runId, elapsedMs: elapsed });
+    return NextResponse.json(
+      {
+        runId,
+        status: "pending",
+        message: "Run démarrée. Utilisez le bouton Arrêter pour interrompre.",
+      },
+      { status: 202 }
+    );
   } catch (e) {
     LOG("error", e);
     console.error("[veille/scrape] error:", new Date().toISOString(), e);
