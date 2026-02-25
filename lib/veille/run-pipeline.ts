@@ -120,6 +120,29 @@ export async function runVeillePipeline(runId: string): Promise<void> {
     LOG("runVeillePipeline processing items", { count: toProcess.length });
     let inserted = 0;
     for (let i = 0; i < toProcess.length; i++) {
+      const { data: runRow } = await supabase
+        .from("veille_runs")
+        .select("abort_requested")
+        .eq("id", runId)
+        .maybeSingle();
+      if (runRow?.abort_requested) {
+        LOG("runVeillePipeline abort requested, stopping");
+        await supabase
+          .from("veille_runs")
+          .update({
+            status: "stopped",
+            completed_at: new Date().toISOString(),
+            error_message: "Arrêt demandé par l'utilisateur",
+          })
+          .eq("id", runId);
+        await supabase
+          .from("sources")
+          .update({ last_checked_at: new Date().toISOString() })
+          .in("id", sources.map((s) => s.id));
+        LOG("STOPPED", { runId, inserted, totalProcessed: toProcess.length, elapsedMs: Date.now() - startTime });
+        return;
+      }
+
       const { sourceId, url } = toProcess[i];
       LOG("runVeillePipeline item start", { index: i + 1, total: toProcess.length, url: url.slice(0, 60) });
       const article = await extractArticleFromUrl(url);

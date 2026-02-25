@@ -154,6 +154,12 @@ export default function BibliographiePage() {
       setRunStatus(run.status);
       if (run.status === "running" || run.status === "pending") {
         setTimeout(() => pollRunStatus(id, pollCount + 1), 2000);
+      } else if (run.status === "stopped") {
+        console.log("[bibliographie] run stopped by user", { id });
+        setScraping(false);
+        setPendingSince(null);
+        fetchRuns();
+        fetchItems();
       } else {
         console.log("[bibliographie] run finished", { id, status: run.status, pollCount });
         setScraping(false);
@@ -170,41 +176,49 @@ export default function BibliographiePage() {
     setRunStatus("pending");
     setRunId(null);
     setPendingSince(Date.now());
-    // wait: true requis sur Vercel : les serverless s'arrêtent après la réponse,
-    // donc un "background" ne peut pas tourner. On attend la fin de la pipeline.
-    console.log("[bibliographie] starting scrape", { wait: true });
+    console.log("[bibliographie] starting scrape");
     try {
       const res = await fetch("/api/veille/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wait: true }),
+        body: JSON.stringify({}),
       });
       const data = await res.json();
       console.log("[bibliographie] scrape response", {
         status: res.status,
         runId: data.runId,
-        runStatus: data.status,
         message: data.message,
         error: data.error,
       });
       if (data.runId) {
         setRunId(data.runId);
-        setRunStatus(data.status ?? "completed");
+        setRunStatus(data.status ?? "pending");
         setRunMessage(data.message ?? null);
-        setPendingSince(null);
-        fetchRuns();
-        fetchItems();
-        if (data.status === "running" || data.status === "pending") {
-          pollRunStatus(data.runId);
-        }
+        pollRunStatus(data.runId);
       } else {
         console.warn("[bibliographie] no runId in response", data);
+        setScraping(false);
+        setPendingSince(null);
       }
-      setScraping(false);
     } catch (err) {
       console.error("[bibliographie] scrape error", err);
       setScraping(false);
       setPendingSince(null);
+    }
+  };
+
+  const stopScrape = async () => {
+    if (!runId) return;
+    try {
+      const res = await fetch(`/api/veille/runs/${runId}/stop`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setRunMessage(data.message ?? "Arrêt demandé");
+      } else {
+        console.warn("[bibliographie] stop failed", data);
+      }
+    } catch (err) {
+      console.error("[bibliographie] stop error", err);
     }
   };
 
@@ -320,9 +334,16 @@ export default function BibliographiePage() {
               <CardTitle>Lancer la recherche</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Button onClick={startScrape} disabled={scraping || sources.length === 0}>
-                {scraping ? "Lancement…" : "Lancer la recherche"}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button onClick={startScrape} disabled={scraping || sources.length === 0}>
+                  {scraping ? "Lancement…" : "Lancer la recherche"}
+                </Button>
+                {scraping && runStatus === "running" && runId && (
+                  <Button variant="outline" size="sm" onClick={stopScrape}>
+                    Arrêter
+                  </Button>
+                )}
+              </div>
               {runStatus && (
                 <div className="space-y-1 text-sm text-muted-foreground">
                   {runMessage && (

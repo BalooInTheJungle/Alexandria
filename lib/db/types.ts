@@ -37,7 +37,7 @@ export type Source = {
 
 export type VeilleRun = {
   id: string;
-  status: "pending" | "running" | "completed" | "failed";
+  status: "pending" | "running" | "completed" | "failed" | "stopped";
   started_at?: string | null;
   completed_at?: string | null;
   error_message?: string | null;
