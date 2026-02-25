@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { createRun } from "@/lib/db/veille";
 import { runVeillePipeline } from "@/lib/veille/run-pipeline";
 
+/** Timeout étendu pour la pipeline veille (Vercel Pro: 60s par défaut, max 300s). */
+export const maxDuration = 300;
+
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[veille/scrape]", new Date().toISOString(), msg, ...args);
 

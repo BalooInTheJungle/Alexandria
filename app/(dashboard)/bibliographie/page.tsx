@@ -170,29 +170,37 @@ export default function BibliographiePage() {
     setRunStatus("pending");
     setRunId(null);
     setPendingSince(Date.now());
-    console.log("[bibliographie] starting scrape", { wait: false });
+    // wait: true requis sur Vercel : les serverless s'arrêtent après la réponse,
+    // donc un "background" ne peut pas tourner. On attend la fin de la pipeline.
+    console.log("[bibliographie] starting scrape", { wait: true });
     try {
       const res = await fetch("/api/veille/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wait: false }),
+        body: JSON.stringify({ wait: true }),
       });
       const data = await res.json();
       console.log("[bibliographie] scrape response", {
         status: res.status,
         runId: data.runId,
+        runStatus: data.status,
         message: data.message,
         error: data.error,
       });
       if (data.runId) {
         setRunId(data.runId);
+        setRunStatus(data.status ?? "completed");
         setRunMessage(data.message ?? null);
-        pollRunStatus(data.runId);
+        setPendingSince(null);
+        fetchRuns();
+        fetchItems();
+        if (data.status === "running" || data.status === "pending") {
+          pollRunStatus(data.runId);
+        }
       } else {
         console.warn("[bibliographie] no runId in response", data);
-        setScraping(false);
-        setPendingSince(null);
       }
+      setScraping(false);
     } catch (err) {
       console.error("[bibliographie] scrape error", err);
       setScraping(false);
@@ -327,12 +335,9 @@ export default function BibliographiePage() {
                       <span className="ml-2">— depuis {pendingElapsed} s</span>
                     )}
                   </p>
-                  {runStatus === "pending" && pendingElapsed > 60 && (
+                  {(runStatus === "pending" || runStatus === "running") && pendingElapsed > 120 && (
                     <p className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-200">
-                      Cette run est en attente depuis plus d&apos;une minute. Sur Vercel (serverless), les fonctions
-                      s&apos;arrêtent dès que la réponse est envoyée : le travail en arrière-plan est interrompu.
-                      La pipeline n&apos;a donc pas pu s&apos;exécuter. Consultez les logs Vercel ou utilisez{" "}
-                      <code className="rounded bg-muted px-1">wait: true</code> en local pour tester.
+                      Cette run est en cours depuis plus de 2 minutes. Si elle dépasse 5 min, le timeout Vercel peut l&apos;interrompre.
                     </p>
                   )}
                 </div>
