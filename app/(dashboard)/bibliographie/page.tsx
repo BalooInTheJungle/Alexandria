@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -33,6 +34,8 @@ type Source = {
   last_checked_at?: string | null;
 };
 
+type VeilleRunPhase = "sources" | "urls" | "filter" | "items" | "done";
+
 type VeilleRun = {
   id: string;
   status: string;
@@ -41,6 +44,9 @@ type VeilleRun = {
   error_message?: string | null;
   created_at?: string;
   items_count?: number;
+  phase?: VeilleRunPhase | null;
+  items_processed?: number | null;
+  items_total?: number | null;
 };
 
 type VeilleItem = {
@@ -59,7 +65,17 @@ type VeilleItem = {
 
 const FETCH_STRATEGIES = ["auto", "fetch", "rss"] as const;
 
+const PHASE_LABELS: Record<string, string> = {
+  sources: "Récupération des sources",
+  urls: "Extraction des URLs",
+  filter: "Filtrage LLM",
+  items: "Traitement des articles",
+  done: "Terminé",
+};
+
 export default function BibliographiePage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<TabId>("pipeline");
   const [sources, setSources] = useState<Source[]>([]);
   const [runs, setRuns] = useState<VeilleRun[]>([]);
@@ -70,6 +86,9 @@ export default function BibliographiePage() {
   const [runId, setRunId] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
+  const [runPhase, setRunPhase] = useState<VeilleRunPhase | null>(null);
+  const [runItemsProcessed, setRunItemsProcessed] = useState<number | null>(null);
+  const [runItemsTotal, setRunItemsTotal] = useState<number | null>(null);
   const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [scraping, setScraping] = useState(false);
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
@@ -132,6 +151,55 @@ export default function BibliographiePage() {
     fetchItems();
   }, [fetchItems]);
 
+  // Persistance : URL ?run=xxx et auto-détection d'une run en cours
+  useEffect(() => {
+    const runFromUrl = searchParams.get("run");
+    if (runFromUrl && runFromUrl !== runId) {
+      setTab("pipeline");
+      fetch(`/api/veille/runs/${runFromUrl}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((run) => {
+          if (run) {
+            setRunId(run.id);
+            setRunStatus(run.status);
+            setRunPhase(run.phase ?? null);
+            setRunItemsProcessed(run.items_processed ?? null);
+            setRunItemsTotal(run.items_total ?? null);
+            if (run.status === "running" || run.status === "pending") {
+              setScraping(true);
+              setPendingSince(run.started_at ? new Date(run.started_at).getTime() : Date.now());
+              pollRunStatus(run.id);
+            }
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+    if (!runFromUrl && runs.length > 0 && !runId) {
+      setTab("pipeline");
+      const active = runs.find((r) => r.status === "running" || r.status === "pending");
+      if (active) {
+        router.replace(`/bibliographie?run=${active.id}`, { scroll: false });
+        fetch(`/api/veille/runs/${active.id}`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((run) => {
+            if (run) {
+              setRunId(run.id);
+              setRunStatus(run.status);
+              setRunPhase(run.phase ?? null);
+              setRunItemsProcessed(run.items_processed ?? null);
+              setRunItemsTotal(run.items_total ?? null);
+              setScraping(true);
+              setPendingSince(run.started_at ? new Date(run.started_at).getTime() : Date.now());
+              pollRunStatus(run.id);
+            }
+          })
+          .catch(() => {});
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pollRunStatus stable
+  }, [searchParams.get("run"), runs, runId]);
+
   useEffect(() => {
     if (!pendingSince || (runStatus !== "pending" && runStatus !== "running")) {
       setPendingElapsed(0);
@@ -152,18 +220,27 @@ export default function BibliographiePage() {
       }
       const run = await res.json();
       setRunStatus(run.status);
+      setRunPhase(run.phase ?? null);
+      setRunItemsProcessed(run.items_processed ?? null);
+      setRunItemsTotal(run.items_total ?? null);
       if (run.status === "running" || run.status === "pending") {
         setTimeout(() => pollRunStatus(id, pollCount + 1), 2000);
       } else if (run.status === "stopped") {
         console.log("[bibliographie] run stopped by user", { id });
         setScraping(false);
         setPendingSince(null);
+        setRunPhase(null);
+        setRunItemsProcessed(null);
+        setRunItemsTotal(null);
         fetchRuns();
         fetchItems();
       } else {
         console.log("[bibliographie] run finished", { id, status: run.status, pollCount });
         setScraping(false);
         setPendingSince(null);
+        setRunPhase(null);
+        setRunItemsProcessed(null);
+        setRunItemsTotal(null);
         fetchRuns();
         fetchItems();
       }
@@ -195,6 +272,11 @@ export default function BibliographiePage() {
         setRunId(data.runId);
         setRunStatus(data.status ?? "pending");
         setRunMessage(data.message ?? null);
+        setRunPhase(null);
+        setRunItemsProcessed(null);
+        setRunItemsTotal(null);
+        setPendingSince(Date.now());
+        router.replace(`/bibliographie?run=${data.runId}`, { scroll: false });
         pollRunStatus(data.runId);
       } else {
         console.warn("[bibliographie] no runId in response", data);
@@ -346,17 +428,67 @@ export default function BibliographiePage() {
                 )}
               </div>
               {runStatus && (
-                <div className="space-y-1 text-sm text-muted-foreground">
+                <div className="space-y-2 text-sm text-muted-foreground">
                   {runMessage && (
                     <p className="text-xs italic">{runMessage}</p>
                   )}
                   <p>
                     Statut : <span className="font-medium">{runStatus}</span>
-                    {runId && ` (run ${runId.slice(0, 8)}…)`}
+                    {runId && (
+                      <>
+                        {" "}
+                        <Link href={`/bibliographie?run=${runId}`} className="text-primary underline">
+                          run {runId.slice(0, 8)}…
+                        </Link>
+                      </>
+                    )}
                     {pendingElapsed > 0 && (runStatus === "pending" || runStatus === "running") && (
                       <span className="ml-2">— depuis {pendingElapsed} s</span>
                     )}
                   </p>
+                  {(runStatus === "pending" || runStatus === "running") && (
+                    <div className="space-y-2">
+                      {/* Étapes */}
+                      <div className="flex flex-wrap gap-2">
+                        {(["sources", "urls", "filter", "items"] as const).map((p) => {
+                          const phases = ["sources", "urls", "filter", "items"];
+                          const idx = phases.indexOf(p);
+                          const currentIdx = runPhase ? phases.indexOf(runPhase) : -1;
+                          const done = idx < currentIdx || (runPhase === "done" && idx < 4);
+                          const current = runPhase === p;
+                          return (
+                            <span
+                              key={p}
+                              className={`rounded px-2 py-0.5 text-xs ${
+                                current ? "bg-primary text-primary-foreground" : done ? "bg-muted" : "bg-muted/50 text-muted-foreground"
+                              }`}
+                            >
+                              {PHASE_LABELS[p]}
+                            </span>
+                          );
+                        })}
+                      </div>
+                      {/* Barre articles */}
+                      {runPhase === "items" && runItemsTotal != null && runItemsTotal > 0 && (
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span>{PHASE_LABELS.items}</span>
+                            <span>
+                              {runItemsProcessed ?? 0} / {runItemsTotal}
+                            </span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                            <div
+                              className="h-full bg-primary transition-all duration-300"
+                              style={{
+                                width: `${Math.min(100, ((runItemsProcessed ?? 0) / runItemsTotal) * 100)}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {(runStatus === "pending" || runStatus === "running") && pendingElapsed > 120 && (
                     <p className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-200">
                       Cette run est en cours depuis plus de 2 minutes. Si elle dépasse 5 min, le timeout Vercel peut l&apos;interrompre.

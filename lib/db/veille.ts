@@ -157,7 +157,7 @@ export async function getRunById(id: string): Promise<VeilleRunRow | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("veille_runs")
-    .select("id, status, started_at, completed_at, error_message, created_at")
+    .select("id, status, started_at, completed_at, error_message, created_at, phase, items_processed, items_total")
     .eq("id", id)
     .maybeSingle();
 

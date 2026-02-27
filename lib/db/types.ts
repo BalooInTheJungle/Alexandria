@@ -35,6 +35,8 @@ export type Source = {
   last_checked_at?: string | null;
 };
 
+export type VeilleRunPhase = "sources" | "urls" | "filter" | "items" | "done";
+
 export type VeilleRun = {
   id: string;
   status: "pending" | "running" | "completed" | "failed" | "stopped";
@@ -42,6 +44,9 @@ export type VeilleRun = {
   completed_at?: string | null;
   error_message?: string | null;
   created_at?: string;
+  phase?: VeilleRunPhase | null;
+  items_processed?: number | null;
+  items_total?: number | null;
 };
 
 export type VeilleItem = {

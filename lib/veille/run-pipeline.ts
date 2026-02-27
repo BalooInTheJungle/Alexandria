@@ -31,7 +31,7 @@ export async function runVeillePipeline(runId: string): Promise<void> {
   try {
     const { error: updateErr } = await supabase
       .from("veille_runs")
-      .update({ status: "running", started_at: new Date().toISOString() })
+      .update({ status: "running", started_at: new Date().toISOString(), phase: "sources" })
       .eq("id", runId);
     if (updateErr) {
       LOG("ERROR: update status to running failed", updateErr.message);
@@ -84,6 +84,7 @@ export async function runVeillePipeline(runId: string): Promise<void> {
       }
     }
     LOG("urls extracted", { total: sourceUrls.length, elapsedMs: Date.now() - startTime });
+    await supabase.from("veille_runs").update({ phase: "urls" }).eq("id", runId);
 
     const filtered = filterArticleCandidateUrls(sourceUrls);
     LOG("runVeillePipeline urls after prefilter", {
@@ -117,6 +118,11 @@ export async function runVeillePipeline(runId: string): Promise<void> {
     const corpusTerms = await getCorpusTopTerms(supabase, 80);
     LOG("runVeillePipeline corpus terms loaded", { count: corpusTerms.length });
 
+    await supabase
+      .from("veille_runs")
+      .update({ phase: "items", items_total: toProcess.length, items_processed: 0 })
+      .eq("id", runId);
+
     LOG("runVeillePipeline processing items", { count: toProcess.length });
     let inserted = 0;
     for (let i = 0; i < toProcess.length; i++) {
@@ -133,6 +139,7 @@ export async function runVeillePipeline(runId: string): Promise<void> {
             status: "stopped",
             completed_at: new Date().toISOString(),
             error_message: "Arrêt demandé par l'utilisateur",
+            phase: "done",
           })
           .eq("id", runId);
         await supabase
@@ -178,6 +185,7 @@ export async function runVeillePipeline(runId: string): Promise<void> {
         inserted++;
         LOG("runVeillePipeline item ok", { index: i + 1, inserted, title: article.title?.slice(0, 40) });
       }
+      await supabase.from("veille_runs").update({ items_processed: i + 1 }).eq("id", runId);
     }
 
     LOG("runVeillePipeline updating last_checked_at for sources");
@@ -192,6 +200,7 @@ export async function runVeillePipeline(runId: string): Promise<void> {
       .update({
         status: "completed",
         completed_at: new Date().toISOString(),
+        phase: "done",
       })
       .eq("id", runId);
     if (completeErr) LOG("ERROR: complete update failed", completeErr.message);

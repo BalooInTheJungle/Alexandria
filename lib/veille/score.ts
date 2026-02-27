@@ -38,7 +38,10 @@ export async function getCorpusTopTerms(
       LOG("getCorpusTopTerms error", error.message);
       return [];
     }
-    const words = (data as { word: string }[] ?? []).map((r) => r.word).filter(Boolean);
+    const rows = (data ?? []) as Array<{ word?: string; w?: string }>;
+    const words = rows
+      .map((r) => (r as Record<string, unknown>).word ?? (r as Record<string, unknown>).w)
+      .filter((w): w is string => typeof w === "string" && w.length > 0);
     LOG("getCorpusTopTerms", { count: words.length, sample: words.slice(0, 10) });
     return words;
   } catch (err) {
