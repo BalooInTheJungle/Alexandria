@@ -38,11 +38,14 @@ export async function getCorpusTopTerms(
       LOG("getCorpusTopTerms error", error.message);
       return [];
     }
-    const rows = (data ?? []) as Array<{ word?: string; w?: string }>;
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
     const words = rows
-      .map((r) => (r as Record<string, unknown>).word ?? (r as Record<string, unknown>).w)
-      .filter((w): w is string => typeof w === "string" && w.length > 0);
-    LOG("getCorpusTopTerms", { count: words.length, sample: words.slice(0, 10) });
+      .map((r) => {
+        const w = r.word ?? r.w ?? Object.values(r).find((v) => typeof v === "string" && (v as string).length >= 3);
+        return typeof w === "string" ? w : null;
+      })
+      .filter((w): w is string => typeof w === "string" && w.length >= 3);
+    LOG("getCorpusTopTerms", { count: words.length, sample: words.slice(0, 10), rawKeys: rows[0] ? Object.keys(rows[0]) : [] });
     return words;
   } catch (err) {
     LOG("getCorpusTopTerms exception", err);
