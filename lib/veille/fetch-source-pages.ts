@@ -4,7 +4,7 @@
  */
 
 const LOG = (msg: string, ...args: unknown[]) =>
-  console.log("[veille/fetch-source-pages]", msg, ...args);
+  console.log("[veille/fetch-source-pages]", new Date().toISOString(), msg, ...args);
 
 export type SourcePage = { sourceId: string; url: string; html: string };
 
@@ -30,6 +30,7 @@ const DEFAULT_HEADERS: Record<string, string> = {
 
 async function fetchOne(src: SourceInput): Promise<SourcePage | null> {
   try {
+    LOG("fetchOne start", { url: src.url.slice(0, 60) });
     const res = await fetch(src.url, {
       headers: DEFAULT_HEADERS,
       signal: AbortSignal.timeout(15_000),
@@ -39,7 +40,7 @@ async function fetchOne(src: SourceInput): Promise<SourcePage | null> {
       return null;
     }
     const html = await res.text();
-    LOG("fetch ok", { url: src.url.slice(0, 50), htmlLength: html.length });
+    LOG("fetchOne ok", { url: src.url.slice(0, 50), htmlLength: html.length });
     return { sourceId: src.id, url: src.url, html };
   } catch (err) {
     LOG("fetch error", { url: src.url.slice(0, 50), err: String(err) });

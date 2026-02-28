@@ -489,11 +489,6 @@ export default function BibliographiePage() {
                       )}
                     </div>
                   )}
-                  {(runStatus === "pending" || runStatus === "running") && pendingElapsed > 120 && (
-                    <p className="rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-amber-800 dark:text-amber-200">
-                      Cette run est en cours depuis plus de 2 minutes. Si elle dépasse 5 min, le timeout Vercel peut l&apos;interrompre.
-                    </p>
-                  )}
                 </div>
               )}
             </CardContent>

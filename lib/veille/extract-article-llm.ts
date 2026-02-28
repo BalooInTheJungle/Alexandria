@@ -8,7 +8,7 @@ import type { CleanedArticle } from "./clean-article-html";
 import { cleanArticleHtml } from "./clean-article-html";
 
 const LOG = (msg: string, ...args: unknown[]) =>
-  console.log("[veille/extract-article]", msg, ...args);
+  console.log("[veille/extract-article]", new Date().toISOString(), msg, ...args);
 
 export type ExtractedArticle = {
   title: string | null;
@@ -145,27 +145,46 @@ async function extractArticleWithLlm(
   }
 }
 
+/** Timeout total fetch + body (Nature et autres sites peuvent streamer lentement). */
+const FETCH_TOTAL_TIMEOUT_MS = 25_000;
+
 export async function extractArticleFromUrl(
   url: string
 ): Promise<ExtractedArticle & { last_error?: string }> {
-  LOG("extractArticleFromUrl", { url: url.slice(0, 60) });
+  LOG("extractArticleFromUrl start", { url: url.slice(0, 60) });
   try {
-    const res = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; AlexandriaVeille/1.0)",
-        Accept: "text/html",
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) {
-      const err = `HTTP ${res.status}`;
-      LOG("extractArticleFromUrl fetch failed", { url: url.slice(0, 50), status: res.status });
-      return { title: null, authors: [], doi: null, abstract: null, published_at: null, last_error: err };
-    }
-    const html = await res.text();
-    LOG("extractArticleFromUrl fetch ok", { htmlLen: html.length });
+    LOG("fetch start", { url: url.slice(0, 50), timeoutMs: FETCH_TOTAL_TIMEOUT_MS });
+    // Promise.race : fetch + res.text() peuvent bloquer (body stream lent) — timeout global
+    const html = await Promise.race([
+      (async () => {
+        const res = await fetch(url, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; AlexandriaVeille/1.0)",
+            Accept: "text/html",
+          },
+          signal: AbortSignal.timeout(FETCH_TOTAL_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          const err = `HTTP ${res.status}`;
+          LOG("fetch failed", { url: url.slice(0, 50), status: res.status });
+          throw new Error(err);
+        }
+        LOG("fetch ok, reading body", { url: url.slice(0, 50) });
+        const body = await res.text();
+        LOG("fetch body done", { htmlLen: body.length });
+        return body;
+      })(),
+      new Promise<string>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("The operation was aborted due to timeout")),
+          FETCH_TOTAL_TIMEOUT_MS
+        )
+      ),
+    ]);
 
+    LOG("cleanArticleHtml start");
     const cleaned = cleanArticleHtml(html, url);
+    LOG("cleanArticleHtml done", { hasCleaned: !!cleaned, textLen: cleaned?.text?.length ?? 0 });
 
     let title: string | null = null;
     let abstract: string | null = null;
@@ -221,7 +240,7 @@ export async function extractArticleFromUrl(
     return { title, authors, doi, abstract, published_at };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    LOG("extractArticleFromUrl error", { url: url.slice(0, 50), err: msg });
+    LOG("extractArticleFromUrl error", { url: url.slice(0, 50), err: msg, name: err instanceof Error ? err.name : undefined });
     return {
       title: null,
       authors: [],

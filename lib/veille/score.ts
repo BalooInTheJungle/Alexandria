@@ -6,7 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { embedQuery } from "@/lib/rag/embed";
 
 const LOG = (msg: string, ...args: unknown[]) =>
-  console.log("[veille/score]", msg, ...args);
+  console.log("[veille/score]", new Date().toISOString(), msg, ...args);
 
 export type ScoreResult = { heuristic_score: number; similarity_score: number };
 
@@ -99,6 +99,7 @@ export async function computeSimilarityScore(
     LOG("computeSimilarityScore empty text");
     return 0;
   }
+  LOG("computeSimilarityScore start", { inputLen: input.length });
   try {
     const embedding = await embedQuery(input);
     LOG("computeSimilarityScore embed done", { dim: embedding.length });
