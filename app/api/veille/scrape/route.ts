@@ -9,7 +9,7 @@ export const maxDuration = 300;
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[veille/scrape]", new Date().toISOString(), msg, ...args);
 
-const DEFAULT_BATCH_SIZE = 10;
+const DEFAULT_BATCH_SIZE = 5;
 
 /** URL de base pour les appels internes (fetch process-batch). Vercel: VERCEL_URL, sinon request. */
 function getBaseUrl(request: Request): string {

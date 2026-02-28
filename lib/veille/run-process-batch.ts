@@ -12,7 +12,8 @@ const LOG = (msg: string, ...args: unknown[]) =>
 
 export type ProcessBatchResult = { processed: number; hasMore: boolean };
 
-const DEFAULT_BATCH_SIZE = 10;
+/** Réduit le risque de timeout Vercel (5 min) sur sources lentes (ex. Nature). */
+const DEFAULT_BATCH_SIZE = 5;
 
 export async function runVeilleProcessBatch(
   runId: string,

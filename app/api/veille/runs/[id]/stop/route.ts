@@ -8,8 +8,8 @@ type Params = { params: Promise<{ id: string }> };
 
 /**
  * POST /api/veille/runs/[id]/stop
- * Demande l'arrêt d'une run en cours (abort_requested = true).
- * La pipeline vérifie ce flag avant chaque item et met status = stopped si demandé.
+ * Arrête immédiatement la run (status = stopped).
+ * Si process-batch tourne encore, il vérifiera abort_requested et s'arrêtera proprement.
  */
 export async function POST(_request: Request, { params }: Params) {
   try {
@@ -37,7 +37,13 @@ export async function POST(_request: Request, { params }: Params) {
 
     const { error: updateErr } = await supabase
       .from("veille_runs")
-      .update({ abort_requested: true })
+      .update({
+        abort_requested: true,
+        status: "stopped",
+        completed_at: new Date().toISOString(),
+        error_message: "Arrêt demandé par l'utilisateur",
+        phase: "done",
+      })
       .eq("id", id);
 
     if (updateErr) {
