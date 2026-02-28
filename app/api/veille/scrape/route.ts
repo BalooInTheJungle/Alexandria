@@ -11,6 +11,20 @@ const LOG = (msg: string, ...args: unknown[]) =>
 
 const DEFAULT_BATCH_SIZE = 10;
 
+/** URL de base pour les appels internes (fetch process-batch). Vercel: VERCEL_URL, sinon request. */
+function getBaseUrl(request: Request): string {
+  const vercelUrl = process.env.VERCEL_URL;
+  if (vercelUrl) {
+    return `https://${vercelUrl}`;
+  }
+  try {
+    const url = new URL(request.url);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return "http://localhost:3000";
+  }
+}
+
 /**
  * POST /api/veille/scrape
  * Crée une run, retourne 202 avec runId immédiatement.
@@ -34,13 +48,15 @@ export async function POST(request: Request) {
             LOG("prepare done, no URLs to process");
             return;
           }
-          const url = new URL(request.url);
-          const base = `${url.protocol}//${url.host}`;
+          const base = getBaseUrl(request);
           const processBatchUrl = `${base}/api/veille/process-batch`;
-          LOG("triggering first batch", { count, processBatchUrl });
+          const cookie = request.headers.get("cookie");
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (cookie) headers["Cookie"] = cookie;
+          LOG("triggering first batch", { count, processBatchUrl, hasCookie: !!cookie });
           const fetchRes = await fetch(processBatchUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers,
             body: JSON.stringify({ runId, batchSize: DEFAULT_BATCH_SIZE }),
           });
           LOG("first batch response", { status: fetchRes.status, ok: fetchRes.ok });

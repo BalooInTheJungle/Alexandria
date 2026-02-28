@@ -10,6 +10,20 @@ const LOG = (msg: string, ...args: unknown[]) =>
 
 const DEFAULT_BATCH_SIZE = 10;
 
+/** URL de base pour le chaînage. Vercel: VERCEL_URL, sinon request. */
+function getBaseUrl(request: Request): string {
+  const vercelUrl = process.env.VERCEL_URL;
+  if (vercelUrl) {
+    return `https://${vercelUrl}`;
+  }
+  try {
+    const url = new URL(request.url);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return "http://localhost:3000";
+  }
+}
+
 /**
  * POST /api/veille/process-batch
  * Traite un lot d'URLs pour une run. Si hasMore, enchaîne le lot suivant via waitUntil.
@@ -33,14 +47,16 @@ export async function POST(request: Request) {
     LOG("process batch result", { runId, processed, hasMore });
 
     if (hasMore) {
-      const url = new URL(request.url);
-      const base = `${url.protocol}//${url.host}`;
+      const base = getBaseUrl(request);
       const nextUrl = `${base}/api/veille/process-batch`;
-      LOG("chain: triggering next batch", { nextUrl, runId });
+      const cookie = request.headers.get("cookie");
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (cookie) headers["Cookie"] = cookie;
+      LOG("chain: triggering next batch", { nextUrl, runId, hasCookie: !!cookie });
       waitUntil(
         fetch(nextUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ runId, batchSize }),
         })
           .then((res) => {
