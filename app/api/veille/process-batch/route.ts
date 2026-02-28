@@ -49,10 +49,12 @@ export async function POST(request: Request) {
     if (hasMore) {
       const base = getBaseUrl(request);
       const nextUrl = `${base}/api/veille/process-batch`;
-      const cookie = request.headers.get("cookie");
       const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const cookie = request.headers.get("cookie");
       if (cookie) headers["Cookie"] = cookie;
-      LOG("chain: triggering next batch", { nextUrl, runId, hasCookie: !!cookie });
+      const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+      if (bypass) headers["x-vercel-protection-bypass"] = bypass;
+      LOG("chain: triggering next batch", { nextUrl, runId, hasBypass: !!bypass });
       waitUntil(
         fetch(nextUrl, {
           method: "POST",
