@@ -48,11 +48,12 @@
 
 - **Pourquoi Xenova côté API** : pas d’appel API payant pour l’embedding ; modèle tourne sur le serveur Next (ou le runtime d’exécution des API routes). Aligné avec les vecteurs produits à l’ingestion (Python).
 
-### 4.2 Embeddings (ingestion côté Python)
+### 4.2 Embeddings (ingestion)
 
 | Technologie | Rôle dans le projet |
 |-------------|----------------------|
-| **sentence-transformers** | Modèle **all-MiniLM-L6-v2** dans le script **scripts/ingest.py** pour encoder le **contenu des chunks** (batch). Vecteurs 384D écrits dans `chunks.embedding`. En bilingue : même modèle sur `content_fr` → `embedding_fr`. |
+| **Xenova** (Node) | Modèle **all-MiniLM-L6-v2** dans `lib/rag/embed.ts` pour l’**API upload** (page Database) : embedding des chunks à l’ingestion. Vecteurs 384D. |
+| **sentence-transformers** (Python) | Modèle **all-MiniLM-L6-v2** dans **scripts/ingest.py** pour encoder le **contenu des chunks** (batch). Vecteurs 384D écrits dans `chunks.embedding`. En bilingue : même modèle sur `content_fr` → `embedding_fr`. |
 
 ### 4.3 Recherche (FTS + vector + RRF)
 
@@ -71,14 +72,24 @@
 
 ---
 
-## 5. Ingestion des PDF (Python)
+## 5. Ingestion des PDF (deux modes)
+
+### 5.1 API upload (page Database)
+
+| Technologie | Rôle dans le projet |
+|-------------|----------------------|
+| **pdf-parse** | Extraction du texte depuis un buffer PDF (Node). Pas d'OCR. |
+| **lib/ingestion** | Parse → chunk (paragraphes, 400 car.) → embed (Xenova) → insert. Dédup par DOI. |
+| **Supabase** | Insertion `documents` + `chunks`. Pas de stockage fichier (buffer en mémoire). |
+
+### 5.2 Script Python (data/pdfs/)
 
 | Technologie | Rôle dans le projet |
 |-------------|----------------------|
 | **PyMuPDF (fitz)** | Lecture des PDF dans **scripts/ingest.py** : extraction du texte par page (`page.get_text()`), métadonnées (XMP, heuristiques). |
 | **Tesseract (pytesseract)** + **pdf2image** | **Fallback OCR** : si une page a très peu de caractères (< seuil), conversion en image puis OCR pour récupérer le texte (PDF scannés). **Poppler** est requis pour pdf2image (macOS : `brew install poppler` ; Linux : `apt install poppler-utils`). **Tesseract** doit être installé sur le système (macOS : `brew install tesseract tesseract-lang` ; Linux : `apt install tesseract-ocr tesseract-ocr-eng`). |
 | **sentence-transformers** | Encodage des chunks (all-MiniLM-L6-v2, 384D) ; en bilingue, encodage aussi de `content_fr` → `embedding_fr`. |
-| **Traduction (prévue)** | Modèle Hugging Face local (ex. Helsinki-NLP/opus-mt-en-fr) pour produire `content_fr` à l’ingestion, sans API payante. |
+| **Traduction** | Modèle Hugging Face **Helsinki-NLP/opus-mt-en-fr** (MarianMT) pour produire `content_fr` à l’ingestion, sans API payante. |
 | **Supabase (client Python)** | Insertion des lignes `documents` et `chunks` ; mise à jour du statut et du log d’ingestion. |
 | **python-dotenv** | Chargement de `.env.local` / `.env` pour les clés Supabase (URL, service role). |
 

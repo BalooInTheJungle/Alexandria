@@ -6,7 +6,7 @@
 
 ## 1. Vue d’ensemble
 
-- **Déclenchement** : bouton dans l’UI (manuel). Une run peut durer longtemps → **job asynchrone** ; statut run : pending / running / completed / failed.
+- **Déclenchement** : bouton dans l’UI (manuel). Une run peut durer longtemps → **job asynchrone** ; statut run : pending / running / completed / failed / stopped.
 - **Run** : **toutes les sources d’un coup** (une run = toutes les sources en base).
 - **Sources** : 100 % en base (Supabase, table `sources`) ; CRUD depuis le front (liste, ajout, modification, suppression). Colonne optionnelle `fetch_strategy` : `auto` | `fetch` | `rss`.
 - **Objectif** : récupérer les **nouveaux articles** (titre, abstract, DOI, etc.), les **dédupliquer**, les **scorer** (heuristique + vectoriel) vs le corpus et afficher une **liste rankée** ; indiquer si l’article est **intégré en DB** (match DOI ou URL avec `documents`).
@@ -17,42 +17,54 @@
 ## 2. Flux de la pipeline
 
 ```
-POST /api/veille/scrape (wait: false) → createRun → run en arrière-plan
+POST /api/veille/scrape → 202 { runId }
          │
-         ▼  listSourcesFromDb() → N sources (URL + id)
+         ▼  createRun() → status pending
          │
-         ▼  fetchSourcePages() : 1 requête HTTP par source (HTML ou XML)
-         │     → Si page JS-only : 0 URL ; utiliser flux RSS pour ce domaine
+         ▼  waitUntil( runVeillePrepare + fetch(process-batch) )
          │
-         ▼  Extraction URLs : RSS/Atom → extractUrlsFromRss() ; sinon → extractUrlsFromHtml() (<a href>)
+         ▼  PHASE PRÉPARATION (run-prepare.ts)
+         │     status = running, phase = sources
+         │     listSourcesFromDb → fetchSourcePages (HTML/XML)
+         │     extractUrls (RSS ou HTML)
+         │     filterArticleCandidateUrls → removeExistingUrls → filterUrlsWithLlm
+         │     applyUrlQuotas (30/run, 10/source)
+         │     insert veille_run_urls (status=pending)
+         │     phase = items, items_total
+         │     si 0 URL → status = completed
          │
-         ▼  Guardrails : pré-filtre (assets, CDN, analytics) → dédup URL (veille_items)
+         ▼  PHASE TRAITEMENT (process-batch, lots de 5)
+         │     select URLs pending → pour chaque : extractArticle → scores → insert veille_items
+         │     hasMore ? → waitUntil(fetch(process-batch)) [chaînage]
+         │     sinon → status = completed, last_checked_at
          │
-         ▼  Filtre URLs : heuristique (articlelanding, /articles/…) + LLM « quelles URLs sont des articles ? » → JSON [urls]
-         │     + post-filtre (cookies, login…). Échec LLM → run failed.
-         │
-         ▼  Quotas (maxPerRun, maxPerSource) → liste finale de candidats
-         │
-         ▼  Pour chaque URL : fetch HTML → clean (cheerio) → LLM (titre, auteurs, DOI, abstract, date)
-         │     → scores (heuristic + similarity) → insert veille_items (skip + last_error si erreur)
-         │
-         ▼  update sources.last_checked_at ; veille_runs.status = completed/failed
-         │
-         ▼  GET /api/veille/items, /list → filterItemsForArticleDisplay() → tableau front
+         ▼  GET /api/veille/items → tableau front
 ```
+
+### Phases de la run (veille_runs.phase)
+
+| Phase | Description |
+|-------|-------------|
+| **sources** | Chargement des sources, fetch des pages. |
+| **urls** | Extraction des URLs (RSS ou HTML). |
+| **filter** | Filtrage heuristique + LLM. |
+| **items** | Traitement des articles par lots (veille_run_urls → veille_items). |
+| **done** | Run terminée (completed, failed ou stopped). |
 
 ### Étapes détaillées (ordre)
 
 1. **Lire les sources** depuis Supabase (`sources`).
 2. **Fetch HTML ou XML** : une requête HTTP par source (pas de headless). Réponse = HTML (page liste) ou XML (flux RSS/Atom/RDF).
-3. **Extraction d’URLs** : si XML → parse (`extractUrlsFromRss`, `<item>` / `<entry>`) ; sinon parse HTML (cheerio, `<a href>`, URLs absolues).
-4. **Garde-fous avant LLM** : pré-filtrage (assets, CDN, analytics) ; **dédup par URL** (retirer les URLs déjà dans `veille_items`).
-5. **Filtrage URLs** : heuristique « article évident » + LLM (liste → URLs à garder). Échec LLM → **run failed**. Post-filtre par chemin (cookies, login…).
-6. **Quotas** (ex. 30/run, 10/source) sur la liste retenue.
-7. **Pour chaque URL retenue** : fetch HTML page → pré-nettoyage bloc article (cheerio) → LLM extraction (titre, auteurs, DOI, abstract, date) ; skip + `last_error` si erreur.
-8. **Scores** : heuristique → `heuristic_score` ; embedding abstract vs corpus → `similarity_score`.
-9. **Écriture** : insertion `veille_items` (vérif DOI non déjà présent). Insert seulement si **titre OU DOI**.
-10. **Front** : tableau (source, titre, auteurs, scores, intégré en DB) ; tri par score ; filtre d’affichage (exclut titres institutionnels, etc.).
+3. **Extraction d'URLs** : si XML → parse (`extractUrlsFromRss`, `<item>` / `<entry>`) ; sinon parse HTML (cheerio, `<a href>`, URLs absolues).
+4. **Garde-fous avant LLM** : pré-filtrage (assets, CDN, analytics) via `filterArticleCandidateUrls` ; **dédup par URL** (`removeExistingUrls` vs `veille_items`).
+5. **Filtrage URLs** : LLM (`filterUrlsWithLlm`, liste → URLs à garder). Échec LLM → **run failed**.
+6. **Quotas** (`applyUrlQuotas` : 30/run, 10/source par défaut) sur la liste retenue.
+7. **Insert veille_run_urls** : toutes les URLs à traiter (status = pending). Phase = items.
+8. **Traitement par lots** (process-batch, lot de 5) : pour chaque URL → fetch HTML → clean → LLM extraction (titre, auteurs, DOI, abstract, date) → scores → insert `veille_items`. Chaînage automatique si URLs restantes.
+9. **Scores** : heuristique → `heuristic_score` ; embedding abstract vs corpus → `similarity_score`.
+10. **Écriture** : insertion `veille_items` (insert seulement si **titre OU DOI**). Sinon skip, `veille_run_urls.status = skipped`.
+11. **Fin** : si plus d'URLs pending → status = completed, phase = done, last_checked_at sur sources.
+12. **Front** : tableau (source, titre, auteurs, scores, intégré en DB) ; tri par score ; filtre d'affichage.
 
 ---
 
@@ -100,7 +112,20 @@ Si on reçoit du HTML avec **0 URL** et des indicateurs type « Client Challenge
 | **extract-article-llm.ts** | Pour chaque URL : fetch → clean → LLM (titre, auteurs, DOI, abstract, date). Skip + last_error si erreur. |
 | **filter-article-display.ts** | Filtre d’affichage (titre/abstract/DOI, exclusion titres institutionnels). |
 | **score.ts** | Heuristique + similarité (embedding abstract vs DB). |
-| **run-pipeline.ts** | Orchestration de la run (étapes 1→10). |
+| **run-prepare.ts** | Phase préparation : fetch sources, extract URLs, filter, insert veille_run_urls. |
+| **run-process-batch.ts** | Traitement par lots : lit veille_run_urls (pending), extract article, scores, insert veille_items. |
+
+### API routes (app/api/veille)
+
+| Route | Rôle |
+|-------|------|
+| **POST /api/veille/scrape** | Crée une run, retourne 202 { runId }. En arrière-plan : runPrepare + premier process-batch. |
+| **POST /api/veille/process-batch** | Traite un lot d'URLs (défaut 5). Si hasMore, chaîne le lot suivant via waitUntil. |
+| **POST /api/veille/runs/[id]/stop** | Arrête la run : status = stopped immédiatement. |
+
+### Table veille_run_urls
+
+Stocke les URLs à traiter par run (run_id, source_id, url, position, status). Status : `pending` | `processed` | `skipped`. Permet le traitement par lots et évite le timeout Vercel (5 min).
 
 ---
 
@@ -115,6 +140,7 @@ Si on reçoit du HTML avec **0 URL** et des indicateurs type « Client Challenge
 | **Échec LLM (filtrage URLs)** | Si l’appel LLM « quelles URLs sont des articles ? » échoue → **run failed** (pas de fallback heuristique). |
 | **Skip + log (item)** | Erreur sur une URL (timeout, 403, LLM) → skip, `last_error` sur l’item, continuer les autres. |
 | **Insertion** | Ne pas insérer si ni titre ni DOI (skip + log). |
+| **Arrêt manuel** | POST /api/veille/runs/[id]/stop met status = stopped immédiatement. process-batch vérifie abort_requested avant chaque article. |
 
 ---
 
@@ -160,9 +186,9 @@ Si on reçoit du HTML avec **0 URL** et des indicateurs type « Client Challenge
 
 ### Logs utiles
 
-- `[veille/run-pipeline]` : nombre d’URLs par source, après préfiltre, après LLM, items traités.
-- `[veille/filter-urls-llm] heuristic keep` : URLs gardées sans LLM.
-- `runVeillePipeline item skip (no title nor DOI)` : URL traitée mais non insérée.
+- `[veille/run-prepare]` : sources, URLs extraites, après filtre, après LLM, veille_run_urls insérées.
+- `[veille/process-batch]` : lot traité, processed, hasMore, chaînage.
+- `[veille/run-process-batch]` : article start/done, skip (no title nor DOI).
 
 ### API (sans UI)
 
@@ -186,5 +212,5 @@ curl "http://localhost:3000/api/veille/items?limit=100"
 |----------|---------|
 | **VUE_ENSEMBLE_PROJET.md** | Besoins, flows d’usage, structure. |
 | **FONCTIONNALITES_FRONT.md** | Liste rankée, bouton pipeline, tableau veille. |
-| **SCHEMA_DB_ET_DONNEES.md** | Tables `sources`, `veille_runs`, `veille_items`, colonne `fetch_strategy`. |
+| **SCHEMA_DB_ET_DONNEES.md** | Tables `sources`, `veille_runs`, `veille_run_urls`, `veille_items`, colonne `fetch_strategy`. |
 | **STRUCTURE_ET_ARCHITECTURE.md** | Dossiers `lib/veille`, `app/api/veille/`. |

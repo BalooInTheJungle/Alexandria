@@ -149,6 +149,7 @@ alexandria/
 ├── documentation/
 │   ├── STRUCTURE_ET_ARCHITECTURE.md   # Ce fichier
 │   ├── VEILLE.md                     # Veille : flux, stratégies RSS/HTML, garde-fous, tests
+│   ├── CARTE_CORPUS.md                # Carte du corpus : dataviz 2D (UMAP, scatter)
 │   ├── BACK_RAG.md                    # Back RAG (ingestion, recherche, génération, paramètres)
 │   └── HISTORIQUE_DECISIONS.md        # Synthèse des choix
 │

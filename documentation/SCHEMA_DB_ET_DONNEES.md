@@ -261,4 +261,5 @@ Toutes les tables sont en RLS. **Utilisateur authentifié** : SELECT / INSERT / 
 | **Vue d’ensemble projet** | Flows d’usage, structure. |
 | **Back RAG** | Détail des API et de l’usage des tables/RPC. |
 | **Veille** | Flux, usage de sources, veille_runs, veille_items. Fichier : `VEILLE.md`. |
+| **Carte du corpus** | Spécification dataviz 2D (projection UMAP, corpus_map_points). Fichier : `CARTE_CORPUS.md`. |
 | **Back RAG** §4 | Détail colonnes et RPC bilingues (détection langue, pipelines EN/FR). |

@@ -9,5 +9,5 @@
 - `documents.storage_path` en base stocke le **chemin relatif** vers le fichier (ex. `data/pdfs/mon-article.pdf`) pour retrouver le document.
 - Les fichiers `*.pdf` dans `data/pdfs/` sont ignorés par Git (voir `.gitignore`) ; seuls la structure du projet et ce README sont versionnés.
 
-**Ingestion** : script Python `scripts/ingest.py` (dépendances : `pip install -r scripts/requirements.txt`). Prévoir **Poppler** et **Tesseract** pour l’OCR des PDF scannés. Voir `scripts/README.md`.  
-**Référence** : voir `documentation/RAG_REFERENCE.md` pour le flux d’ingestion et la recherche RAG.
+**Ingestion** : deux modes — (1) **API upload** : page Database, glisser-déposer ; (2) **Script Python** : `scripts/ingest.py` (dépendances : `pip install -r scripts/requirements.txt`). Prévoir **Poppler** et **Tesseract** pour l’OCR des PDF scannés. Voir `scripts/README.md`.  
+**Référence** : voir `documentation/BACK_RAG.md` (ingestion) et `scripts/README.md` (script Python) pour le flux d’ingestion et la recherche RAG.

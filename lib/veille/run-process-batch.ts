@@ -163,6 +163,21 @@ export async function runVeilleProcessBatch(
   const pendingCount = count ?? 0;
   const hasMore = pendingCount > 0;
 
+  if (!hasMore) {
+    LOG("no more pending, completing run", runId);
+    const sourceIds = await getSourceIdsForRun(supabase, runId);
+    if (sourceIds.length > 0) {
+      await supabase
+        .from("sources")
+        .update({ last_checked_at: new Date().toISOString() })
+        .in("id", sourceIds);
+    }
+    await supabase
+      .from("veille_runs")
+      .update({ status: "completed", completed_at: new Date().toISOString(), phase: "done" })
+      .eq("id", runId);
+  }
+
   LOG("batch done", { runId, processed: inserted, pendingRemaining: pendingCount, hasMore });
   return { processed: inserted, hasMore };
 }
