@@ -144,11 +144,14 @@ export default function RagSettingsPage() {
 
   return (
     <main className="mx-auto max-w-2xl p-4">
-      <div className="mb-4 flex items-center gap-4">
-        <Button variant="link" asChild className="p-0">
-          <Link href="/rag">← RAG</Link>
+      <div className="mb-6">
+        <Button variant="link" asChild className="p-0 mb-3 text-muted-foreground">
+          <Link href="/rag">← Retour Chatbot</Link>
         </Button>
-        <h1 className="text-xl font-semibold">Paramètres RAG</h1>
+        <h1 className="font-display text-2xl font-semibold">Paramètres RAG</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Ajustez le comportement du pipeline de recherche. Ces paramètres sont appliqués à chaque requête en temps réel.
+        </p>
       </div>
       <Card>
         <CardHeader>

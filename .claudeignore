@@ -1,0 +1,25 @@
+# Dépendances et artefacts de build
+node_modules/
+.next/
+*.pyc
+__pycache__/
+
+# Données locales (PDFs binaires — potentiellement ~100 Go)
+data/pdfs/
+
+# Secrets
+.env.local
+.env
+
+# Cache modèles ML (@xenova/transformers, sentence-transformers)
+.cache/
+models/
+scripts/models/
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/
+
+# Logs et couverture
+*.log
+coverage/
