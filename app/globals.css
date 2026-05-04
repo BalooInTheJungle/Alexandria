@@ -2,29 +2,68 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Typographie Alexandria : Anuphan (titres), Montserrat (texte) */
+@font-face {
+  font-family: "Anuphan";
+  src: url("/assets/Typo/Anuphan-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat";
+  src: url("/assets/Typo/Montserrat-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 @layer base {
   :root {
-    /* Brand: #FECC66 yellow, #1C1404 dark */
+    /* Charte Alexandria : action #FDC843, sombre #1C1404, fond blanc */
     --background: 0 0% 100%;
-    --foreground: 40 75% 6%;         /* #1C1404 */
+    --foreground: 40 79% 6%;
     --card: 0 0% 100%;
-    --card-foreground: 40 75% 6%;
+    --card-foreground: 40 79% 6%;
     --popover: 0 0% 100%;
-    --popover-foreground: 40 75% 6%;
-    --primary: 40 99% 70%;           /* #FECC66 */
-    --primary-foreground: 40 75% 6%; /* dark text on yellow */
-    --secondary: 40 20% 94%;
-    --secondary-foreground: 40 75% 6%;
-    --muted: 40 15% 94%;
-    --muted-foreground: 40 20% 45%;
-    --accent: 40 99% 70%;
-    --accent-foreground: 40 75% 6%;
+    --popover-foreground: 40 79% 6%;
+    --primary: 45 98% 63%;
+    --primary-foreground: 40 79% 6%;
+    --secondary: 45 98% 95%;
+    --secondary-foreground: 40 79% 6%;
+    --muted: 45 30% 96%;
+    --muted-foreground: 40 20% 35%;
+    --accent: 45 98% 90%;
+    --accent-foreground: 40 79% 6%;
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 40 15% 88%;
-    --input: 40 15% 88%;
-    --ring: 40 99% 70%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 45 20% 90%;
+    --input: 45 20% 90%;
+    --ring: 45 98% 63%;
     --radius: 0.5rem;
+    /* Couleurs nommées pour usage direct */
+    --action: 45 98% 63%;
+    --brand-dark: 40 79% 6%;
+  }
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217.2 91.2% 59.8%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 224.3 76.3% 48%;
   }
 }
 
@@ -33,6 +72,6 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
   }
 }

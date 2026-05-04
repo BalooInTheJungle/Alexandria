@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getMessages } from "@/lib/rag/conversation-persistence";
 
+export const dynamic = "force-dynamic";
+
 type Params = { params: Promise<{ id: string }> };
 
 /**

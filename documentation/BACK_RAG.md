@@ -11,7 +11,7 @@
 | **Recherche hybride (FTS + vector + RRF)** | FTS + vector + RRF ; selon lang : match_chunks/search_chunks_fts (EN) ou match_chunks_fr/search_chunks_fts_fr (FR). | — | — (en place) |
 | **API Chat** | POST /api/rag/chat ; détection langue ; garde-fou ; N derniers messages ; persistance ; streaming SSE. | — | — (en place) |
 | **Garde-fou hors domaine** | Seuil (similarity_threshold), message (guard_message) ; pas d’appel LLM si best_similarity < seuil. Modifiable via PATCH /api/rag/settings. | — | — (en place) |
-| **Ingestion PDF** | Script Python (ingest.py) : PyMuPDF, OCR, chunking, embeddings 384D ; traduction EN→FR (opus-mt-en-fr), content_fr, embedding_fr, content_fr_tsv (trigger french). | — | — (en place) |
+| **Ingestion PDF** | **Deux modes** : (1) API upload (page Database) : pdf-parse, chunk 400/50, embed Xenova, dédup DOI ; (2) Script Python (data/pdfs/) : PyMuPDF, OCR, chunk 600/100, traduction EN→FR, embedding_fr. | — | — (en place) |
 | **Bilingue FR/EN** | Détection heuristique (detect-lang.ts) ; colonnes + RPC FR ; pipeline EN/FR (search.ts) ; instruction langue (openai.ts). | — | — (en place) |
 | **Génération (LLM)** | OpenAI (gpt-4o-mini), contexte + historique + question ; citations [1], [2] ; streaming ; instruction FR/EN selon lang. | — | — (en place) |
 | **Conversations et messages** | Tables + getOrCreateConversation, insertMessage, getLastMessages ; **GET /api/rag/conversations** (liste) ; **GET /api/rag/conversations/[id]/messages** (pagination cursor) ; **PATCH /api/rag/conversations/[id]** (titre) ; **DELETE /api/rag/conversations/[id]** (cascade messages). | — | — (en place) |
@@ -67,13 +67,28 @@
 
 ### 4.3 Ingestion (bilingue)
 
-- **Script** : `scripts/ingest.py`. Traduction EN→FR (Helsinki-NLP/opus-mt-en-fr, batches) ; **embedding_fr** = même modèle sentence-transformers sur content_fr. Insertion content_fr, embedding_fr ; triggers remplissent content_fr_tsv. **Migration** : `20260206100000_chunks_bilingue_fr.sql`. Ré-ingestion des PDF après migration pour remplir content_fr / embedding_fr.
+- **Script Python** : `scripts/ingest.py`. Traduction EN→FR (Helsinki-NLP/opus-mt-en-fr, batches) ; **embedding_fr** = même modèle sentence-transformers sur content_fr. Insertion content_fr, embedding_fr ; triggers remplissent content_fr_tsv. **Migration** : `20260206100000_chunks_bilingue_fr.sql`. Ré-ingestion des PDF après migration pour remplir content_fr / embedding_fr.
+- **API upload** : pas de traduction ; `content_fr` = copie de `content`, `embedding_fr` = copie de `embedding`. La recherche FR fonctionne mais avec le contenu EN.
 
 ---
 
-## 5. Ingestion des données (script Python)
+## 5. Ingestion des données (deux modes)
 
-### 5.1 Flow actuel (scripts/ingest.py)
+Alexandria propose **deux pipelines d'ingestion** : l'**API upload** (usage principal via la page Database) et le **script Python** (ingestion en lot depuis data/pdfs/).
+
+### 5.1 Mode API upload (page Database)
+
+- **Route** : `POST /api/documents/upload` (multipart/form-data, champs `file` ou `files`).
+- **UI** : page `/database` → glisser-déposer ou sélection de PDF (max 10, 20 Mo chacun).
+- **Pipeline** : `lib/ingestion/index.ts` → `parsePdfBuffer` (pdf-parse) → `chunkText` (paragraphes, 400 car., overlap 50) → `embedQuery` (Xenova/all-MiniLM-L6-v2) → insert documents + chunks.
+- **Dédup** : extraction du DOI depuis le texte ; si DOI déjà en base (status = done) → skip, retour `skipped: true`.
+- **Stockage** : PDF traités en mémoire, **non conservés** ; `storage_path` = `upload/{uuid}.pdf` (chemin logique).
+- **Bilingue** : `content_fr` = `content` (copie EN), `embedding_fr` = `embedding` (même vecteur). Pas de traduction côté API.
+- **ingestion_log** : `{ numpages, chunks_count, ingested_at }` ou `{ error }`.
+
+### 5.2 Mode script Python (data/pdfs/)
+
+**Flow actuel (scripts/ingest.py)** :
 
 1. Liste des PDF dans **data/pdfs/** ; skip si storage_path déjà en base avec status = done.  
 2. **Extraction texte** : PyMuPDF par page ; si caractères < MIN_TEXT_PER_PAGE (50) → OCR (Tesseract + pdf2image).  
@@ -86,7 +101,20 @@
 9. **Écriture** : insert chunks par **batch de 50** (content, embedding, content_fr, embedding_fr, document_id, position, page, section_title) ; content_tsv et content_fr_tsv par triggers ; update document (status = done, ingestion_log). En fin de run : log récap (nombre de documents done, chunks total, chunks avec content_fr).  
 - **Stockage PDF** : **data/pdfs/** ; `documents.storage_path` = chemin relatif. Pas de Supabase Storage en POC.
 
-### 5.2 Paramètres (ingest.py)
+### 5.3 Comparaison des deux modes
+
+| Aspect | API upload | Script Python |
+|--------|------------|---------------|
+| **Source** | Upload UI (page Database) | data/pdfs/ |
+| **Parse PDF** | pdf-parse (Node) | PyMuPDF |
+| **OCR** | Non | Oui (Tesseract si page peu textuelle) |
+| **Chunk** | Paragraphes, 400 car., overlap 50 | Sections + taille 600, overlap 100 ; page, section_title |
+| **Embedding** | Xenova (Node, all-MiniLM-L6-v2) | sentence-transformers (Python, même modèle) |
+| **Traduction EN→FR** | Non (content_fr = content) | Oui (opus-mt-en-fr) |
+| **Dédup** | Par DOI | Par storage_path |
+| **Stockage fichier** | Aucun (buffer en mémoire) | data/pdfs/ ; storage_path = data/pdfs/{nom}.pdf |
+
+### 5.4 Paramètres (ingest.py)
 
 | Paramètre | Valeur | Rôle |
 |-----------|--------|------|
@@ -98,13 +126,14 @@
 | TRANSLATE_BATCH_SIZE | 24 | Nombre de textes par batch de traduction (MarianMT). |
 | TRANSLATE_NUM_BEAMS | 1 | 1 = greedy (rapide), 5 = beam (meilleure qualité). |
 
-### 5.3 Log d’ingestion (documents.ingestion_log)
+### 5.5 Log d’ingestion (documents.ingestion_log)
 
-- Clés : title_extracted, doi_extracted, authors_extracted, journal_extracted, published_at_extracted, chunks_count, ocr_pages_count, ingested_at. En cas d’erreur : `{ "error": "message", "ingested_at": "..." }`.
+- **Script Python** : title_extracted, doi_extracted, authors_extracted, journal_extracted, published_at_extracted, chunks_count, ocr_pages_count, ingested_at. En cas d'erreur : `{ "error": "message", "ingested_at": "..." }`.
+- **API upload** : numpages, chunks_count, ingested_at. En cas d'erreur : `{ "error": "message" }`.'
 
-### 5.4 Points à surveiller avant extraction massive
+### 5.6 Points à surveiller (script Python, extraction massive)
 
-- **Migrations** : exécuter `20260204100006_chunks_embedding_384.sql` (embedding 384D) et `20260205100000_documents_ingestion_log.sql` (ingestion_log).  
+- **Migrations** : exécuter `20260204100006_chunks_embedding_384.sql`, `20260205100000_documents_ingestion_log.sql`, `20260206100000_chunks_bilingue_fr.sql`.  
 - **Environnement** : `.env.local` avec **NEXT_PUBLIC_SUPABASE_URL** (URL projet `https://xxx.supabase.co`) et **SUPABASE_SERVICE_ROLE_KEY**. Le script Python lit ce fichier sans lancer Next.js.  
 - **Python / OCR** : `python3 -m pip install -r scripts/requirements.txt` ; **Poppler** (pour pdf2image) et **Tesseract** installés (macOS : brew ; Linux : apt).  
 - **Idempotence** : PDF déjà en base avec **status = done** et même **storage_path** → ignorés. Documents en **error** ou **processing** → supprimés (doc + chunks) puis **ré-ingérés** au prochain run.  

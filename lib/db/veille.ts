@@ -1,62 +1,27 @@
 // DB layer — veille_runs and veille_items
+// UI functions use server client (RLS); pipeline functions use service role (admin)
 
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@/lib/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
+import type { VeilleRun, VeilleItem } from '@/lib/db/types'
 
-function getSupabase() {
-  return createClient(
+const LOG = (msg: string, ...args: unknown[]) => console.log('[db/veille]', msg, ...args)
+
+function getAdminSupabase() {
+  return createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 }
 
-// ── Runs ──────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-export async function createRun(): Promise<string> {
-  console.log('[db/veille] Creating run')
-  const supabase = getSupabase()
-  const { data, error } = await supabase
-    .from('veille_runs')
-    .insert({ status: 'running', started_at: new Date().toISOString() })
-    .select('id')
-    .single()
-
-  if (error) throw new Error(`[db/veille] createRun failed: ${error.message}`)
-  console.log(`[db/veille] Run created: ${data.id}`)
-  return data.id
+export type VeilleRunRow = VeilleRun
+export type VeilleRunWithCount = VeilleRunRow & { items_count: number }
+export type VeilleItemWithMeta = VeilleItem & {
+  source_name: string | null
+  document_id: string | null
 }
-
-export async function completeRun(runId: string, status: 'completed' | 'failed', errorMessage?: string) {
-  console.log(`[db/veille] Completing run ${runId} → ${status}`)
-  const supabase = getSupabase()
-  const { error } = await supabase
-    .from('veille_runs')
-    .update({ status, completed_at: new Date().toISOString(), error_message: errorMessage ?? null })
-    .eq('id', runId)
-
-  if (error) console.error(`[db/veille] completeRun error:`, error.message)
-}
-
-// ── Deduplication ────────────────────────────────────────────────────────────
-
-export async function getKnownDois(): Promise<Set<string>> {
-  console.log('[db/veille] Loading known DOIs for dedup')
-  const supabase = getSupabase()
-  const { data, error } = await supabase
-    .from('veille_items')
-    .select('doi')
-    .not('doi', 'is', null)
-
-  if (error) {
-    console.error('[db/veille] getKnownDois error:', error.message)
-    return new Set()
-  }
-
-  const dois = new Set(data.map((r: any) => r.doi as string))
-  console.log(`[db/veille] ${dois.size} known DOIs loaded`)
-  return dois
-}
-
-// ── Items ─────────────────────────────────────────────────────────────────────
 
 export interface VeilleItemInsert {
   run_id:       string
@@ -70,17 +35,142 @@ export interface VeilleItemInsert {
   last_error:   string | null
 }
 
+// ── UI functions (server client, RLS) ─────────────────────────────────────────
+
+export async function listVeilleRuns(limit = 50): Promise<VeilleRunRow[]> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('veille_runs')
+    .select('id, status, started_at, completed_at, error_message, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) { LOG('listVeilleRuns error', error.message); throw error }
+  LOG('listVeilleRuns', { count: (data ?? []).length, limit })
+  return (data ?? []) as VeilleRunRow[]
+}
+
+export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWithCount[]> {
+  const supabase = await createClient()
+  const lim = Math.max(1, Math.min(100, limit))
+  const { data, error } = await supabase.rpc('get_veille_runs_with_counts', { lim })
+  if (error) { LOG('listVeilleRunsWithCounts error', error.message); throw error }
+  const rows = (data ?? []) as (VeilleRunRow & { items_count: string })[]
+  LOG('listVeilleRunsWithCounts', { count: rows.length })
+  return rows.map((r) => ({
+    ...r,
+    items_count: typeof r.items_count === 'number' ? r.items_count : parseInt(String(r.items_count), 10) || 0,
+  }))
+}
+
+export type ListVeilleItemsOptions = { runId?: string; sourceId?: string; limit?: number; offset?: number }
+
+export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Promise<VeilleItemWithMeta[]> {
+  const { runId, sourceId, limit = 100, offset = 0 } = options
+  const supabase = await createClient()
+
+  let query = supabase
+    .from('veille_items')
+    .select(`id, run_id, source_id, url, title, authors, doi, abstract, published_at,
+      heuristic_score, similarity_score, last_error, created_at, sources!inner(name)`)
+    .order('similarity_score', { ascending: false })
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1)
+
+  if (runId)    query = query.eq('run_id', runId)
+  if (sourceId) query = query.eq('source_id', sourceId)
+
+  const { data: items, error } = await query
+  if (error) { LOG('listVeilleItems error', error.message); throw error }
+  LOG('listVeilleItems', { count: (items ?? []).length, runId, sourceId, limit, offset })
+
+  type Row = VeilleItem & { sources: { name: string | null }[] | { name: string | null } }
+  const rows = (items ?? []) as Row[]
+
+  const dois = Array.from(new Set(rows.map((r) => r.doi).filter((d): d is string => Boolean(d))))
+  const doiToDocumentId = new Map<string, string>()
+  if (dois.length > 0) {
+    const { data: docs } = await supabase.from('documents').select('id, doi').in('doi', dois)
+    for (const d of docs ?? []) { if (d.doi) doiToDocumentId.set(d.doi, d.id) }
+  }
+
+  const sourceName = (r: Row): string | null => {
+    const s = r.sources
+    if (!s) return null
+    const obj = Array.isArray(s) ? s[0] : s
+    return obj?.name ?? null
+  }
+
+  return rows.map((r) => ({
+    id: r.id, run_id: r.run_id, source_id: r.source_id, url: r.url,
+    title: r.title ?? undefined, authors: r.authors ?? undefined, doi: r.doi ?? undefined,
+    abstract: r.abstract ?? undefined, published_at: (r as any).published_at ?? undefined,
+    heuristic_score: (r as any).heuristic_score ?? undefined,
+    similarity_score: r.similarity_score ?? undefined, last_error: r.last_error ?? undefined,
+    created_at: r.created_at, source_name: sourceName(r),
+    document_id: r.doi ? doiToDocumentId.get(r.doi) ?? null : null,
+  }))
+}
+
+export async function getRunById(id: string): Promise<VeilleRunRow | null> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('veille_runs')
+    .select('id, status, started_at, completed_at, error_message, created_at, phase, items_processed, items_total')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) { LOG('getRunById error', id, error.message); throw error }
+  LOG('getRunById', { id, found: !!data, status: data?.status })
+  return data as VeilleRunRow | null
+}
+
+// ── Pipeline functions (admin client, bypasses RLS) ───────────────────────────
+
+export async function createRun(): Promise<string> {
+  LOG('createRun')
+  const supabase = getAdminSupabase()
+  const { data, error } = await supabase
+    .from('veille_runs')
+    .insert({ status: 'running', started_at: new Date().toISOString() })
+    .select('id')
+    .single()
+
+  if (error) throw new Error(`[db/veille] createRun failed: ${error.message}`)
+  LOG('createRun ok', { id: data.id })
+  return data.id
+}
+
+export async function completeRun(runId: string, status: 'completed' | 'failed', errorMessage?: string) {
+  LOG(`completeRun ${runId} → ${status}`)
+  const supabase = getAdminSupabase()
+  const { error } = await supabase
+    .from('veille_runs')
+    .update({ status, completed_at: new Date().toISOString(), error_message: errorMessage ?? null })
+    .eq('id', runId)
+
+  if (error) LOG('completeRun error', error.message)
+}
+
+export async function getKnownDois(): Promise<Set<string>> {
+  LOG('getKnownDois')
+  const supabase = getAdminSupabase()
+  const { data, error } = await supabase.from('veille_items').select('doi').not('doi', 'is', null)
+
+  if (error) { LOG('getKnownDois error', error.message); return new Set() }
+  const dois = new Set(data.map((r: any) => r.doi as string))
+  LOG('getKnownDois', { count: dois.size })
+  return dois
+}
+
 export async function updateVeilleItemScores(scores: Map<string, number>): Promise<void> {
   if (scores.size === 0) return
-  console.log(`[db/veille] Updating ${scores.size} similarity scores`)
-  const supabase = getSupabase()
+  LOG('updateVeilleItemScores', { count: scores.size })
+  const supabase = getAdminSupabase()
 
   for (const [id, similarity_score] of Array.from(scores)) {
-    const { error } = await supabase
-      .from('veille_items')
-      .update({ similarity_score })
-      .eq('id', id)
-    if (error) console.error(`[db/veille] updateScore error for ${id}:`, error.message)
+    const { error } = await supabase.from('veille_items').update({ similarity_score }).eq('id', id)
+    if (error) LOG('updateVeilleItemScores error', id, error.message)
   }
 }
 
@@ -89,27 +179,21 @@ export async function insertVeilleItems(items: VeilleItemInsert[]): Promise<numb
   return inserted.length
 }
 
-// Insert items and return inserted rows with id + abstract (for scoring)
 export async function insertVeilleItemsWithIds(
   items: VeilleItemInsert[]
 ): Promise<{ id: string; abstract: string | null }[]> {
   if (items.length === 0) return []
-  console.log(`[db/veille] Inserting ${items.length} items`)
-  const supabase = getSupabase()
-
+  LOG('insertVeilleItemsWithIds', { count: items.length })
+  const supabase = getAdminSupabase()
   const inserted: { id: string; abstract: string | null }[] = []
 
   for (let i = 0; i < items.length; i += 50) {
     const batch = items.slice(i, i + 50)
-    const { data, error } = await supabase
-      .from('veille_items')
-      .insert(batch)
-      .select('id, abstract')
-
-    if (error) console.error(`[db/veille] insert batch error:`, error.message)
+    const { data, error } = await supabase.from('veille_items').insert(batch).select('id, abstract')
+    if (error) LOG('insertVeilleItemsWithIds batch error', error.message)
     else inserted.push(...(data ?? []))
   }
 
-  console.log(`[db/veille] ${inserted.length}/${items.length} items inserted`)
+  LOG('insertVeilleItemsWithIds done', { inserted: inserted.length, total: items.length })
   return inserted
 }

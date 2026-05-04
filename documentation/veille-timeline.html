@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Alexandria — Pipeline Veille : Guide complet</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0d14;
+      color: #cbd5e1;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(135deg, #0f1729 0%, #1a0f2e 100%);
+      border-bottom: 1px solid #1e2640;
+      padding: 3rem 3rem 2rem;
+    }
+    .hero h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin: 0 0 0.5rem;
+    }
+    .hero .tagline {
+      font-size: 1rem;
+      color: #64748b;
+      margin: 0 0 1.5rem;
+    }
+    .hero .intro {
+      max-width: 780px;
+      font-size: 0.9rem;
+      line-height: 1.7;
+      color: #94a3b8;
+      background: #0f1629;
+      border: 1px solid #1e2d4a;
+      border-left: 4px solid #6366f1;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }
+    .hero .intro strong { color: #a5b4fc; }
+
+    /* ── LAYOUT ── */
+    .content { padding: 2rem 3rem; max-width: 1400px; }
+
+    /* ── SECTION TITLES ── */
+    .section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #a5b4fc;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 2.5rem 0 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #1e2640;
+    }
+
+    /* ── DIAGRAM BOX ── */
+    .diagram-container {
+      background: #111827;
+      border: 1px solid #1e2640;
+      border-radius: 12px;
+      padding: 2rem;
+      overflow-x: auto;
+    }
+
+    /* ── PHASE CARDS GRID ── */
+    .phases-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 1.25rem;
+      margin-top: 1rem;
+    }
+
+    .phase-card {
+      background: #111827;
+      border: 1px solid #1e2640;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .phase-card-header {
+      padding: 0.85rem 1.1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      border-bottom: 1px solid #1e2640;
+    }
+    .phase-number {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .phase-card-header h3 {
+      font-size: 0.88rem;
+      font-weight: 600;
+      margin: 0;
+      color: #e2e8f0;
+    }
+    .phase-card-header .duration {
+      margin-left: auto;
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .phase-card-body {
+      padding: 1rem 1.1rem;
+    }
+    .phase-card-body p {
+      font-size: 0.82rem;
+      line-height: 1.65;
+      color: #94a3b8;
+      margin: 0 0 0.75rem;
+    }
+    .phase-card-body p:last-child { margin-bottom: 0; }
+    .phase-card-body strong { color: #cbd5e1; }
+
+    .why-box {
+      background: #0f1629;
+      border: 1px solid #1e2d4a;
+      border-left: 3px solid #6366f1;
+      border-radius: 6px;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: #818cf8;
+    }
+    .why-box .why-label {
+      font-weight: 700;
+      color: #a5b4fc;
+      margin-bottom: 0.2rem;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .data-flow {
+      margin-top: 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .data-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+    }
+    .data-arrow {
+      font-size: 0.7rem;
+      color: #475569;
+      flex-shrink: 0;
+      padding-top: 1px;
+    }
+    .data-in { color: #34d399; }
+    .data-out { color: #60a5fa; }
+
+    /* ── COLOR VARIANTS ── */
+    .c-trigger .phase-number { background: #312e81; color: #c7d2fe; }
+    .c-trigger .duration     { background: #312e81; color: #c7d2fe; }
+
+    .c-init .phase-number    { background: #1e3a5f; color: #93c5fd; }
+    .c-init .duration        { background: #1e3a5f; color: #93c5fd; }
+
+    .c-rss .phase-number     { background: #14532d; color: #86efac; }
+    .c-rss .duration         { background: #14532d; color: #86efac; }
+
+    .c-enrich .phase-number  { background: #431407; color: #fdba74; }
+    .c-enrich .duration      { background: #431407; color: #fdba74; }
+
+    .c-insert .phase-number  { background: #1e3a5f; color: #93c5fd; }
+    .c-insert .duration      { background: #1e3a5f; color: #93c5fd; }
+
+    .c-score .phase-number   { background: #2d1b69; color: #ddd6fe; }
+    .c-score .duration       { background: #2d1b69; color: #ddd6fe; }
+
+    .c-ui .phase-number      { background: #1c3527; color: #6ee7b7; }
+    .c-ui .duration          { background: #1c3527; color: #6ee7b7; }
+
+    /* ── TOOLS SECTION ── */
+    .tools-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .tool-card {
+      background: #111827;
+      border: 1px solid #1e2640;
+      border-radius: 10px;
+      padding: 1.1rem;
+    }
+    .tool-card .tool-name {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-bottom: 0.15rem;
+    }
+    .tool-card .tool-type {
+      font-size: 0.7rem;
+      color: #475569;
+      margin-bottom: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .tool-card p {
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: #94a3b8;
+      margin: 0;
+    }
+    .tool-card p strong { color: #cbd5e1; }
+
+    /* ── DATA TABLE ── */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+      margin-top: 1rem;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 0.6rem 0.9rem;
+      background: #111827;
+      color: #64748b;
+      font-weight: 600;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid #1e2640;
+    }
+    .data-table td {
+      padding: 0.65rem 0.9rem;
+      border-bottom: 1px solid #1a2035;
+      color: #94a3b8;
+      vertical-align: top;
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table td:first-child { color: #e2e8f0; font-weight: 500; }
+    code {
+      background: #1e2640;
+      color: #a5b4fc;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 0.78rem;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+
+    /* ── TOTAL TIMING ── */
+    .timing-bar {
+      margin-top: 1rem;
+      background: #111827;
+      border: 1px solid #1e2640;
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .timing-segment {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.2rem;
+    }
+    .timing-bar-block {
+      height: 28px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0 10px;
+      white-space: nowrap;
+    }
+    .timing-label {
+      font-size: 0.65rem;
+      color: #475569;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── HERO ── -->
+<div class="hero">
+  <h1>Pipeline de Veille Scientifique — Guide complet</h1>
+  <p class="tagline">Alexandria · Comment fonctionne la veille, étape par étape</p>
+  <div class="intro">
+    <strong>Objectif :</strong> Chaque jour, Alexandria surveille automatiquement des dizaines de revues scientifiques pour en extraire les articles récents. Chaque article est ensuite <strong>comparé au corpus documentaire</strong> de l'application (les PDF déjà indexés) pour obtenir un <em>score de pertinence</em> — plus un article ressemble aux documents de la bibliothèque, plus il remonte en haut de la liste.<br><br>
+    Ce processus dure environ <strong>20 secondes</strong> et peut être déclenché manuellement depuis l'interface ou automatiquement chaque matin à 6h UTC.
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- ── SÉQUENCE ── -->
+  <div class="section-title">Séquence temporelle</div>
+  <div class="diagram-container">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor User as Utilisateur
+    participant UI as Interface Web
+    participant API as Serveur Next.js
+    participant DB as Base de donnees Supabase
+    participant PIPE as Orchestrateur Pipeline
+    participant RSS as Lecteur RSS
+    participant FEEDS as Journaux scientifiques
+    participant OA as Module OpenAlex
+    participant OAAPI as OpenAlex catalogue ouvert
+    participant SCORE as Module de scoring
+    participant EMBED as Moteur embedding
+
+    rect rgb(30, 28, 70)
+        Note over User,API: DECLENCHEMENT — instantane
+        User->>UI: Clic sur Lancer la veille
+        UI->>API: Demande de demarrage
+        API->>DB: Creation du run — statut en cours
+        DB-->>API: Identifiant du run
+        API-->>UI: Confirmation + identifiant run
+        Note over API,PIPE: Le serveur repond immediatement. Le pipeline continue en arriere-plan sans bloquer l'interface.
+        API--)PIPE: Demarrage pipeline en arriere-plan
+    end
+
+    rect rgb(20, 40, 28)
+        Note over PIPE,DB: PHASE 1 — Preparation (~1s)
+        PIPE->>DB: Chargement des articles deja connus
+        DB-->>PIPE: Liste des DOIs deja en base
+        PIPE->>DB: Chargement de la liste des sources
+        DB-->>PIPE: 43 journaux RSS + sources OpenAlex
+    end
+
+    rect rgb(20, 42, 28)
+        Note over PIPE,FEEDS: PHASE 2 — Lecture des flux RSS (~16s)
+        loop 9 vagues de 5 journaux en parallele
+            PIPE->>RSS: Lire le flux de ce journal
+            RSS->>FEEDS: Telechargement du flux RSS
+            FEEDS-->>RSS: Titre / DOI / resume / auteurs / date
+            RSS-->>PIPE: Articles bruts
+        end
+        Note over PIPE: Elimination des articles de plus de 7 jours et des doublons par DOI
+    end
+
+    rect rgb(50, 25, 10)
+        Note over PIPE,OAAPI: PHASE 3 — Enrichissement des metadonnees (~2s)
+        Note over PIPE,OAAPI: Certains journaux ne fournissent pas tout dans leur RSS. OpenAlex comble les manques.
+        PIPE->>OA: Articles sans resume — envoyer les DOIs
+        OA->>OAAPI: Recherche des resumes par DOI en lot de 50
+        OAAPI-->>OA: Resumes recuperes
+        OA-->>PIPE: Resumes completes
+
+        loop Articles sans DOI ex Elsevier
+            PIPE->>OA: Titre de l'article + ISSN du journal
+            OA->>OAAPI: Recherche du DOI par titre
+            OAAPI-->>OA: DOI trouve
+            OA-->>PIPE: DOI associe a l'article
+        end
+    end
+
+    rect rgb(50, 25, 10)
+        Note over PIPE,OAAPI: PHASE 4 — Journaux sans flux RSS ex MDPI
+        loop Pour chaque source OpenAlex uniquement
+            PIPE->>OA: Chercher articles recents de ce journal
+            OA->>OAAPI: Recherche par identifiant ISSN sur 7 jours
+            OAAPI-->>OA: Articles recents
+            OA-->>PIPE: Articles avec titre resume et DOI
+        end
+    end
+
+    rect rgb(20, 38, 58)
+        Note over PIPE,DB: PHASE 5 — Sauvegarde en base (~1s)
+        PIPE->>DB: Insertion de tous les nouveaux articles par lot de 50
+        DB-->>PIPE: Identifiants des articles inseres
+    end
+
+    rect rgb(35, 20, 60)
+        Note over PIPE,DB: PHASE 6 — Calcul du score de pertinence (~2s)
+        Note over PIPE,DB: Chaque resume est compare aux documents deja dans la bibliotheque Alexandria
+        loop Pour chaque article avec un resume
+            PIPE->>SCORE: Calculer la pertinence de cet article
+            SCORE->>EMBED: Convertir le resume en vecteur numerique
+            EMBED-->>SCORE: Vecteur 384 dimensions
+            SCORE->>DB: Comparer ce vecteur aux chunks du corpus
+            DB-->>SCORE: Score de similarite entre 0 et 1
+        end
+        SCORE-->>PIPE: Scores calcules pour tous les articles
+        PIPE->>DB: Mise a jour des scores dans la base
+        PIPE->>DB: Marquer le run comme termine
+    end
+
+    rect rgb(22, 40, 28)
+        Note over UI,DB: PENDANT TOUT LE PIPELINE — Suivi en temps reel
+        loop Verification toutes les 2 secondes
+            UI->>API: Quel est l'etat du run en cours
+            API->>DB: Lire le statut du run
+            DB-->>API: Statut + nombre d'articles traites
+            API-->>UI: Progression visible a l'ecran
+        end
+        UI->>API: Charger les resultats finaux
+        API->>DB: Articles tries par score de pertinence
+        DB-->>API: Liste complete
+        API-->>UI: Affichage des articles scores
+        UI->>User: Tableau de bord mis a jour
+    end
+    </div>
+  </div>
+
+  <!-- ── BARRE DE TEMPS ── -->
+  <div class="section-title">Durée estimée par phase</div>
+  <div class="timing-bar">
+    <div class="timing-segment">
+      <div class="timing-bar-block" style="background:#312e81;color:#c7d2fe;width:70px">Démarrage</div>
+      <div class="timing-label">&lt; 1s</div>
+    </div>
+    <div class="timing-segment">
+      <div class="timing-bar-block" style="background:#1e3a5f;color:#93c5fd;width:60px">Init</div>
+      <div class="timing-label">~1s</div>
+    </div>
+    <div class="timing-segment">
+      <div class="timing-bar-block" style="background:#14532d;color:#86efac;width:180px">Lecture RSS × 43</div>
+      <div class="timing-label">~16s — le plus long</div>
+    </div>
+    <div class="timing-segment">
+      <div class="timing-bar-block" style="background:#431407;color:#fdba74;width:90px">Enrichissement</div>
+      <div class="timing-label">~2s</div>
+    </div>
+    <div class="timing-segment">
+      <div class="timing-bar-block" style="background:#431407;color:#fdba74;width:60px">MDPI</div>
+      <div class="timing-label">~1s</div>
+    </div>
+    <div class="timing-segment">
+      <div class="timing-bar-block" style="background:#1e3a5f;color:#93c5fd;width:60px">Insertion</div>
+      <div class="timing-label">~1s</div>
+    </div>
+    <div class="timing-segment">
+      <div class="timing-bar-block" style="background:#2d1b69;color:#ddd6fe;width:90px">Scoring</div>
+      <div class="timing-label">~2s</div>
+    </div>
+    <div style="margin-left:auto;text-align:right">
+      <div style="font-size:1.1rem;font-weight:700;color:#e2e8f0">~23s</div>
+      <div style="font-size:0.72rem;color:#475569">total estimé</div>
+    </div>
+  </div>
+
+  <!-- ── PHASES DÉTAILLÉES ── -->
+  <div class="section-title">Détail de chaque phase</div>
+  <div class="phases-grid">
+
+    <!-- DÉCLENCHEMENT -->
+    <div class="phase-card c-trigger">
+      <div class="phase-card-header">
+        <div class="phase-number">0</div>
+        <h3>Déclenchement</h3>
+        <span class="duration">Instantané</span>
+      </div>
+      <div class="phase-card-body">
+        <p>L'utilisateur clique sur le bouton dans l'interface, ou le cron Vercel déclenche automatiquement la veille chaque matin à <strong>6h UTC</strong>.</p>
+        <p>Le serveur crée immédiatement une entrée dans la table <code>veille_runs</code> (statut <em>en cours</em>) et retourne son identifiant à l'interface. Le pipeline démarre ensuite <strong>en arrière-plan</strong> — l'interface n'attend pas et reste réactive.</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi fire-and-forget ?</div>
+          Les serveurs Vercel ont une limite de temps de réponse. Si le pipeline bloquait la requête HTTP, il risquerait d'être tué à mi-chemin. En retournant immédiatement, on contourne cette contrainte.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : clic utilisateur ou appel cron</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : identifiant du run (<code>run_id</code>)</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 1 -->
+    <div class="phase-card c-init">
+      <div class="phase-card-header">
+        <div class="phase-number">1</div>
+        <h3>Préparation — chargement de l'état</h3>
+        <span class="duration">~1s</span>
+      </div>
+      <div class="phase-card-body">
+        <p>Avant de faire quoi que ce soit, le pipeline charge deux informations essentielles depuis la base de données :</p>
+        <p><strong>① Les DOIs déjà connus</strong> — tous les identifiants d'articles déjà enregistrés dans <code>veille_items</code>. Cela permettra d'éviter d'insérer deux fois le même article lors de la phase de déduplication.</p>
+        <p><strong>② La liste des sources actives</strong> — les 43 journaux RSS et les sources OpenAlex configurées dans la table <code>sources</code> (gérée via le script <code>import-sources.ts</code>).</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi charger les DOIs en amont ?</div>
+          Vérifier chaque article un par un en base serait 50× plus lent. En chargeant tout d'un coup dans un <code>Set</code> JavaScript, la déduplication devient instantanée (O(1) par article).
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : run_id</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : Set de DOIs connus + liste de sources</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 2 -->
+    <div class="phase-card c-rss">
+      <div class="phase-card-header">
+        <div class="phase-number">2</div>
+        <h3>Lecture des flux RSS</h3>
+        <span class="duration">~16s</span>
+      </div>
+      <div class="phase-card-body">
+        <p>C'est la phase la plus longue. Le pipeline télécharge le flux RSS de chacun des <strong>43 journaux scientifiques</strong> configurés.</p>
+        <p><strong>Qu'est-ce qu'un flux RSS ?</strong> C'est un fichier XML standardisé que chaque journal met à jour en temps réel à chaque nouvelle publication. Il contient le titre, l'URL, parfois le résumé, les auteurs et la date de chaque article récent.</p>
+        <p>Pour aller plus vite, les journaux sont traités <strong>5 par 5 en parallèle</strong> (9 vagues de 5). Après chaque vague, le pipeline respecte un délai de 300ms pour ne pas surcharger les serveurs des éditeurs.</p>
+        <p>Une fois les articles récupérés, deux filtres sont appliqués : <strong>filtre temporel</strong> (articles publiés dans les 7 derniers jours uniquement) et <strong>déduplication</strong> (articles dont le DOI est déjà connu ignorés).</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi le RSS et pas le scraping web ?</div>
+          Le RSS est un format officiel fourni par les éditeurs eux-mêmes — fiable, stable, sans risque de bannissement IP. Le scraping HTML est fragile et souvent interdit par les conditions d'utilisation.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : liste de 43 sources (URL du flux + ISSN)</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles bruts filtrés et dédupliqués</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 3 -->
+    <div class="phase-card c-enrich">
+      <div class="phase-card-header">
+        <div class="phase-number">3</div>
+        <h3>Enrichissement OpenAlex — métadonnées manquantes</h3>
+        <span class="duration">~2s</span>
+      </div>
+      <div class="phase-card-body">
+        <p>Les flux RSS des éditeurs sont souvent incomplets. Par exemple :</p>
+        <p>— <strong>ACS (American Chemical Society)</strong> ne fournit pas les résumés dans son RSS.<br>— <strong>Elsevier</strong> ne fournit pas toujours le DOI directement.</p>
+        <p>OpenAlex est une <strong>base de données bibliographique ouverte et gratuite</strong> qui référence plus de 250 millions d'articles scientifiques. Cette phase l'interroge pour combler les manques :</p>
+        <p>① Pour les articles <strong>avec DOI mais sans résumé</strong> : envoi de tous les DOIs en une seule requête groupée (lot de 50) pour récupérer les résumés en masse.<br>② Pour les articles <strong>avec résumé mais sans DOI</strong> : recherche individuelle par titre + ISSN du journal pour trouver le DOI.</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi les résumés sont-ils indispensables ?</div>
+          Le score de pertinence (phase 6) est calculé à partir du résumé. Sans résumé, l'article ne peut pas être scoré et risque de ne jamais apparaître dans les résultats. Enrichir les métadonnées ici est donc critique.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : DOIs sans résumé + titres sans DOI</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : résumés et DOIs récupérés depuis OpenAlex</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 4 -->
+    <div class="phase-card c-enrich">
+      <div class="phase-card-header">
+        <div class="phase-number">4</div>
+        <h3>Sources sans flux RSS (ex : MDPI)</h3>
+        <span class="duration">~1s</span>
+      </div>
+      <div class="phase-card-body">
+        <p>Certains éditeurs comme <strong>MDPI</strong> ne proposent pas de flux RSS exploitable ou ne sont pas dans la liste des journaux RSS configurés. Pour ces sources, le pipeline interroge OpenAlex directement en utilisant l'<strong>ISSN du journal</strong> comme identifiant.</p>
+        <p>La requête demande tous les articles publiés dans ce journal au cours des <strong>7 derniers jours</strong>. OpenAlex retourne titre, résumé, auteurs, DOI et date — tout ce qu'il faut pour créer un article complet sans passer par un RSS.</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi deux sources différentes ?</div>
+          RSS et OpenAlex sont complémentaires : RSS est quasi-temps-réel mais incomplet, OpenAlex est exhaustif mais a un délai d'indexation de 1 à 3 jours. Combiner les deux maximise la couverture.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : liste des sources OpenAlex avec leur ISSN</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles complets des 7 derniers jours</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 5 -->
+    <div class="phase-card c-insert">
+      <div class="phase-card-header">
+        <div class="phase-number">5</div>
+        <h3>Sauvegarde en base de données</h3>
+        <span class="duration">~1s</span>
+      </div>
+      <div class="phase-card-body">
+        <p>Tous les articles collectés (RSS + OpenAlex) et enrichis sont maintenant insérés dans la table <code>veille_items</code> de Supabase. Chaque article est lié à son <code>run_id</code> (la session courante) et à son <code>source_id</code> (le journal d'origine).</p>
+        <p>L'insertion se fait <strong>par lot de 50 articles</strong> pour éviter de surcharger la base. En retour, la base renvoie les identifiants générés — indispensables pour la phase de scoring qui suit.</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi insérer avant de scorer ?</div>
+          Le scoring met à jour des lignes existantes en base. Il faut donc que les articles existent avant de leur attribuer un score. L'insertion d'abord, le scoring ensuite, c'est l'ordre naturel.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : liste complète des articles à insérer</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : identifiants UUID des articles insérés</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 6 -->
+    <div class="phase-card c-score">
+      <div class="phase-card-header">
+        <div class="phase-number">6</div>
+        <h3>Calcul du score de pertinence</h3>
+        <span class="duration">~2s</span>
+      </div>
+      <div class="phase-card-body">
+        <p>C'est le cœur intellectuel de la veille. Chaque article reçoit un <strong>score entre 0 et 1</strong> qui indique à quel point il est proche des documents déjà dans la bibliothèque Alexandria.</p>
+        <p>Le processus en 3 temps :<br>
+        ① Le résumé de l'article est <strong>converti en vecteur numérique de 384 dimensions</strong> par le moteur d'embedding Xenova (le même modèle que celui utilisé pour indexer les PDF).<br>
+        ② Ce vecteur est comparé à tous les <em>chunks</em> du corpus via la fonction <code>match_chunks</code> de Supabase (comparaison cosinus en pgvector).<br>
+        ③ Le score du chunk le plus proche devient le <strong>score de pertinence</strong> de l'article.</p>
+        <p>Un score proche de <strong>1</strong> signifie que l'article parle de la même chose que vos documents. Un score proche de <strong>0</strong> signifie qu'il est hors sujet.</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi utiliser le même modèle que l'indexation ?</div>
+          Pour que la comparaison soit valide, les vecteurs de l'article et du corpus doivent être produits par le même modèle. Si on changeait de modèle pour la veille, les scores ne voudraient rien dire.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : articles avec résumé + corpus RAG en base</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : <code>similarity_score</code> entre 0 et 1 par article</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- POLLING UI -->
+    <div class="phase-card c-ui">
+      <div class="phase-card-header">
+        <div class="phase-number">∞</div>
+        <h3>Suivi en temps réel — interface</h3>
+        <span class="duration">En continu</span>
+      </div>
+      <div class="phase-card-body">
+        <p>Pendant toute la durée du pipeline, l'interface web vérifie l'état du run <strong>toutes les 2 secondes</strong> en interrogeant l'API de statut. Cette technique s'appelle le <em>polling</em>.</p>
+        <p>La réponse de statut contient trois informations :<br>
+        — le statut global (<em>en cours</em>, <em>terminé</em>, <em>en erreur</em>)<br>
+        — le nombre d'articles insérés<br>
+        — le nombre d'articles scorés</p>
+        <p>Dès que le statut passe à <em>terminé</em>, le polling s'arrête et l'interface charge la liste finale des articles, triés du <strong>plus pertinent au moins pertinent</strong>.</p>
+        <div class="why-box">
+          <div class="why-label">Pourquoi le polling et pas une notification push ?</div>
+          Le polling est simple, robuste, et ne nécessite pas de WebSocket ni de connexion persistante. Pour un processus de 20s, vérifier toutes les 2s (10 vérifications max) est parfaitement acceptable.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : run_id retourné au déclenchement</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles scorés triés par pertinence</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── OUTILS ET BIBLIOTHÈQUES ── -->
+  <div class="section-title">Outils et bibliothèques — pourquoi chacun ?</div>
+  <div class="tools-grid">
+
+    <div class="tool-card">
+      <div class="tool-name">Flux RSS</div>
+      <div class="tool-type">Format standard — fourni par les éditeurs</div>
+      <p>Format XML que chaque journal met à jour à chaque publication. C'est le <strong>moyen officiel</strong> de suivre les nouvelles publications sans avoir à scraper les sites web. ACS, RSC, Wiley, Nature, Elsevier, APS l'utilisent tous. Gratuit, stable, légal.</p>
+    </div>
+
+    <div class="tool-card">
+      <div class="tool-name">OpenAlex</div>
+      <div class="tool-type">Base de données bibliographique ouverte — API gratuite</div>
+      <p>Alternative ouverte à Scopus ou Web of Science. Référence <strong>250+ millions d'articles</strong> avec leurs métadonnées complètes (résumé, auteurs, DOI, ISSN…). Utilisé ici pour deux choses : combler les métadonnées manquantes des RSS et couvrir les journaux sans RSS (MDPI). <strong>Entièrement gratuit</strong>, sans clé API requise.</p>
+    </div>
+
+    <div class="tool-card">
+      <div class="tool-name">Xenova / all-MiniLM-L6-v2</div>
+      <div class="tool-type">Modèle d'embedding — tourne localement sur le serveur</div>
+      <p>Modèle de Machine Learning qui transforme n'importe quel texte en un <strong>vecteur de 384 nombres</strong> capturant le sens sémantique. Deux textes qui parlent du même sujet auront des vecteurs proches. C'est la base du calcul de pertinence. Il tourne directement sur le serveur Node.js — <strong>aucun appel API payant</strong>, aucun coût.</p>
+    </div>
+
+    <div class="tool-card">
+      <div class="tool-name">pgvector + match_chunks RPC</div>
+      <div class="tool-type">Extension Postgres — comparaison de vecteurs en base</div>
+      <p>Extension de Supabase (Postgres) qui permet de stocker des vecteurs et de les comparer par <strong>similarité cosinus</strong>. La fonction <code>match_chunks</code> prend un vecteur en entrée et retourne les chunks du corpus les plus proches avec leur score. C'est l'infrastructure qui rend le scoring possible sans code complexe.</p>
+    </div>
+
+    <div class="tool-card">
+      <div class="tool-name">Supabase — table veille_runs</div>
+      <div class="tool-type">Table de suivi des sessions de veille</div>
+      <p>Chaque exécution du pipeline crée une ligne dans <code>veille_runs</code> avec un statut (<em>running</em>, <em>completed</em>, <em>failed</em>), les compteurs d'articles, et les éventuels messages d'erreur. C'est ce que l'interface interroge toutes les 2s pour afficher la progression.</p>
+    </div>
+
+    <div class="tool-card">
+      <div class="tool-name">Supabase — table veille_items</div>
+      <div class="tool-type">Table de stockage des articles de veille</div>
+      <p>Stocke chaque article découvert avec son titre, DOI, résumé, auteurs, URL, date de publication, source d'origine, et le <code>similarity_score</code> calculé lors du scoring. La déduplication repose sur le DOI — un même article ne peut jamais apparaître deux fois.</p>
+    </div>
+
+  </div>
+
+  <!-- ── TABLE DES DONNÉES ── -->
+  <div class="section-title">Ce qui transite à chaque étape</div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>Données en entrée</th>
+        <th>Données en sortie</th>
+        <th>Stockage</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Déclenchement</td>
+        <td>Action utilisateur ou appel cron</td>
+        <td><code>run_id</code> UUID</td>
+        <td><code>veille_runs</code> — statut running</td>
+      </tr>
+      <tr>
+        <td>Préparation</td>
+        <td>—</td>
+        <td>Set de DOIs connus + 43+ sources</td>
+        <td>Mémoire JavaScript uniquement</td>
+      </tr>
+      <tr>
+        <td>Lecture RSS</td>
+        <td>URL des flux RSS</td>
+        <td>Titre, DOI, résumé (parfois vide), auteurs, date</td>
+        <td>Mémoire JavaScript uniquement</td>
+      </tr>
+      <tr>
+        <td>Enrichissement</td>
+        <td>DOIs sans résumé + titres sans DOI</td>
+        <td>Résumés et DOIs manquants complétés</td>
+        <td>Mémoire JavaScript uniquement</td>
+      </tr>
+      <tr>
+        <td>Sources OpenAlex</td>
+        <td>ISSN des journaux sans RSS</td>
+        <td>Articles complets (titre, résumé, DOI, auteurs)</td>
+        <td>Mémoire JavaScript uniquement</td>
+      </tr>
+      <tr>
+        <td>Insertion</td>
+        <td>Liste finale des articles enrichis</td>
+        <td>UUIDs des lignes créées</td>
+        <td><code>veille_items</code> — toutes les colonnes sauf score</td>
+      </tr>
+      <tr>
+        <td>Scoring</td>
+        <td>Résumés + corpus RAG (chunks)</td>
+        <td>Score 0–1 par article</td>
+        <td><code>veille_items.similarity_score</code></td>
+      </tr>
+      <tr>
+        <td>Clôture</td>
+        <td>Statistiques du run</td>
+        <td>—</td>
+        <td><code>veille_runs</code> — statut completed/failed</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="height:3rem"></div>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    sequence: {
+      actorMargin: 50,
+      messageMargin: 35,
+      mirrorActors: false,
+      useMaxWidth: true,
+      wrap: true,
+      width: 120,
+    },
+    themeVariables: {
+      primaryColor: '#1e2130',
+      primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#4f5a7a',
+      lineColor: '#4f5a7a',
+      secondaryColor: '#0f1117',
+      tertiaryColor: '#1e2130',
+      noteBkgColor: '#1a2035',
+      noteTextColor: '#94a3b8',
+      activationBkgColor: '#1e2640',
+      activationBorderColor: '#6366f1',
+      sequenceNumberColor: '#a5b4fc',
+      labelBoxBkgColor: '#111827',
+      labelTextColor: '#94a3b8',
+    }
+  })
+</script>
+</body>
+</html>

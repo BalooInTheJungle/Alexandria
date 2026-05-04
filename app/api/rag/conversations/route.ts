@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { listConversations } from "@/lib/rag/conversation-persistence";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/rag/conversations
  * Liste des conversations : { id, title, created_at, updated_at }[], ordre updated_at desc.

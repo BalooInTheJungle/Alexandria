@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
     const settings = await getRagSettings();
     const lang = detectQueryLanguage(query);
-    LOG("Settings", { context_turns: settings.context_turns, similarity_threshold: settings.similarity_threshold, match_count: settings.match_count, lang });
+    LOG("Settings", { use_similarity_guard: settings.use_similarity_guard, context_turns: settings.context_turns, similarity_threshold: settings.similarity_threshold, match_count: settings.match_count, lang });
 
     const { chunks, bestVectorSimilarity } = await searchChunks(query, {
       lang,
@@ -56,10 +56,31 @@ export async function POST(request: Request) {
       settings,
     });
 
+    // Quand le garde-fou est activé : blocage si pas de chunks ou similarité < seuil.
     const isOutOfDomain =
-      chunks.length === 0 || bestVectorSimilarity < settings.similarity_threshold;
+      settings.use_similarity_guard &&
+      (chunks.length === 0 || bestVectorSimilarity < settings.similarity_threshold);
+    // Quand le garde-fou est désactivé : on n’utilise le mode "contexte uniquement" que si la
+    // similarité est vraiment élevée (sinon des chunks bruit donnent quand même une réponse "rien dans le contexte").
+    const bestSimilarityInChunks =
+      chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
+    const MIN_SIMILARITY_FOR_STRICT_RAG = 0.5;
+    const contextRelevant =
+      chunks.length > 0 &&
+      bestSimilarityInChunks >=
+        (settings.use_similarity_guard
+          ? settings.similarity_threshold
+          : MIN_SIMILARITY_FOR_STRICT_RAG);
+    const allowGeneralKnowledge =
+      !settings.use_similarity_guard && !contextRelevant;
 
-    LOG("Search result", { chunksCount: chunks.length, bestVectorSimilarity, isOutOfDomain });
+    LOG("Search result", {
+      chunksCount: chunks.length,
+      bestVectorSimilarity,
+      bestSimilarityInChunks,
+      isOutOfDomain,
+      allowGeneralKnowledge,
+    });
 
     const conversationTitle = query.slice(0, 50) + (query.length > 50 ? "…" : "");
     const { id: convId } = await getOrCreateConversation(conversationId, conversationTitle);
@@ -80,7 +101,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const sources = chunksToSources(chunks);
+    const sources = allowGeneralKnowledge ? [] : chunksToSources(chunks);
 
     const lastRows = await getLastMessages(convId, 2 * settings.context_turns + 1);
     const historyRows = lastRows
@@ -93,7 +114,7 @@ export async function POST(request: Request) {
     if (!useStream) {
       const { generateRagAnswer } = await import("@/lib/rag/openai");
       LOG("Calling OpenAI (non-stream)");
-      const answer = await generateRagAnswer(query, chunks, history, lang);
+      const answer = await generateRagAnswer(query, chunks, history, lang, allowGeneralKnowledge);
       const { id: msgId } = await insertMessage(convId, "assistant", answer, sources);
       LOG("Assistant message inserted", { msgId, answerLength: answer.length });
       return NextResponse.json<ChatResponse>({
@@ -105,7 +126,7 @@ export async function POST(request: Request) {
     }
 
     LOG("Calling OpenAI (stream)");
-    const stream = await createRagAnswerStream(query, chunks, history, lang);
+    const stream = await createRagAnswerStream(query, chunks, history, lang, allowGeneralKnowledge);
 
     const encoder = new TextEncoder();
     let fullContent = "";

@@ -39,6 +39,7 @@ export async function PATCH(request: Request) {
 
     const partial: Partial<RagSettings> = {};
     const allowed: (keyof RagSettings)[] = [
+      "use_similarity_guard",
       "context_turns",
       "similarity_threshold",
       "guard_message",

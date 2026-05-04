@@ -124,5 +124,5 @@
 | **Vue d’ensemble projet** | Besoins, flows, structure. |
 | **Stack et technologies** | Rôle des technos (Next.js, Supabase, etc.). |
 | **Back RAG** | API chat, recherche, garde-fou, paramètres, bilingue, conversations (détail back). Fichier : `BACK_RAG.md`. |
-| **Pipeline veille** | Étapes veille, garde-fous, similarité. Fichier : `PIPELINE_VEILLE_CONSOLIDE.md`. |
+| **Veille** | Flux, garde-fous, similarité, tests. Fichier : `VEILLE.md`. |
 | **Schéma DB et données** | Tables, migrations, flows back ↔ DB. Fichier : `SCHEMA_DB_ET_DONNEES.md`. |

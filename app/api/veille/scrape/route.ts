@@ -23,7 +23,6 @@ export async function POST() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Create run upfront so we can return its id for status polling
   const runId = await createRun()
 
   // Fire and forget — pipeline runs async in background
