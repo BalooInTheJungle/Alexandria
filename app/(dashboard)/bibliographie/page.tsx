@@ -103,7 +103,8 @@ export default function BibliographiePage() {
       const res = await fetch("/api/veille/sources");
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      setSources(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : (Array.isArray(data.sources) ? data.sources : []);
+      setSources(list);
     } catch {
       setSources([]);
     } finally {
