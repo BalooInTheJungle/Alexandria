@@ -13,35 +13,35 @@
 
 ---
 
-## 2. Étapes de la pipeline (ordre)
+## 2. Étapes de la pipeline (ordre — implémentation actuelle)
 
-1. **Lire les sources** : récupérer la liste des URLs depuis Supabase (`sources`).
-2. **Fetch HTML des pages sources** : une requête par source pour obtenir le HTML des pages (ex. listes d’articles).
-3. **Nettoyage HTML → extraction d’URLs** : parser le HTML pour extraire **uniquement les URLs** ; cibler en priorité les URLs susceptibles d’être des **pages d’article** (filtres heuristiques si besoin). Sortie : liste d’URLs candidates.
-4. **Garde-fous (avant LLM)** :  
-   - **Dédup par DOI** : les articles déjà présents en base (DOI connu) sont considérés comme déjà traités → ne pas les renvoyer au LLM.  
-   - **Pré-filtrage des URLs** : règles ou heuristiques (par source si besoin) pour **réduire le volume** envoyé au LLM et limiter les coûts.  
-   - **Rate limit / quotas** : limiter le nombre d’URLs par run, une run à la fois, etc.
-5. **Filtrage des URLs par LLM** : envoyer la liste d’URLs (déjà filtrée) au LLM ; le LLM ne renvoie **que les URLs de pages d’articles** (pas les menus, FAQ, etc.).
-6. **Extraction des données article (LLM)** : pour chaque URL de page article :  
-   - Récupérer le HTML de la page.  
-   - **Pré-nettoyage** : isoler le **bloc article seul** (ex. trafilatura, readability) pour ne pas envoyer tout le HTML au LLM.  
-   - Envoyer **ce bloc** au LLM pour extraire : **titre, auteurs, DOI, abstract, date** (schéma de sortie **fixe** pour toutes les sources).  
-   - En cas d’échec (timeout, 403, erreur LLM) : **skip + log** dans `last_error`, continuer avec les autres URLs.
-7. **Similarité vs DB vectorielle** (à terme) : embedding des abstracts extraits → comparaison avec le corpus (pgvector) → **score de similarité** → écriture dans `veille_items.similarity_score`.
-8. **Écriture en base** : pour chaque article extrait, insertion ou mise à jour dans `veille_items` (run_id, source_id, url, title, authors, doi, abstract, published_at, similarity_score, last_error si échec).
-9. **Front** : affichage d’une **liste rankée** (par score ou date) avec titre, abstract, URL, score ; l’utilisateur clique sur l’URL pour lire l’article sur la source.
+1. **Lire les sources actives** : `getRssSources()` + `getOpenAlexSources()` depuis Supabase (filtre `active=true`).
+2. **Fetch RSS en parallèle** : 5 sources simultanées → ~16s pour 43 sources. Extraction : titre, DOI, abstract, auteurs, date.
+3. **Filtre éditorial** : skip corrections, errata, rétractations (regex sur le titre).
+4. **Filtre date** : articles > 7 jours → skip.
+5. **Dédup DOI** : comparaison avec `getKnownDois()` (tous les DOIs déjà en base).
+6. **Enrichissement OpenAlex** (batch cross-sources) :
+   - DOIs sans abstract → batch `/works?filter=doi:...,type:article` → abstract + `is_final`
+   - `is_final=false` → skip (preprint, chapitre de livre, etc.)
+   - Articles sans DOI → lookup individuel par titre + ISSN
+7. **Sources OpenAlex directes** (MDPI et similaires) : `fetchRecentByIssn(issn, 7)` avec `filter=type:article`. Vérification `is_final` en plus.
+8. **Insert en base** : batch de 50 → `veille_items`.
+9. **Scoring** : embed abstract → `match_chunks` → `similarity_score` (0–1 vs corpus PDF).
+10. **Fin de run** : `completeRun(runId, ‘completed’|’failed’)`.
 
 ---
 
-## 3. Garde-fous (résumé)
+## 3. Garde-fous publications finales
 
-| Garde-fou | Rôle |
-|-----------|------|
-| **Dédup DOI** | Éviter de retraiter les articles déjà en base ; couper le flux avant d’envoyer au LLM. |
-| **Pré-filtrage URLs** | Réduire le volume d’URLs envoyées au LLM (règles, heuristiques par source). |
-| **Rate limit / quotas** | Une run à la fois ; limiter le nombre d’URLs ou d’appels LLM par run. |
-| **Skip + log** | En cas d’erreur sur un item : ne pas bloquer la run ; enregistrer l’erreur dans `last_error` (item ou run). |
+| Garde-fou | Où | Rôle |
+|-----------|-----|------|
+| **Filtre source active** | `sources.ts` | `.eq(‘active’, true)` — sources désactivées ignorées |
+| **Filtre éditorial titre** | `fetch-rss.ts` | Regex corrections/errata/rétractations |
+| **Filtre date 7 jours** | `pipeline.ts` | `isRecent()` — articles trop anciens ignorés |
+| **Dédup DOI** | `pipeline.ts` | `getKnownDois()` — articles déjà en base ignorés |
+| **Filtre type:article API** | `openalex.ts` | Seuls les `journal-article` retournés par OpenAlex |
+| **Vérification is_final** | `pipeline.ts` | Double protection côté client (`type=article && primary_location.source`) |
+| **Skip + log** | `pipeline.ts` | Erreur sur un item → log + continuation |
 
 ---
 
@@ -49,13 +49,13 @@
 
 | Sujet | Décision |
 |-------|----------|
-| **Déclenchement** | UI (bouton manuel). Job asynchrone car la run peut durer longtemps. |
-| **Run** | Toutes les sources d’un coup (une run = une exécution complète). |
-| **Dédup** | **DOI suffit** ; s’appuyer sur la DB pour filtrer en amont. |
-| **Filtrage URLs** | Bloquer **avant** le LLM (règles / heuristiques) pour maîtriser les coûts. |
-| **Extraction article** | **Bloc article seul** (pré-nettoyage type trafilatura / readability) puis LLM ; **schéma de sortie fixe** (title, authors, doi, abstract, date). |
-| **Erreurs** | Skip + log ; **logs sur la ligne en DB** (`last_error` sur item ou run) ; pas de table `veille_errors` dédiée en POC. |
-| **Similarité** | À terme : embedding abstract vs DB vectorielle → score → priorisation de la liste. |
+| **Déclenchement** | UI (bouton) + cron Vercel 6h UTC. |
+| **Run** | Toutes les sources actives d’un coup. |
+| **Sources** | 100 % en base Supabase — gérables depuis l’UI (page `/bibliographie/sources`). |
+| **Dédup** | Par DOI uniquement — suffisant pour les journaux à comité de lecture. |
+| **Publications finales** | Filtre `type:article` OpenAlex (API) + vérification `is_final` (client). |
+| **Scoring** | Embedding abstract vs corpus PDF → `similarity_score` 0–1. Seuls les articles avec abstract sont scorés. |
+| **Erreurs** | Skip + log ; `last_error` sur item ou run ; pas de table dédiée. |
 
 ---
 
@@ -63,21 +63,23 @@
 
 | Fichier | Responsabilité |
 |---------|----------------|
-| **sources.ts** | Récupérer la liste des sources depuis Supabase. |
-| **fetch-source-pages.ts** | Récupérer le HTML des pages sources (URLs en DB). |
-| **extract-urls.ts** | Nettoyer HTML → extraire les URLs candidates (articles). |
-| **guardrails.ts** | Dédup DOI vs DB ; pré-filtre URLs avant LLM ; rate limit, quotas. |
-| **filter-urls-llm.ts** | LLM : ne garder que les URLs de pages articles (après guardrails). |
-| **extract-article-llm.ts** | Pré-nettoyage bloc article → LLM : titre, auteurs, DOI, abstract, date (schéma fixe). |
-| **score.ts** | Similarité abstract vs DB vectorielle (embedding vs corpus). |
+| **sources.ts** | `getRssSources()` + `getOpenAlexSources()` depuis Supabase (filtre `active=true`). |
+| **fetch-rss.ts** | Parse flux RSS → titre, DOI, abstract, auteurs. Filtre éditorial. |
+| **openalex.ts** | Fetch abstracts (batch DOI), lookup DOI par titre, fetch par ISSN. Filtre `type:article`. |
+| **pipeline.ts** | Orchestrateur 8 phases — fetch, dédup, enrichissement, insert, score. |
+| **score.ts** | Embed abstract → `match_chunks` → similarité vs corpus. |
 
 ---
 
-## 6. Flux résumé (liste numérotée)
+## 6. Flux résumé
 
-1. UI (bouton) → création d’une run (veille_runs) → job asynchrone.  
-2. Lire les sources (Supabase, table `sources`).  
-3. Fetch HTML des pages sources.  
+1. UI/cron → `createRun()` → `veille_runs (status=running)`.
+2. `getRssSources()` (active=true) → fetch RSS parallèle → filtre éditorial + date + DOI.
+3. Batch OpenAlex (type:article) → abstracts + is_final → skip si non-journal.
+4. `getOpenAlexSources()` (active=true) → `fetchRecentByIssn` (type:article) → is_final.
+5. Insert batch 50 → `veille_items`.
+6. Score abstracts → `similarity_score`.
+7. `completeRun(‘completed’|’failed’)`.  
 4. Nettoyer HTML → extraire URLs candidates.  
 5. Guardrails : dédup DOI vs DB, pré-filtre URLs, quotas.  
 6. LLM : filtrer les URLs → ne garder que les pages articles.  

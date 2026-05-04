@@ -26,15 +26,25 @@ Si tu n’utilises pas le CLI : exécuter **manuellement** chaque fichier de `su
 
 ### 2.1 `public.sources`
 
-URLs des pages à scraper pour la veille. Tout est en base (pas de config fichier).
+Journaux scientifiques à surveiller. Sources 100 % en base (pas de config fichier).
+Stratégie : RSS feed (préféré) ou fallback OpenAlex par ISSN.
 
-| Colonne          | Type         | Description           |
-|------------------|--------------|-----------------------|
-| id               | uuid (PK)    |                       |
-| url              | text         | URL de la page source |
-| name             | text         | Optionnel (label)     |
-| created_at       | timestamptz  |                       |
-| last_checked_at  | timestamptz  | Dernier scrape        |
+| Colonne          | Type         | Description                                      |
+|------------------|--------------|--------------------------------------------------|
+| id               | uuid (PK)    |                                                  |
+| url              | text         | URL homepage du journal                          |
+| name             | text         | Nom du journal                                   |
+| publisher        | text         | Éditeur (ACS, RSC, Wiley, Nature, APS…)          |
+| issn             | text         | ISSN électronique (pour CrossRef / OpenAlex)     |
+| rss_url          | text         | URL du flux RSS (si source_type = rss)           |
+| source_type      | text         | `rss` \| `openalex` (default: rss)               |
+| active           | boolean      | `true` = incluse dans le pipeline veille          |
+| created_at       | timestamptz  |                                                  |
+| last_checked_at  | timestamptz  | Dernier run veille                               |
+
+**Migrations** : `20260207100000_sources_rss.sql` + `20260504100000_sources_active.sql`
+**Contrainte** : `sources_issn_unique` (UNIQUE sur `issn`)
+**Peuplement** : `scripts/import-sources.ts` — 45 journaux insérés (ACS×12, RSC×10, Wiley×7, Nature×4, Elsevier×5, APS×3, MDPI×2, AAAS×1, NAS×1)
 
 **Peuplement** : si tu as déjà des tables `publications` ou `source_url`, tu peux insérer dans `sources` : `INSERT INTO sources (url, created_at, last_checked_at) SELECT url, created_at, last_checked_at FROM publications;` (et idem depuis source_url si pertinent).
 
@@ -188,6 +198,7 @@ Paramètres RAG modifiables depuis le panneau admin (clé/valeur).
 | 12 | 20260205100004_search_chunks_fts.sql | RPC search_chunks_fts (FTS english). |
 | 13 | 20260205100005_rag_settings_hybrid.sql | Clés hybride (fts_weight, vector_weight, rrf_k, hybrid_top_k). |
 | 14 | 20260206100000_chunks_bilingue_fr.sql | Bilingue FR/EN : colonnes content_fr, embedding_fr, content_fr_tsv ; trigger FTS french ; index GIN/HNSW ; RPC match_chunks_fr, search_chunks_fts_fr. |
+| 15 | 20260207100000_sources_rss.sql | Table sources : ajout publisher, issn, rss_url, source_type (rss\|openalex). Nouvelle stratégie veille RSS + CrossRef/OpenAlex. |
 
 **Rétention 30 jours** : job/cron supprimant les lignes de `conversations` (et en cascade `messages`) où `updated_at` < now() - interval '30 days'. Pas de notification utilisateur. Voir **BACK_RAG.md** §10 pour les options (Vercel Cron, script manuel).
 

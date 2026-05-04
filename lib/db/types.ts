@@ -24,11 +24,19 @@ export type Chunk = {
 };
 
 export type Source = {
-  id: string;
-  url: string;
-  name?: string;
-  created_at?: string;
-};
+  id: string
+  name: string
+  publisher: string | null
+  issn: string | null
+  url: string
+  rss_url: string | null
+  source_type: 'rss' | 'openalex'
+  active: boolean
+  created_at: string
+  last_checked_at: string | null
+}
+
+export type SourceInsert = Omit<Source, 'id' | 'created_at' | 'last_checked_at'>
 
 export type VeilleRun = {
   id: string;

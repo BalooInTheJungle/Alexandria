@@ -20,11 +20,18 @@ export default function RagPage() {
         refreshTrigger={refreshTrigger}
       />
       <div className="flex flex-1 flex-col min-w-0">
-        <div className="flex items-center justify-between border-b border-border px-4 py-2">
-          <h1 className="text-lg font-semibold">Recherche RAG</h1>
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/rag/settings">Paramètres RAG</Link>
-          </Button>
+        <div className="border-b border-border px-6 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="font-display text-2xl font-semibold">Chatbot</h1>
+              <p className="mt-1 text-sm text-muted-foreground max-w-xl">
+                Posez vos questions sur le corpus de publications indexées. L'assistant recherche les passages les plus pertinents et génère une réponse avec les sources citées.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" asChild className="shrink-0 mt-1">
+              <Link href="/rag/settings">Paramètres</Link>
+            </Button>
+          </div>
         </div>
         <RagMessageList
           conversationId={selectedId}

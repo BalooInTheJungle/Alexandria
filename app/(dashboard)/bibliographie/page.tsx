@@ -1,8 +1,9 @@
+import VeilleDashboard from "@/components/veille/VeilleDashboard";
+
 export default function BibliographiePage() {
   return (
-    <main>
-      <h1>Bibliographie / Veille</h1>
-      {/* TODO: liste veille rankée (abstract, score, URL) ; bouton déclencher scrape */}
+    <main className="flex flex-col h-[calc(100vh-60px)]">
+      <VeilleDashboard />
     </main>
   );
 }
