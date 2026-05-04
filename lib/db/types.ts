@@ -23,30 +23,25 @@ export type Chunk = {
   created_at?: string;
 };
 
-/** Stratégie de récupération du contenu source : auto (fetch), fetch, rss. */
-export type SourceFetchStrategy = "auto" | "fetch" | "rss";
-
 export type Source = {
-  id: string;
-  url: string;
-  name?: string | null;
-  fetch_strategy?: SourceFetchStrategy | null;
-  created_at?: string;
-  last_checked_at?: string | null;
-};
+  id: string
+  name: string
+  publisher: string | null
+  issn: string | null
+  url: string
+  rss_url: string | null
+  source_type: 'rss' | 'openalex'
+  active: boolean
+  created_at: string
+  last_checked_at: string | null
+}
 
-export type VeilleRunPhase = "sources" | "urls" | "filter" | "items" | "done";
+export type SourceInsert = Omit<Source, 'id' | 'created_at' | 'last_checked_at'>
 
 export type VeilleRun = {
   id: string;
-  status: "pending" | "running" | "completed" | "failed" | "stopped";
-  started_at?: string | null;
-  completed_at?: string | null;
-  error_message?: string | null;
+  status: string;
   created_at?: string;
-  phase?: VeilleRunPhase | null;
-  items_processed?: number | null;
-  items_total?: number | null;
 };
 
 export type VeilleItem = {
@@ -54,13 +49,12 @@ export type VeilleItem = {
   run_id: string;
   source_id: string;
   url: string;
-  title?: string | null;
-  authors?: string[] | null;
-  doi?: string | null;
-  abstract?: string | null;
-  published_at?: string | null;
-  heuristic_score?: number | null;
-  similarity_score?: number | null;
-  last_error?: string | null;
+  title?: string;
+  authors?: string[];
+  doi?: string;
+  abstract?: string;
+  date?: string;
+  similarity_score?: number;
+  last_error?: string;
   created_at?: string;
 };

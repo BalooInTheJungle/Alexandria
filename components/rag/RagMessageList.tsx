@@ -77,6 +77,12 @@ export default function RagMessageList({
     if (conversationId && messageSentTrigger > 0) loadPage(null);
   }, [messageSentTrigger, conversationId, loadPage]);
 
+  // Scroll to bottom when messages change
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
   useEffect(() => {
     const el = loadMoreRef.current;
     if (!el || !hasMore || loading) return;
@@ -152,6 +158,7 @@ export default function RagMessageList({
       {messages.length === 0 && !hasTail && !loading && (
         <p className="text-center text-sm text-muted-foreground">Aucun message. Envoyez une question.</p>
       )}
+      <div ref={bottomRef} />
     </div>
   );
 }

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Alexandria — Architecture Pipeline Veille</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 2rem;
+      margin: 0;
+    }
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      color: #a5b4fc;
+      margin-bottom: 0.25rem;
+    }
+    p.subtitle {
+      color: #64748b;
+      font-size: 0.85rem;
+      margin-bottom: 2rem;
+    }
+    .diagram-container {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 2rem;
+      overflow-x: auto;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+    .legend {
+      margin-top: 2rem;
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+      color: #94a3b8;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Alexandria — Pipeline de Veille Scientifique</h1>
+  <p class="subtitle">Flux d'information entre les modules — vue macro</p>
+
+  <div class="diagram-container">
+    <div class="mermaid">
+flowchart TD
+    UI([UI - Bouton Lancer la veille])
+    CRON([Cron Vercel - GET /api/cron/veille - 6h UTC])
+
+    SCRAPE[POST /api/veille/scrape\nAuth user + createRun]
+    CRON_ROUTE[GET /api/cron/veille\nVerifie CRON_SECRET + createRun]
+
+    RUNS[(veille_runs\nid / status / item_count)]
+    KNOWN[(veille_items\nDOIs connus pour dedup)]
+
+    PIPELINE[lib/veille/pipeline.ts\nrunVeillePipeline]
+
+    SOURCES[lib/veille/sources.ts\ngetRssSources + getOpenAlexSources]
+    SOURCES_DB[(sources\n43 journaux RSS + OpenAlex)]
+
+    RSS[lib/veille/fetch-rss.ts\nfetchRssFeed x43 en parallele]
+    RSS_FEEDS[[Flux RSS journaux\nACS / RSC / Wiley / Nature / Elsevier]]
+
+    OPENALEX[lib/veille/openalex.ts\nfetchAbstractsByDois batch50\nfetchDoiByTitle\nfetchRecentByIssn]
+    OPENALEX_API[[API OpenAlex - externe]]
+
+    INSERT[lib/db/veille.ts\ninsertVeilleItemsWithIds - batch 50]
+    ITEMS_DB[(veille_items\ntitre / DOI / abstract / auteurs / score)]
+
+    SCORE[lib/veille/score.ts\nscoreVeilleItems]
+    EMBED[lib/rag/embed.ts\nembedQuery - Xenova 384D]
+    CHUNKS_DB[(chunks\ncorpus RAG - embeddings 384D)]
+    UPDATE[lib/db/veille.ts\nupdateVeilleItemScores]
+
+    STATUS[GET /api/veille/status/runId\nstatus + item_count + scored_count]
+    LIST[GET /api/veille/list\narticles tries par similarity_score DESC]
+    DASHBOARD[VeilleDashboard.tsx\nPolling + Affichage articles]
+
+    UI -->|POST| SCRAPE
+    CRON -->|GET + CRON_SECRET| CRON_ROUTE
+
+    SCRAPE -->|createRun| RUNS
+    CRON_ROUTE -->|createRun| RUNS
+    SCRAPE -->|run_id| PIPELINE
+    CRON_ROUTE -->|run_id| PIPELINE
+
+    PIPELINE -->|getKnownDois| KNOWN
+    PIPELINE -->|getSources| SOURCES
+    SOURCES -->|SELECT actifs| SOURCES_DB
+
+    PIPELINE -->|fetchRssFeed x43| RSS
+    RSS -->|HTTP GET| RSS_FEEDS
+    RSS_FEEDS -->|titre / DOI / abstract / auteurs / date| RSS
+    RSS -->|articles bruts| PIPELINE
+
+    PIPELINE -->|DOIs sans abstract| OPENALEX
+    PIPELINE -->|titres sans DOI| OPENALEX
+    PIPELINE -->|ISSN sources OpenAlex| OPENALEX
+    OPENALEX -->|REST API| OPENALEX_API
+    OPENALEX_API -->|abstracts + DOIs| OPENALEX
+    OPENALEX -->|articles enrichis| PIPELINE
+
+    PIPELINE -->|VeilleItemInsert array| INSERT
+    INSERT -->|batch INSERT| ITEMS_DB
+    INSERT -->|ids inseres| PIPELINE
+
+    PIPELINE -->|items + abstracts| SCORE
+    SCORE -->|abstract text| EMBED
+    EMBED -->|vector 384D| SCORE
+    SCORE -->|match_chunks RPC| CHUNKS_DB
+    CHUNKS_DB -->|similarity score| SCORE
+    SCORE -->|Map id to score| UPDATE
+    UPDATE -->|UPDATE similarity_score| ITEMS_DB
+
+    PIPELINE -->|completeRun| RUNS
+
+    DASHBOARD -->|polling run_id| STATUS
+    STATUS -->|status + counts| DASHBOARD
+    DASHBOARD -->|GET| LIST
+    LIST -->|articles scores| DASHBOARD
+
+    classDef trigger    fill:#312e81,stroke:#6366f1,color:#c7d2fe
+    classDef api        fill:#1e3a5f,stroke:#3b82f6,color:#bfdbfe
+    classDef lib        fill:#14532d,stroke:#22c55e,color:#bbf7d0
+    classDef db         fill:#3b1f0a,stroke:#f97316,color:#fed7aa
+    classDef external   fill:#1c1917,stroke:#78716c,color:#d6d3d1
+    classDef ui         fill:#2d1b69,stroke:#a78bfa,color:#ede9fe
+
+    class UI,CRON trigger
+    class SCRAPE,CRON_ROUTE,STATUS,LIST api
+    class PIPELINE,RSS,OPENALEX,INSERT,SCORE,EMBED,SOURCES,UPDATE lib
+    class RUNS,KNOWN,ITEMS_DB,CHUNKS_DB,SOURCES_DB db
+    class RSS_FEEDS,OPENALEX_API external
+    class DASHBOARD ui
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="dot" style="background:#6366f1"></div> Triggers (UI / Cron)</div>
+    <div class="legend-item"><div class="dot" style="background:#3b82f6"></div> API Routes (Next.js)</div>
+    <div class="legend-item"><div class="dot" style="background:#22c55e"></div> Modules lib/ (logique)</div>
+    <div class="legend-item"><div class="dot" style="background:#f97316"></div> Tables Supabase</div>
+    <div class="legend-item"><div class="dot" style="background:#78716c"></div> APIs externes</div>
+    <div class="legend-item"><div class="dot" style="background:#a78bfa"></div> Composants UI</div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      flowchart: { curve: 'basis', padding: 20 },
+      themeVariables: {
+        primaryColor: '#1e2130',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#4f5a7a',
+        lineColor: '#4f5a7a',
+        secondaryColor: '#0f1117',
+        tertiaryColor: '#1e2130',
+        edgeLabelBackground: '#1a1f2e',
+      }
+    })
+  </script>
+</body>
+</html>

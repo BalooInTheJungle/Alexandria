@@ -1,64 +1,37 @@
-import { NextResponse } from "next/server";
-import { updateSource, deleteSource, getSourceById } from "@/lib/db/sources";
+// PATCH /api/veille/sources/[id] — activer ou désactiver une source
+// body: { active: boolean }
 
-const LOG = (msg: string, ...args: unknown[]) =>
-  console.log("[API] /api/veille/sources/[id]", msg, ...args);
+import { NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
+import { toggleSourceActive } from '@/lib/db/sources'
 
-type Params = { params: Promise<{ id: string }> };
+export async function PATCH(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const { id } = params
+  console.log('[/api/veille/sources/[id]] PATCH input:', { id })
 
-const FETCH_STRATEGIES = ["auto", "fetch", "rss"] as const;
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-/**
- * PATCH /api/veille/sources/[id]
- * Body: { url?: string, name?: string, fetch_strategy?: 'auto'|'fetch'|'rss' }
- */
-export async function PATCH(request: Request, { params }: Params) {
+  let body: { active?: boolean }
   try {
-    const { id } = await params;
-    const existing = await getSourceById(id);
-    if (!existing) {
-      return NextResponse.json({ error: "Source not found" }, { status: 404 });
-    }
-
-    const body = await request.json().catch(() => ({}));
-    const updates: { url?: string; name?: string | null; fetch_strategy?: typeof FETCH_STRATEGIES[number] } = {};
-    if (typeof body?.url === "string") updates.url = body.url.trim();
-    if (typeof body?.name === "string") updates.name = body.name.trim() || null;
-    if (FETCH_STRATEGIES.includes(body?.fetch_strategy)) updates.fetch_strategy = body.fetch_strategy;
-
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json(existing);
-    }
-
-    const source = await updateSource(id, updates);
-    return NextResponse.json(source);
-  } catch (e) {
-    LOG("PATCH error", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Update source failed" },
-      { status: 500 }
-    );
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
-}
 
-/**
- * DELETE /api/veille/sources/[id]
- */
-export async function DELETE(_request: Request, { params }: Params) {
-  try {
-    const { id } = await params;
-    const existing = await getSourceById(id);
-    if (!existing) {
-      return NextResponse.json({ error: "Source not found" }, { status: 404 });
-    }
-
-    await deleteSource(id);
-    return new NextResponse(null, { status: 204 });
-  } catch (e) {
-    LOG("DELETE error", e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Delete source failed" },
-      { status: 500 }
-    );
+  if (typeof body.active !== 'boolean') {
+    return NextResponse.json({ error: 'active (boolean) is required' }, { status: 400 })
   }
+
+  const ok = await toggleSourceActive(id, body.active)
+  if (!ok) {
+    return NextResponse.json({ error: 'Failed to update source' }, { status: 500 })
+  }
+
+  console.log('[/api/veille/sources/[id]] result:', { id, active: body.active })
+  return NextResponse.json({ id, active: body.active })
 }

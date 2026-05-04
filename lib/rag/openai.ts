@@ -2,11 +2,9 @@
  * Génération de réponses RAG via l’API OpenAI (Chat Completions).
  * Contexte = chunks récupérés ; historique = N derniers messages (multi-tours).
  * Support streaming pour affichage progressif côté client.
- * Utilise le client partagé lib/openai.
  */
 
 import OpenAI from "openai";
-import { getOpenAIClient, RAG_MODEL } from "@/lib/openai";
 import type { MatchedChunk } from "./search";
 import type { DetectedLang } from "./detect-lang";
 
@@ -16,16 +14,9 @@ Règles :
 - Cite tes sources à la fin des phrases concernées avec des références [1], [2], etc., correspondant aux numéros des extraits fournis.
 - Ne invente pas d'information ni de source.`;
 
-const SYSTEM_PROMPT_GENERAL_KNOWLEDGE = `Tu es un assistant qui répond aux questions. Pour cette requête, le corpus de documents fourni est volontairement vide ou hors-sujet : l'utilisateur souhaite une réponse à partir de tes connaissances générales.
-Règles :
-- Tu DOIS répondre à la question de manière utile et factuelle. Ne dis jamais "Le contexte ne contient pas d'information" ou "Je ne peux pas répondre" : réponds au contraire en t'appuyant sur tes connaissances.
-- Tu peux indiquer brièvement que ta réponse ne provient pas du corpus (ex. "D'après mes connaissances générales…") puis donne la réponse.
-- Sois concis. Ne cite pas de numéros [1], [2].`;
-
-function systemPromptWithLang(lang: DetectedLang, allowGeneralKnowledge: boolean): string {
-  const base = allowGeneralKnowledge ? SYSTEM_PROMPT_GENERAL_KNOWLEDGE : SYSTEM_PROMPT_BASE;
+function systemPromptWithLang(lang: DetectedLang): string {
   const langInstruction = lang === "fr" ? "Réponds en français." : "Réponds en anglais.";
-  return `${base}\n- ${langInstruction}`;
+  return `${SYSTEM_PROMPT_BASE}\n- ${langInstruction}`;
 }
 
 function buildContext(chunks: MatchedChunk[]): string {
@@ -43,20 +34,13 @@ function buildMessages(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[],
-  lang: DetectedLang = "en",
-  allowGeneralKnowledge = false
+  lang: DetectedLang = "en"
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
-  const context =
-    allowGeneralKnowledge || chunks.length === 0
-      ? "Aucun extrait pertinent dans le corpus pour cette question."
-      : buildContext(chunks);
-  const generalInstruction = allowGeneralKnowledge
-    ? "Réponds à la question ci-dessous avec tes connaissances générales (ne dis pas que le contexte ne contient pas d'information).\n\n"
-    : "";
-  const currentUserContent = `${generalInstruction}Contexte (extraits de documents) :\n\n${context}\n\n---\n\nQuestion : ${question}`;
+  const context = buildContext(chunks);
+  const currentUserContent = `Contexte (extraits de documents) :\n\n${context}\n\n---\n\nQuestion : ${question}`;
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPromptWithLang(lang, allowGeneralKnowledge) },
+    { role: "system", content: systemPromptWithLang(lang) },
     ...history.map((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: currentUserContent },
   ];
@@ -64,6 +48,18 @@ function buildMessages(
 }
 
 const LOG = (msg: string, ...args: unknown[]) => console.log("[RAG/openai]", msg, ...args);
+
+/** Normalise la clé API pour éviter "not a legal HTTP header value" (newlines/espaces depuis les env Vercel). */
+function getSanitizedOpenAIKey(): string {
+  const raw = process.env.OPENAI_API_KEY ?? "";
+  // Première ligne seulement (évite newline/carriage return collés au copier-coller)
+  const firstLine = raw.split(/\r?\n/)[0] ?? "";
+  // Retirer un préfixe "Bearer " si présent (évite double "Bearer Bearer ...")
+  const withoutBearer = firstLine.replace(/^\s*Bearer\s+/i, "").trim();
+  // Ne garder que caractères ASCII imprimables (RFC 7230)
+  const apiKey = withoutBearer.replace(/[^\x20-\x7E]/g, "").trim();
+  return apiKey;
+}
 
 /**
  * Appelle l’API OpenAI avec le contexte (chunks) et la question.
@@ -74,21 +70,19 @@ export async function generateRagAnswer(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[] = [],
-  lang: DetectedLang = "en",
-  allowGeneralKnowledge = false
+  lang: DetectedLang = "en"
 ): Promise<string> {
-  const client = getOpenAIClient();
-  const messages = buildMessages(question, chunks, history, lang, allowGeneralKnowledge);
-  LOG("generateRagAnswer", {
-    messagesCount: messages.length,
-    chunksCount: chunks.length,
-    lang,
-    allowGeneralKnowledge,
-    model: RAG_MODEL,
-  });
+  const apiKey = getSanitizedOpenAIKey();
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not set");
+  }
+
+  const client = new OpenAI({ apiKey });
+  const messages = buildMessages(question, chunks, history, lang);
+  LOG("generateRagAnswer", { messagesCount: messages.length, chunksCount: chunks.length, lang });
 
   const response = await client.chat.completions.create({
-    model: RAG_MODEL,
+    model: "gpt-4o-mini",
     messages,
     temperature: 0.3,
     max_tokens: 1024,
@@ -98,10 +92,7 @@ export async function generateRagAnswer(
   if (!choice?.message?.content) {
     throw new Error("OpenAI returned no content");
   }
-  LOG("generateRagAnswer done", {
-    contentLength: choice.message.content.length,
-    usage: response.usage,
-  });
+  LOG("generateRagAnswer done", { contentLength: choice.message.content.length });
   return choice.message.content;
 }
 
@@ -113,21 +104,19 @@ export async function createRagAnswerStream(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[] = [],
-  lang: DetectedLang = "en",
-  allowGeneralKnowledge = false
+  lang: DetectedLang = "en"
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
-  const client = getOpenAIClient();
-  const messages = buildMessages(question, chunks, history, lang, allowGeneralKnowledge);
-  LOG("createRagAnswerStream", {
-    messagesCount: messages.length,
-    chunksCount: chunks.length,
-    lang,
-    allowGeneralKnowledge,
-    model: RAG_MODEL,
-  });
+  const apiKey = getSanitizedOpenAIKey();
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is not set");
+  }
+
+  const client = new OpenAI({ apiKey });
+  const messages = buildMessages(question, chunks, history, lang);
+  LOG("createRagAnswerStream", { messagesCount: messages.length, chunksCount: chunks.length, lang });
 
   const stream = await client.chat.completions.create({
-    model: RAG_MODEL,
+    model: "gpt-4o-mini",
     messages,
     stream: true,
     temperature: 0.3,

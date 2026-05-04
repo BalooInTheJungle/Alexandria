@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/retention",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/veille",
+      "schedule": "0 6 * * *"
     }
   ]
 }
