@@ -23,7 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-type TabId = "pipeline" | "historique" | "sources";
+type TabId = "pipeline" | "historique";
 
 type Source = {
   id: string;
@@ -399,14 +399,6 @@ export default function BibliographiePage() {
         >
           Historique
         </Button>
-        <Button
-          variant={tab === "sources" ? "secondary" : "ghost"}
-          size="sm"
-          className="flex-1"
-          onClick={() => setTab("sources")}
-        >
-          Sources
-        </Button>
       </div>
 
       {/* Pipeline */}
@@ -596,8 +588,8 @@ export default function BibliographiePage() {
         </Card>
       )}
 
-      {/* Sources */}
-      {tab === "sources" && (
+      {/* Sources — page dédiée : /bibliographie/sources */}
+      {false && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Sources</CardTitle>
