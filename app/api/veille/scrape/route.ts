@@ -31,5 +31,5 @@ export async function POST() {
   )
 
   console.log(`[/api/veille/scrape] Pipeline started run=${runId}`)
-  return NextResponse.json({ ok: true, run_id: runId, message: 'Pipeline started' })
+  return NextResponse.json({ ok: true, runId, run_id: runId, message: 'Pipeline started' })
 }

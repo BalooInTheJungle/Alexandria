@@ -17,12 +17,14 @@ const LOG = (msg: string, ...args: unknown[]) =>
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const runId = searchParams.get("runId") ?? undefined;
+    const runId   = searchParams.get("runId")   ?? undefined;
     const sourceId = searchParams.get("sourceId") ?? undefined;
-    const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") ?? "100", 10) || 100));
-    const offset = Math.max(0, parseInt(searchParams.get("offset") ?? "0", 10) || 0);
-    LOG("GET", { runId, sourceId, limit, offset });
-    const rawItems = await listVeilleItems({ runId, sourceId, limit, offset });
+    const limit   = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") ?? "100", 10) || 100));
+    const offset  = Math.max(0, parseInt(searchParams.get("offset") ?? "0", 10) || 0);
+    const minScoreRaw = searchParams.get("minScore");
+    const minScore = minScoreRaw !== null ? parseFloat(minScoreRaw) : undefined;
+    LOG("GET", { runId, sourceId, limit, offset, minScore });
+    const rawItems = await listVeilleItems({ runId, sourceId, limit, offset, minScore });
     const items = filterItemsForArticleDisplay(rawItems);
     LOG("ok", { count: items.length, filtered: rawItems.length - items.length });
     return NextResponse.json(items);

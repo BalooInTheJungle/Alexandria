@@ -102,14 +102,23 @@ Segments de documents pour le RAG (FTS + vector). Contenu **anglais** (original)
 
 Une run = toutes les sources d’un coup.
 
-| Colonne       | Type         | Description                              |
-|---------------|--------------|------------------------------------------|
-| id            | uuid (PK)    |                                          |
-| status        | text         | pending \| running \| completed \| failed |
-| started_at    | timestamptz  |                                          |
-| completed_at  | timestamptz  |                                          |
-| error_message | text         | Si échec global                          |
-| created_at    | timestamptz  |                                          |
+| Colonne           | Type         | Description                                                    |
+|-------------------|--------------|----------------------------------------------------------------|
+| id                | uuid (PK)    |                                                                |
+| status            | text         | pending \| running \| completed \| failed \| stopped           |
+| started_at        | timestamptz  |                                                                |
+| completed_at      | timestamptz  |                                                                |
+| error_message     | text         | Si échec global                                                |
+| created_at        | timestamptz  |                                                                |
+| phase             | text         | Phase en cours : sources \| urls \| items \| summary \| done   |
+| items_processed   | int          | Articles scorés (mis à jour toutes les 50 pendant le scoring)  |
+| items_total       | int          | Total articles à scorer                                        |
+| abort_requested   | boolean      | Arrêt demandé par l’utilisateur                                |
+| ai_summary        | text         | Résumé IA en français (thèmes + actions) généré par GPT-4o-mini|
+| high_score_count  | int          | Nombre d’articles avec similarity_score ≥ score_threshold      |
+| score_threshold   | real         | Seuil utilisé pour le résumé (défaut 0.75)                     |
+
+**Migration** : `20260504110000_veille_run_summary.sql`
 
 ---
 
@@ -128,8 +137,9 @@ Articles récupérés par la veille. Dédup par DOI/URL gérée en app (guardrai
 | doi              | text         |                            |
 | abstract         | text         |                            |
 | published_at     | date         |                            |
-| similarity_score | real         | Vs DB vectorielle          |
-| last_error       | text         | Log en cas d’échec (POC)   |
+| similarity_score | real         | Embed abstract → match_chunks → 0–1 vs corpus |
+| heuristic_score  | real         | Radicaux corpus trouvés dans abstract → 0–1 (informatif) |
+| last_error       | text         | Log en cas d’échec        |
 | created_at       | timestamptz  |                            |
 
 **Index** : veille_items(run_id), veille_items(source_id), veille_items(doi), veille_items(url).

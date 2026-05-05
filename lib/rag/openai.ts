@@ -70,7 +70,8 @@ export async function generateRagAnswer(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[] = [],
-  lang: DetectedLang = "en"
+  lang: DetectedLang = "en",
+  allowGeneralKnowledge = false
 ): Promise<string> {
   const apiKey = getSanitizedOpenAIKey();
   if (!apiKey) {
@@ -104,7 +105,8 @@ export async function createRagAnswerStream(
   question: string,
   chunks: MatchedChunk[],
   history: HistoryMessage[] = [],
-  lang: DetectedLang = "en"
+  lang: DetectedLang = "en",
+  allowGeneralKnowledge = false
 ): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
   const apiKey = getSanitizedOpenAIKey();
   if (!apiKey) {

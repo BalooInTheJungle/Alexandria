@@ -63,22 +63,23 @@ export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWit
   }))
 }
 
-export type ListVeilleItemsOptions = { runId?: string; sourceId?: string; limit?: number; offset?: number }
+export type ListVeilleItemsOptions = { runId?: string; sourceId?: string; limit?: number; offset?: number; minScore?: number }
 
 export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Promise<VeilleItemWithMeta[]> {
-  const { runId, sourceId, limit = 100, offset = 0 } = options
+  const { runId, sourceId, limit = 100, offset = 0, minScore } = options
   const supabase = await createClient()
 
   let query = supabase
     .from('veille_items')
     .select(`id, run_id, source_id, url, title, authors, doi, abstract, published_at,
       heuristic_score, similarity_score, last_error, created_at, sources!inner(name)`)
-    .order('similarity_score', { ascending: false })
+    .order('similarity_score', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
   if (runId)    query = query.eq('run_id', runId)
   if (sourceId) query = query.eq('source_id', sourceId)
+  if (minScore !== undefined) query = query.gte('similarity_score', minScore)
 
   const { data: items, error } = await query
   if (error) { LOG('listVeilleItems error', error.message); throw error }
@@ -116,7 +117,7 @@ export async function getRunById(id: string): Promise<VeilleRunRow | null> {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('veille_runs')
-    .select('id, status, started_at, completed_at, error_message, created_at, phase, items_processed, items_total')
+    .select('id, status, started_at, completed_at, error_message, created_at, phase, items_processed, items_total, ai_summary, high_score_count, score_threshold')
     .eq('id', id)
     .maybeSingle()
 
@@ -141,6 +142,23 @@ export async function createRun(): Promise<string> {
   return data.id
 }
 
+export async function saveRunSummary(
+  runId: string,
+  opts: { aiSummary: string; highScoreCount: number; scoreThreshold: number }
+): Promise<void> {
+  LOG('saveRunSummary', { runId, highScoreCount: opts.highScoreCount, scoreThreshold: opts.scoreThreshold })
+  const supabase = getAdminSupabase()
+  const { error } = await supabase
+    .from('veille_runs')
+    .update({
+      ai_summary:       opts.aiSummary,
+      high_score_count: opts.highScoreCount,
+      score_threshold:  opts.scoreThreshold,
+    })
+    .eq('id', runId)
+  if (error) LOG('saveRunSummary error', error.message)
+}
+
 export async function completeRun(runId: string, status: 'completed' | 'failed', errorMessage?: string) {
   LOG(`completeRun ${runId} → ${status}`)
   const supabase = getAdminSupabase()
@@ -163,6 +181,21 @@ export async function getKnownDois(): Promise<Set<string>> {
   return dois
 }
 
+export async function updateRunPhase(
+  runId: string,
+  phase: string,
+  itemsProcessed?: number,
+  itemsTotal?: number
+): Promise<void> {
+  LOG('updateRunPhase', { runId, phase, itemsProcessed, itemsTotal })
+  const supabase = getAdminSupabase()
+  const patch: Record<string, unknown> = { phase }
+  if (itemsProcessed !== undefined) patch.items_processed = itemsProcessed
+  if (itemsTotal !== undefined)     patch.items_total     = itemsTotal
+  const { error } = await supabase.from('veille_runs').update(patch).eq('id', runId)
+  if (error) LOG('updateRunPhase error', error.message)
+}
+
 export async function updateVeilleItemScores(scores: Map<string, number>): Promise<void> {
   if (scores.size === 0) return
   LOG('updateVeilleItemScores', { count: scores.size })
@@ -171,6 +204,23 @@ export async function updateVeilleItemScores(scores: Map<string, number>): Promi
   for (const [id, similarity_score] of Array.from(scores)) {
     const { error } = await supabase.from('veille_items').update({ similarity_score }).eq('id', id)
     if (error) LOG('updateVeilleItemScores error', id, error.message)
+  }
+}
+
+export async function updateVeilleItemBothScores(
+  scores: Map<string, { similarity: number | null; heuristic: number | null }>
+): Promise<void> {
+  if (scores.size === 0) return
+  LOG('updateVeilleItemBothScores', { count: scores.size })
+  const supabase = getAdminSupabase()
+
+  for (const [id, { similarity, heuristic }] of Array.from(scores)) {
+    const patch: Record<string, unknown> = {}
+    if (similarity !== null) patch.similarity_score = similarity
+    if (heuristic !== null)  patch.heuristic_score  = heuristic
+    if (Object.keys(patch).length === 0) continue
+    const { error } = await supabase.from('veille_items').update(patch).eq('id', id)
+    if (error) LOG('updateVeilleItemBothScores error', id, error.message)
   }
 }
 

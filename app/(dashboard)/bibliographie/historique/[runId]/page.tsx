@@ -58,11 +58,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
     return () => { cancelled = true; };
   }, [runId]);
 
-  const scoreFinal = (item: VeilleItem) => {
-    const h = item.heuristic_score ?? 0;
-    const v = item.similarity_score ?? 0;
-    return (h + v) / 2;
-  };
+  const scoreFinal = (item: VeilleItem) => item.similarity_score ?? 0;
 
   return (
     <div className="w-full max-w-6xl mx-auto px-4 space-y-6 py-8">

@@ -73,19 +73,35 @@
 
 ---
 
-## 5. Veille (Bibliographie)
+## 5. Veille (Bibliographie) — état mai 2026
 
-### 5.1 Liste rankée
+### 5.1 Page `/bibliographie` — 2 onglets
 
-- **Contenu** : liste des **articles** récupérés par la veille : **titre**, **abstract**, **URL** de la page, **score de similarité** (vs corpus) si disponible.
-- **Ordre** : par **score décroissant** (pertinence) ou par date selon implémentation.
-- **Action** : l’utilisateur **clique sur l’URL** pour ouvrir la page de l’article sur le site source (pas de lecture dans l’app).
-- **Déclenchement** : **bouton** (ex. « Lancer la veille ») pour démarrer une run ; la run peut durer longtemps → job asynchrone ; affichage du statut (running / completed / failed) si prévu.
+**Onglet "Cette semaine"** (défaut) :
+- Card "Lancer la recherche" : bouton start/stop, chronomètre, 4 pills de phases (Récupération RSS / Enrichissement OpenAlex / Scoring des articles / Résumé IA), barre de progression pendant le scoring (paliers de 50).
+- Card "Résumé de la semaine" : affiché après complétion, texte GPT-4o-mini avec thèmes + actions prioritaires (markdown rendu), compteur d’articles pertinents + seuil utilisé.
+- Card "Articles pertinents" : slider seuil (30–90%, défaut 75%), grille 2 colonnes de cards article (badge score coloré, titre cliquable, source, auteurs, abstract, badge "Dans le corpus", lien "Lire l’article →").
 
-### 5.2 À faire (front)
+**Onglet "Historique"** :
+- Tableau des runs : date, statut, nb articles, nb pertinents + seuil, erreur, lien "Voir les articles".
+- Lien → `/bibliographie/historique/[runId]` : tableau complet avec colonnes Heur. / Vect. / Final / En DB.
 
-- Appel à `GET /api/veille/list` (ou équivalent) pour récupérer les items de la dernière run (ou liste paginée).
-- Affichage des erreurs éventuelles (last_error sur un item) de façon lisible (ex. tooltip ou ligne dédiée).
+### 5.2 API veille utilisées
+
+| Endpoint | Usage |
+|----------|-------|
+| `POST /api/veille/scrape` | Déclenche pipeline → retourne `{ runId, run_id, message }` |
+| `GET /api/veille/runs/[id]` | Poll toutes les 2s → `{ status, phase, items_processed, items_total, ai_summary, high_score_count, score_threshold }` |
+| `GET /api/veille/items?runId=&minScore=&limit=` | Articles filtrés par seuil, triés similarity DESC NULLS LAST |
+| `GET /api/veille/runs?limit=20` | Liste runs pour historique |
+| `POST /api/veille/runs/[id]/stop` | Arrêt demandé |
+
+### 5.3 À faire (front veille)
+
+- Liens cliquables dans le texte du résumé IA → bloc "Articles cités" sous le résumé
+- Nettoyage des abstracts RSS (metadata citation en tête d’abstract)
+- Pagination articles (au-delà de 100)
+- Animation pendant la phase `summary` (pulse ou spinner)
 
 ---
 
