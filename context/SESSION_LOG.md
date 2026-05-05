@@ -34,6 +34,57 @@ Journal des sessions de développement. Ajouter une entrée à chaque session.
 
 <!-- Ajouter les sessions ici, la plus récente en premier -->
 
+## Session 2026-05-04 (2ème partie) — Veille UX complète
+
+**Objectif** : Corriger la connexion back↔front veille après merge, améliorer UX et scoring
+
+**Réalisé** :
+- [x] Fix `run_id` vs `runId` mismatch dans `scrape/route.ts` (polling ne démarrait pas)
+- [x] Fix `nullsFirst: false` dans `listVeilleItems` (articles null score s'affichaient en tête)
+- [x] Scoring double : `similarity_score` (vectoriel) + `heuristic_score` (radicaux corpus, informatif)
+- [x] `onProgress` callback dans `scoreVeilleItems` toutes les 50 items
+- [x] `updateRunPhase` + `saveRunSummary` + `updateVeilleItemBothScores` dans `lib/db/veille.ts`
+- [x] 11 phases pipeline dans `lib/veille/pipeline.ts` avec progress live
+- [x] `lib/veille/summarize.ts` — résumé GPT-4o-mini : top 15 articles, chunks corpus, titres docs
+- [x] Migration `20260504110000_veille_run_summary.sql` (ai_summary, high_score_count, score_threshold)
+- [x] `stripCitationPrefix()` dans `fetch-rss.ts` — nettoyage abstracts RSS (RSC/Wiley/ACS)
+- [x] Page bibliographie refonte complète (2 onglets, cards 2 colonnes, slider seuil 30–90%)
+- [x] Cards article : badge score coloré, abstract, badge "Dans le corpus", lien DOI
+- [x] 4 pills de phases + barre de progression pendant scoring
+- [x] Résumé IA rendu markdown, compteur articles pertinents
+- [x] "Articles cités cette semaine" — liste numérotée avec liens DOI
+- [x] Onglet Historique avec high_score_count + score_threshold
+- [x] Documentation mise à jour : PIPELINE_VEILLE_CONSOLIDE.md, SCHEMA_DB_ET_DONNEES.md, ROADMAP.md, FONCTIONNALITES_FRONT.md, PRIMER.md, SESSION_LOG.md
+
+**Fichiers modifiés** :
+- `app/api/veille/scrape/route.ts` — retourne runId ET run_id
+- `app/api/veille/items/route.ts` — minScore query param
+- `lib/db/veille.ts` — updateRunPhase, saveRunSummary, updateVeilleItemBothScores, minScore, nullsFirst
+- `lib/veille/score.ts` — loadCorpusTerms, scoreHeuristic, onProgress callback
+- `lib/veille/pipeline.ts` — 11 phases, bothScores hors scope, sourceMap, try/catch summary
+- `lib/veille/fetch-rss.ts` — stripCitationPrefix, conversion reject → extract
+- `lib/veille/summarize.ts` — NOUVEAU fichier
+- `app/(dashboard)/bibliographie/page.tsx` — refonte complète
+- `app/(dashboard)/bibliographie/historique/[runId]/page.tsx` — scoreFinal = similarity seul
+- `supabase/migrations/20260504110000_veille_run_summary.sql` — NOUVEAU fichier
+
+**Problèmes rencontrés** :
+- `run_id` vs `runId` → Fix : retourner les deux dans la réponse scrape
+- Score heuristique non discriminant (0.06–0.20 pour tous les articles chimie) → Décision : garder en DB mais `scoreFinal = similarity_score` seul
+- `bothScores` hors scope → Fix : déclaration avant le bloc `if`
+- Phase "Filtrage LLM" jamais émise → Retirée du front
+- Markdown GPT non rendu → Fix : inline renderer avec split `\n`
+- `doc_title` absent du résumé → Fix : `fetchCorpusChunks` retourne `{ doc_title, content }`
+- Abstracts RSC/Wiley avec métadonnées en tête → Fix : `stripCitationPrefix()`
+
+**Prochaine session** :
+- [ ] Upload PDF via UI (priorité V1.5)
+- [ ] Vérifier/corriger Streaming SSE + citations `[1][2]` dans le RAG
+- [ ] Tests de la veille en production (logs Vercel)
+- [ ] Marquer articles "à lire"/"lu"/"ignoré" (V2)
+
+---
+
 ## Session 2026-05-04
 
 **Objectif** : Créer la structure de documentation complète du projet

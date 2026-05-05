@@ -8,8 +8,9 @@
 import { getRssSources, getOpenAlexSources }          from './sources'
 import { fetchRssFeed }                                from './fetch-rss'
 import { fetchAbstractsByDois, fetchDoiByTitle, fetchRecentByIssn, type AbstractResult } from './openalex'
-import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateVeilleItemScores } from '../db/veille'
-import { scoreVeilleItems }                            from './score'
+import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, saveRunSummary } from '../db/veille'
+import { scoreVeilleItems, loadCorpusTerms, scoreHeuristic } from './score'
+import { generateVeilleSummary } from './summarize'
 import type { VeilleItemInsert }                       from '../db/veille'
 import type { RssSource, RssArticle }                  from './fetch-rss'
 
@@ -49,11 +50,13 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     const itemsToInsert: VeilleItemInsert[] = []
 
     // ── Phase 1: Fetch all RSS in parallel ────────────────────────────────
+    await updateRunPhase(runId, 'sources')
     const rssSources = await getRssSources()
     console.log(`[pipeline] Fetching ${rssSources.length} RSS sources in parallel (${PARALLEL_RSS_CONCURRENCY} concurrent)`)
     const rssResults = await fetchRssInParallel(rssSources)
 
     // ── Phase 2: Filter + dedup + collect enrichment needs ────────────────
+    await updateRunPhase(runId, 'urls')
     // Cross-source: collect all DOIs needing abstract across ALL sources before fetching
     const needsAbstract: { doi: string }[] = []
     const needsDoi: { article: RssArticle; source: RssSource }[] = []
@@ -169,18 +172,64 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }
 
     // ── Phase 7: Insert ────────────────────────────────────────────────────
+    await updateRunPhase(runId, 'items', 0, itemsToInsert.length)
     console.log(`[pipeline] Inserting ${itemsToInsert.length} items`)
     const insertedIds = await insertVeilleItemsWithIds(itemsToInsert)
     stats.inserted = insertedIds.length
 
-    // ── Phase 8: Score against corpus ─────────────────────────────────────
+    // ── Phase 8: Score against corpus (similarity + heuristic) ────────────
+    const bothScores = new Map<string, { similarity: number | null; heuristic: number | null }>()
+
     if (insertedIds.length > 0) {
+      console.log('[pipeline] Loading corpus terms for heuristic scoring')
+      const corpusTerms = await loadCorpusTerms(80)
+
       console.log('[pipeline] Scoring abstracts against corpus')
-      const toScore = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
-      const scores  = await scoreVeilleItems(toScore)
-      await updateVeilleItemScores(scores)
+      const toScore  = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
+      const simScores = await scoreVeilleItems(toScore, async (done, total) => {
+        await updateRunPhase(runId, 'items', done, total)
+        console.log(`[pipeline] scoring progress ${done}/${total}`)
+      })
+
+      for (const { id, abstract } of toScore) {
+        const similarity = simScores.get(id) ?? null
+        const heuristic  = abstract && abstract.length > 50 && corpusTerms.length > 0
+          ? scoreHeuristic(abstract, corpusTerms)
+          : null
+        bothScores.set(id, { similarity, heuristic })
+      }
+
+      await updateVeilleItemBothScores(bothScores)
+      await updateRunPhase(runId, 'items', toScore.length, toScore.length)
     }
 
+    // ── Phase 9: AI summary of top articles ───────────────────────────────
+    await updateRunPhase(runId, 'summary')
+
+    // Build source lookup for summary context
+    const sourceMap = new Map<string, string>()
+    for (const s of [...rssSources, ...openAlexSources]) sourceMap.set(s.id, s.name)
+
+    // Pair inserted items with their titles (itemsToInsert is in same insertion order)
+    const scoredForSummary = insertedIds.map((item, idx) => ({
+      id:               item.id,
+      title:            itemsToInsert[idx]?.title ?? '',
+      abstract:         item.abstract,
+      source_name:      sourceMap.get(itemsToInsert[idx]?.source_id ?? '') ?? null,
+      similarity_score: bothScores.get(item.id)?.similarity ?? null,
+    }))
+
+    console.log('[pipeline] Generating AI summary')
+    try {
+      const THRESHOLD = 0.75
+      const { summary, highScoreCount } = await generateVeilleSummary(scoredForSummary, THRESHOLD)
+      await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: THRESHOLD })
+      console.log(`[pipeline] AI summary saved — ${highScoreCount} articles >= ${THRESHOLD}`)
+    } catch (err: any) {
+      console.error('[pipeline] AI summary failed (non-fatal):', err.message)
+    }
+
+    await updateRunPhase(runId, 'done')
     await completeRun(runId, 'completed')
     console.log(`[pipeline] Done — inserted=${stats.inserted} skipped=${stats.skipped} errors=${stats.errors}`)
 

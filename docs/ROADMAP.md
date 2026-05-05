@@ -32,12 +32,14 @@ Mettre à jour ce fichier à chaque jalon atteint.
 |---------------|------|--------|
 | Navigation header (Chatbot / Database / Bibliographie) | ✅ | Layout complet |
 | Interface front RAG (sidebar, messages, scroll infini) | ✅ | Fonctionnelle |
-| VeilleDashboard (liste, filtres, trigger, live, historique) | ✅ | Quasi-complet |
-| VeilleArticleCard (score, titre, abstract, auteurs) | ✅ | Complet |
-| DocumentsPage (liste PDFs avec statuts) | ✅ | Complet |
-| **Page Sources (gestion des 43 journaux)** | 🔵 **Prochaine session** | Voir `docs/SPEC_SOURCES_PAGE.md` |
+| Page Bibliographie refonte (tabs, cards articles, slider seuil) | ✅ | Cards 2 colonnes, seuil 75%, filtre minScore |
+| Progression pipeline live (4 phases + barre scoring) | ✅ | phases sources/urls/items/summary/done, progress toutes les 50 |
+| Scoring double (similarity + heuristic) | ✅ | similarity seul affiché en Final, heuristic informatif |
+| Résumé IA hebdomadaire | ✅ | GPT-4o-mini, contexte chunks corpus avec doc_title, stocké en DB |
+| Page Sources dédiée `/bibliographie/sources` | ✅ | Gestion active/inactive, ajout source |
+| Historique runs `/bibliographie/historique/[id]` | ✅ | Tableau complet avec scores |
 | Streaming SSE + citations `[1][2]` | ⚠️ À vérifier | Messages en `<pre>` brut actuellement |
-| Upload PDF via UI | ⏳ Après Sources | Pipeline upload → ingestion |
+| Upload PDF via UI | ⏳ | Pipeline upload → ingestion |
 
 ---
 

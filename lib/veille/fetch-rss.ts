@@ -71,6 +71,30 @@ function extractAuthors(item: Record<string, any>): string[] {
 // Titles that identify non-research content to skip entirely
 const EDITORIAL_TITLE_PREFIXES = /^(correction|erratum|corrigendum|retraction|publisher correction|addendum|withdrawal|editor.s note)[\s:]/i
 
+// Strip citation metadata prefix injected by some publishers (RSC, Wiley, ACS) in RSS abstracts.
+// Pattern: "Journal, Year, Vol/Accepted Manuscript, DOI: xxx, [Article Type,] Authors Abstract..."
+// Returns the stripped abstract, or the original string if no prefix detected.
+function stripCitationPrefix(text: string): string {
+  // Only process if a DOI reference appears in the first 400 chars
+  const doiMatch = text.match(/doi\s*[:\s]*10\.\d{4,}[\w./\-]*/i)
+  if (!doiMatch || (doiMatch.index ?? 0) > 400) return text
+
+  // Strip everything up to and including the DOI number
+  let rest = text.slice((doiMatch.index ?? 0) + doiMatch[0].length).trimStart()
+
+  // Strip optional article type label (RSC/Wiley)
+  rest = rest.replace(/^[,\s]*(Research Article|Communication|Review|Letter|Full Paper|Article|Paper)[,\s]*/i, '').trimStart()
+
+  // Strip author name list: "First-Last Name, First Last, ... First Last " (no period, ends before abstract)
+  // Authors are capitalised tokens separated by commas; abstract begins after the last author
+  rest = rest.replace(
+    /^(?:[A-ZÀ-ž][a-zA-ZÀ-ž-]*(?:\s+[A-ZÀ-ž][a-zA-ZÀ-ž-]+)+\s*,\s*)*[A-ZÀ-ž][a-zA-ZÀ-ž-]*(?:\s+[A-ZÀ-ž][a-zA-ZÀ-ž-]+)+\s+/,
+    ''
+  ).trimStart()
+
+  return rest.length >= 80 ? rest : text
+}
+
 // Extract abstract — strip HTML tags, clean publisher noise, cap at 2000 chars
 function extractAbstract(item: Record<string, any>): string | null {
   const raw = item.contentEncoded || item.content || item.dcDescription || item.contentSnippet || null
@@ -85,8 +109,12 @@ function extractAbstract(item: Record<string, any>): string | null {
   // Reject Elsevier metadata format (no abstract in feed): "Publication date: ... Source: ... Author(s): ..."
   if (/^publication date:/i.test(clean)) return null
 
-  // Reject RSC metadata prefix: "Journal Name, Year, Vol, Pages DOI : ..." → let OpenAlex fetch the real abstract
-  if (/^\w[\w\s.]*,\s*\d{4},\s*\d+/.test(clean)) return null
+  // Strip RSC/Wiley citation prefix (Journal, Year, Vol/Accepted Manuscript, DOI, Authors)
+  // Previously this rejected the whole abstract — now we extract the actual content after the prefix
+  if (/^\w[\w\s.]*,\s*\d{4},/.test(clean)) {
+    clean = stripCitationPrefix(clean)
+  }
+
   // Strip RSC RSS footer from the end of otherwise valid abstracts
   clean = clean.replace(/The content of this RSS Feed \(c\) The Royal Society of Chemistry\.?/gi, '').trim()
 

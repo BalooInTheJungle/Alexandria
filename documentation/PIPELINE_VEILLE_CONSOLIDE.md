@@ -15,19 +15,27 @@
 
 ## 2. Étapes de la pipeline (ordre — implémentation actuelle)
 
-1. **Lire les sources actives** : `getRssSources()` + `getOpenAlexSources()` depuis Supabase (filtre `active=true`).
+1. **Lire les sources actives** : `getRssSources()` + `getOpenAlexSources()` depuis Supabase (filtre `active=true`). → phase `sources`
 2. **Fetch RSS en parallèle** : 5 sources simultanées → ~16s pour 43 sources. Extraction : titre, DOI, abstract, auteurs, date.
 3. **Filtre éditorial** : skip corrections, errata, rétractations (regex sur le titre).
 4. **Filtre date** : articles > 7 jours → skip.
-5. **Dédup DOI** : comparaison avec `getKnownDois()` (tous les DOIs déjà en base).
+5. **Dédup DOI** : comparaison avec `getKnownDois()` (tous les DOIs déjà en base). → phase `urls`
 6. **Enrichissement OpenAlex** (batch cross-sources) :
    - DOIs sans abstract → batch `/works?filter=doi:...,type:article` → abstract + `is_final`
    - `is_final=false` → skip (preprint, chapitre de livre, etc.)
    - Articles sans DOI → lookup individuel par titre + ISSN
 7. **Sources OpenAlex directes** (MDPI et similaires) : `fetchRecentByIssn(issn, 7)` avec `filter=type:article`. Vérification `is_final` en plus.
-8. **Insert en base** : batch de 50 → `veille_items`.
-9. **Scoring** : embed abstract → `match_chunks` → `similarity_score` (0–1 vs corpus PDF).
-10. **Fin de run** : `completeRun(runId, ‘completed’|’failed’)`.
+8. **Insert en base** : batch de 50 → `veille_items`. → phase `items` (items_processed=0, items_total=N)
+9. **Scoring double** : → phase `items` (progression par paliers de 50)
+   - `similarity_score` : embed abstract → `match_chunks` → similarité 0–1 vs corpus PDF
+   - `heuristic_score` : count de termes du corpus (radicaux tsvector) trouvés dans l’abstract → 0–1. Termes chargés une fois depuis `corpus_top_terms_cache` (RPC `get_corpus_top_terms(80)`).
+   - Les deux scores sont stockés en un seul update par item via `updateVeilleItemBothScores`.
+10. **Résumé IA** : → phase `summary`
+    - Sélection des articles avec `similarity_score >= 0.75` (seuil configurable).
+    - Pour chacun des 15 meilleurs : fetch des 2 chunks corpus les plus proches via `match_chunks` (avec `doc_title`).
+    - Appel GPT-4o-mini : thèmes émergents + actions prioritaires par article citant le corpus.
+    - Stockage dans `veille_runs.ai_summary` + `high_score_count` + `score_threshold`.
+11. **Fin de run** : → phase `done` puis `completeRun(runId, ‘completed’|’failed’)`.
 
 ---
 
@@ -54,7 +62,10 @@
 | **Sources** | 100 % en base Supabase — gérables depuis l’UI (page `/bibliographie/sources`). |
 | **Dédup** | Par DOI uniquement — suffisant pour les journaux à comité de lecture. |
 | **Publications finales** | Filtre `type:article` OpenAlex (API) + vérification `is_final` (client). |
-| **Scoring** | Embedding abstract vs corpus PDF → `similarity_score` 0–1. Seuls les articles avec abstract sont scorés. |
+| **Scoring similarity** | Embedding abstract vs corpus PDF → `similarity_score` 0–1. Seuls les articles avec abstract sont scorés. |
+| **Scoring heuristique** | Radicaux tsvector du corpus (top 80 depuis cache) comptés dans l'abstract → `heuristic_score` 0–1. Informatif, non utilisé dans le score final affiché. |
+| **Score final affiché** | `similarity_score` uniquement (la moyenne heuristique+vectorielle a été abandonnée — heuristique trop comprimé). |
+| **Résumé IA** | GPT-4o-mini sur top 15 articles ≥ 0.75 avec chunks corpus pour contextualisation. |
 | **Erreurs** | Skip + log ; `last_error` sur item ou run ; pas de table dédiée. |
 
 ---
@@ -66,27 +77,22 @@
 | **sources.ts** | `getRssSources()` + `getOpenAlexSources()` depuis Supabase (filtre `active=true`). |
 | **fetch-rss.ts** | Parse flux RSS → titre, DOI, abstract, auteurs. Filtre éditorial. |
 | **openalex.ts** | Fetch abstracts (batch DOI), lookup DOI par titre, fetch par ISSN. Filtre `type:article`. |
-| **pipeline.ts** | Orchestrateur 8 phases — fetch, dédup, enrichissement, insert, score. |
-| **score.ts** | Embed abstract → `match_chunks` → similarité vs corpus. |
+| **pipeline.ts** | Orchestrateur 11 phases — fetch, dédup, enrichissement, insert, score, résumé IA. Met à jour `phase`, `items_processed`, `items_total` sur `veille_runs` à chaque étape. |
+| **score.ts** | `scoreVeilleItems()` : embed → `match_chunks` → similarity. `loadCorpusTerms()` : top 80 radicaux depuis cache. `scoreHeuristic()` : count radicaux dans abstract. Callback `onProgress` pour mise à jour live toutes les 50 items. |
+| **summarize.ts** | `generateVeilleSummary()` : fetch chunks corpus (avec `doc_title`) pour chaque top article → GPT-4o-mini → résumé FR avec thèmes + actions. |
 
 ---
 
 ## 6. Flux résumé
 
 1. UI/cron → `createRun()` → `veille_runs (status=running)`.
-2. `getRssSources()` (active=true) → fetch RSS parallèle → filtre éditorial + date + DOI.
-3. Batch OpenAlex (type:article) → abstracts + is_final → skip si non-journal.
-4. `getOpenAlexSources()` (active=true) → `fetchRecentByIssn` (type:article) → is_final.
-5. Insert batch 50 → `veille_items`.
-6. Score abstracts → `similarity_score`.
-7. `completeRun(‘completed’|’failed’)`.  
-4. Nettoyer HTML → extraire URLs candidates.  
-5. Guardrails : dédup DOI vs DB, pré-filtre URLs, quotas.  
-6. LLM : filtrer les URLs → ne garder que les pages articles.  
-7. Pour chaque URL article : fetch HTML → pré-nettoyage bloc article → LLM extrait titre, auteurs, DOI, abstract, date ; skip + log si erreur.  
-8. (À terme) Embedding abstract → similarité vs DB vectorielle → score.  
-9. Écriture `veille_items` (last_error si échec).  
-10. Front : affichage liste rankée avec URL.
+2. `updateRunPhase(‘sources’)` → `getRssSources()` → fetch RSS parallèle → filtre éditorial + date + DOI.
+3. `updateRunPhase(‘urls’)` → Batch OpenAlex (type:article) → abstracts + is_final → skip si non-journal.
+4. `getOpenAlexSources()` → `fetchRecentByIssn` → is_final.
+5. `updateRunPhase(‘items’, 0, N)` → Insert batch 50 → `veille_items`.
+6. Score abstracts → `similarity_score` + `heuristic_score` (progress toutes les 50 via `onProgress`).
+7. `updateRunPhase(‘summary’)` → GPT-4o-mini sur top articles ≥ 0.75 → `ai_summary` + `high_score_count`.
+8. `updateRunPhase(‘done’)` → `completeRun(‘completed’|’failed’)`.
 
 ---
 
