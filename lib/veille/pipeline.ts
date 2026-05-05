@@ -177,8 +177,8 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     const insertedIds = await insertVeilleItemsWithIds(itemsToInsert)
     stats.inserted = insertedIds.length
 
-    // ── Phase 8: Score against corpus (similarity + heuristic) ────────────
-    const bothScores = new Map<string, { similarity: number | null; heuristic: number | null }>()
+    // ── Phase 8: Score against corpus (similarity + heuristic + corpus_refs) ─
+    const bothScores = new Map<string, { similarity: number | null; heuristic: number | null; refs: import('../db/types').CorpusRef[] }>()
 
     if (insertedIds.length > 0) {
       console.log('[pipeline] Loading corpus terms for heuristic scoring')
@@ -192,11 +192,13 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       })
 
       for (const { id, abstract } of toScore) {
-        const similarity = simScores.get(id) ?? null
+        const result     = simScores.get(id)
+        const similarity = result?.similarity ?? null
+        const refs       = result?.refs ?? []
         const heuristic  = abstract && abstract.length > 50 && corpusTerms.length > 0
           ? scoreHeuristic(abstract, corpusTerms)
           : null
-        bothScores.set(id, { similarity, heuristic })
+        bothScores.set(id, { similarity, heuristic, refs })
       }
 
       await updateVeilleItemBothScores(bothScores)
@@ -217,6 +219,7 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       abstract:         item.abstract,
       source_name:      sourceMap.get(itemsToInsert[idx]?.source_id ?? '') ?? null,
       similarity_score: bothScores.get(item.id)?.similarity ?? null,
+      corpus_refs:      bothScores.get(item.id)?.refs ?? [],
     }))
 
     console.log('[pipeline] Generating AI summary')

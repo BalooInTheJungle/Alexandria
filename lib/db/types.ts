@@ -44,6 +44,13 @@ export type VeilleRun = {
   created_at?: string;
 };
 
+export type CorpusRef = {
+  doc_title: string;
+  excerpt: string;
+  page: number | null;
+  similarity: number;
+};
+
 export type VeilleItem = {
   id: string;
   run_id: string;
@@ -57,4 +64,5 @@ export type VeilleItem = {
   similarity_score?: number;
   last_error?: string;
   created_at?: string;
+  corpus_refs?: CorpusRef[] | null;
 };

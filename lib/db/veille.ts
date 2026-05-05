@@ -3,7 +3,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import type { VeilleRun, VeilleItem } from '@/lib/db/types'
+import type { VeilleRun, VeilleItem, CorpusRef } from '@/lib/db/types'
 
 const LOG = (msg: string, ...args: unknown[]) => console.log('[db/veille]', msg, ...args)
 
@@ -21,6 +21,7 @@ export type VeilleRunWithCount = VeilleRunRow & { items_count: number }
 export type VeilleItemWithMeta = VeilleItem & {
   source_name: string | null
   document_id: string | null
+  corpus_refs: CorpusRef[] | null
 }
 
 export interface VeilleItemInsert {
@@ -72,7 +73,7 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
   let query = supabase
     .from('veille_items')
     .select(`id, run_id, source_id, url, title, authors, doi, abstract, published_at,
-      heuristic_score, similarity_score, last_error, created_at, sources!inner(name)`)
+      heuristic_score, similarity_score, corpus_refs, last_error, created_at, sources!inner(name)`)
     .order('similarity_score', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
@@ -110,6 +111,7 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
     similarity_score: r.similarity_score ?? undefined, last_error: r.last_error ?? undefined,
     created_at: r.created_at, source_name: sourceName(r),
     document_id: r.doi ? doiToDocumentId.get(r.doi) ?? null : null,
+    corpus_refs: (r as any).corpus_refs ?? null,
   }))
 }
 
@@ -208,16 +210,17 @@ export async function updateVeilleItemScores(scores: Map<string, number>): Promi
 }
 
 export async function updateVeilleItemBothScores(
-  scores: Map<string, { similarity: number | null; heuristic: number | null }>
+  scores: Map<string, { similarity: number | null; heuristic: number | null; refs?: CorpusRef[] }>
 ): Promise<void> {
   if (scores.size === 0) return
   LOG('updateVeilleItemBothScores', { count: scores.size })
   const supabase = getAdminSupabase()
 
-  for (const [id, { similarity, heuristic }] of Array.from(scores)) {
+  for (const [id, { similarity, heuristic, refs }] of Array.from(scores)) {
     const patch: Record<string, unknown> = {}
     if (similarity !== null) patch.similarity_score = similarity
     if (heuristic !== null)  patch.heuristic_score  = heuristic
+    if (refs && refs.length > 0) patch.corpus_refs = refs
     if (Object.keys(patch).length === 0) continue
     const { error } = await supabase.from('veille_items').update(patch).eq('id', id)
     if (error) LOG('updateVeilleItemBothScores error', id, error.message)
