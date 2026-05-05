@@ -181,8 +181,9 @@ async function testScore() {
 
   if (scores.size === 0) warn('Score retourné vide — corpus peut-être vide ou embeddings non initialisés')
   else {
-    const score = scores.get('test-id-001') ?? null
-    ok(`Score calculé : ${score} (item test vs corpus)`)
+    const result = scores.get('test-id-001') ?? null
+    const score = result?.similarity ?? null
+    ok(`Score calculé : ${score} (item test vs corpus, refs=${result?.refs.length ?? 0})`)
     if (score !== null && score < 0) fail('Score négatif inattendu')
   }
 }
