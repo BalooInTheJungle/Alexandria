@@ -18,6 +18,8 @@ export type ChunkInsert = {
   embedding_fr?: number[] | null;
 };
 
+const CHUNK_BATCH_SIZE = 20;
+
 export async function insertChunks(rows: ChunkInsert[]): Promise<void> {
   if (rows.length === 0) return;
   const supabase = await createClient();
@@ -31,13 +33,20 @@ export async function insertChunks(rows: ChunkInsert[]): Promise<void> {
     content_fr: r.content_fr ?? null,
     embedding_fr: r.embedding_fr ?? null,
   }));
+
   LOG("insertChunks", { count: payload.length, document_id: rows[0]?.document_id });
-  const { error } = await supabase.from("chunks").insert(payload);
-  if (error) {
-    LOG("insertChunks error", error.message);
-    throw error;
+
+  for (let i = 0; i < payload.length; i += CHUNK_BATCH_SIZE) {
+    const batch = payload.slice(i, i + CHUNK_BATCH_SIZE);
+    LOG("insertChunks batch", { from: i, to: i + batch.length });
+    const { error } = await supabase.from("chunks").insert(batch);
+    if (error) {
+      LOG("insertChunks batch error", { from: i, message: error.message });
+      throw error;
+    }
   }
-  LOG("insertChunks ok");
+
+  LOG("insertChunks ok", { batches: Math.ceil(payload.length / CHUNK_BATCH_SIZE) });
 }
 
 /** Nombre de chunks pour un document (pour réponse API upload en cas de skip doublon). */

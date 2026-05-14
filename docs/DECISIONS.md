@@ -89,6 +89,53 @@ Ne pas revenir sur ces décisions sans bonne raison et mise à jour de ce fichie
 
 ---
 
+## D11 — Pas de traduction EN→FR pour l'ingestion bulk
+
+**Décision** : lors de l'ingestion bulk des 15 477 PDFs, `content_fr = content` (EN) et `embedding_fr = embedding` (EN). Pas d'appel MarianMT.
+**Raison** : MarianMT multiplie le temps d'ingestion par 3-4x. Pour ~15k PDFs, c'est prohibitif. La recherche FR fonctionnera moins bien mais le corpus est majoritairement en anglais de toute façon.
+**Conséquence** : la recherche hybride FR donnera des résultats moins précis que si la traduction était faite. À réévaluer si un usage FR intensif est confirmé.
+**Alternative écartée** : traduction MarianMT → trop lente (> 24h estimées pour 15k docs).
+
+---
+
+## D12 — Drop des index HNSW avant ingestion bulk
+
+**Décision** : avant toute ingestion bulk (> 100 documents), dropper les index HNSW sur `chunks.embedding` et `chunks.embedding_fr`, puis les recréer après.
+**Raison** : chaque INSERT dans une table avec index HNSW déclenche une mise à jour du graphe de voisinage. Avec m=16 et ef_construction=64, ce surcoût dépasse le timeout statement Supabase (30s) dès que plusieurs chunks sont insérés en parallèle.
+**Procédure** :
+```sql
+-- Avant ingestion
+DROP INDEX IF EXISTS idx_chunks_embedding;
+DROP INDEX IF EXISTS idx_chunks_embedding_fr;
+
+-- Après ingestion
+CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64);
+CREATE INDEX idx_chunks_embedding_fr ON chunks USING hnsw (embedding_fr vector_cosine_ops) WITH (m=16, ef_construction=64);
+```
+**Conséquence** : pendant l'ingestion, la recherche vectorielle est plus lente (scan séquentiel). Acceptable car l'ingestion se fait en dehors des heures d'usage.
+
+---
+
+## D13 — Supabase Pro pour le stockage PDFs
+
+**Décision** : passage au plan Supabase Pro (25$/mois) pour supporter le volume de PDFs.
+**Raison** : le corpus 2015-2026 = ~7,4 Go de PDFs + embeddings pgvector. Le plan Free (500 MB DB) est insuffisant.
+**Détail stockage** :
+- 2000-2026 : ~13 Go → hors budget plan Pro (8 Go DB)
+- 2015-2026 : ~7,4 Go → compatible plan Pro
+- Choix retenu : **2015-2026 uniquement** (~15 477 PDFs)
+**À surveiller** : taille de la table `chunks` avec ~500k vecteurs 384D ≈ 750 MB supplémentaires.
+
+---
+
+## D14 — Architecture ingestion : batch=5, retry 3x, pause 0.3s
+
+**Décision** : le script `scripts/ingest.py` insère par batch de 5 chunks avec 3 tentatives (backoff exponentiel) et 0.3s de pause entre batches.
+**Raison** : les timeouts Supabase sont inévitables avec l'index HNSW actif. Le retry permet de ne pas crasher. Le batch petit réduit la probabilité de timeout.
+**Note** : cette décision est temporaire — avec le drop HNSW (D12), on pourra passer à batch=50 sans problème.
+
+---
+
 ## Template pour de nouvelles décisions
 
 ```

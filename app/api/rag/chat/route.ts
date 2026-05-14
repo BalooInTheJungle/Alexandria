@@ -10,6 +10,7 @@ import {
   getLastMessages,
   type MessageRow,
 } from "@/lib/rag/conversation-persistence";
+import { insertQueryLog } from "@/lib/db/query-logs";
 import type { SourceForDisplay } from "@/lib/rag/citations";
 
 export type ChatResponse = {
@@ -88,6 +89,16 @@ export async function POST(request: Request) {
 
     const { id: userMsgId } = await insertMessage(convId, "user", query);
     LOG("User message inserted", { userMsgId });
+
+    // Log RAG — fire and forget, ne bloque pas la réponse
+    insertQueryLog({
+      query_text: query,
+      lang,
+      chunks_retrieved: chunks.length,
+      best_similarity: bestVectorSimilarity ?? null,
+      was_guardrailed: isOutOfDomain,
+      conversation_id: convId,
+    }).catch(() => {});
 
     if (isOutOfDomain) {
       const guardMessage = settings.guard_message;

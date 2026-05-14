@@ -114,3 +114,77 @@ export async function countDocuments(): Promise<number> {
   }
   return count ?? 0;
 }
+
+const STATS_NOISE_WORDS = new Set([
+  "figur", "fig", "tabl", "articl", "use", "observ", "valu", "data",
+  "form", "respect", "two", "also", "show", "soc", "rev", "comm",
+  "deux", "don", "plus", "entre", "liaison", "utilis", "valeur", "wang",
+  "number", "result", "studi", "work", "base", "high", "low", "larg",
+]);
+
+export type TermEntry = { word: string; nentry: number };
+
+export type ErrorDoc = {
+  id: string;
+  title: string | null;
+  error_message: string | null;
+  created_at: string;
+};
+
+export type DocumentStats = {
+  docs: { done: number; pending: number; error: number; total: number };
+  chunks: { total: number; withEmbedding: number };
+  topTerms: TermEntry[];
+  errorDocs: ErrorDoc[];
+};
+
+export async function getDocumentStats(): Promise<DocumentStats> {
+  const supabase = await createClient();
+  LOG("getDocumentStats input:", {});
+
+  const [
+    { count: done },
+    { count: pending },
+    { count: error },
+    { count: totalChunks },
+    { count: chunksWithEmbedding },
+    { data: rawTerms },
+    { data: errorDocs },
+  ] = await Promise.all([
+    supabase.from("documents").select("id", { count: "exact", head: true }).eq("status", "done"),
+    supabase.from("documents").select("id", { count: "exact", head: true }).eq("status", "pending"),
+    supabase.from("documents").select("id", { count: "exact", head: true }).eq("status", "error"),
+    supabase.from("chunks").select("id", { count: "exact", head: true }),
+    supabase.from("chunks").select("id", { count: "exact", head: true }).not("embedding", "is", null),
+    supabase.from("corpus_top_terms_cache").select("word, nentry").order("nentry", { ascending: false }).limit(120),
+    supabase.from("documents").select("id, title, error_message, created_at").eq("status", "error").order("created_at", { ascending: false }).limit(100),
+  ]);
+
+  const topTerms: TermEntry[] = (rawTerms ?? [])
+    .filter((t) => !STATS_NOISE_WORDS.has(t.word) && t.word.length >= 4)
+    .slice(0, 30);
+
+  const result: DocumentStats = {
+    docs: {
+      done: done ?? 0,
+      pending: pending ?? 0,
+      error: error ?? 0,
+      total: (done ?? 0) + (pending ?? 0) + (error ?? 0),
+    },
+    chunks: {
+      total: totalChunks ?? 0,
+      withEmbedding: chunksWithEmbedding ?? 0,
+    },
+    topTerms,
+    errorDocs: (errorDocs ?? []) as ErrorDoc[],
+  };
+
+  LOG("getDocumentStats result:", {
+    docs: result.docs,
+    chunks: result.chunks,
+    topTermsCount: result.topTerms.length,
+    errorDocsCount: result.errorDocs.length,
+  });
+
+  return result;
+}

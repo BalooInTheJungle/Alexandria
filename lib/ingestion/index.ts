@@ -87,33 +87,42 @@ export async function ingestPdfBuffer(
       return { documentId, status: "done", chunksCount: 0 };
     }
 
-    const chunks: {
-      document_id: string;
-      content: string;
-      position: number;
-      page: number | null;
-      section_title: string | null;
-      embedding: number[];
-      content_fr: string | null;
-      embedding_fr: number[] | null;
-    }[] = [];
+    const EMBED_BATCH = 20;
+    let totalInserted = 0;
 
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      const embedding = await embedQuery(seg.content);
-      chunks.push({
-        document_id: documentId,
-        content: seg.content,
-        position: seg.position,
-        page: seg.page,
-        section_title: seg.section_title,
-        embedding,
-        content_fr: seg.content,
-        embedding_fr: embedding,
-      });
+    for (let i = 0; i < segments.length; i += EMBED_BATCH) {
+      const batch = segments.slice(i, i + EMBED_BATCH);
+      const rows: {
+        document_id: string;
+        content: string;
+        position: number;
+        page: number | null;
+        section_title: string | null;
+        embedding: number[];
+        content_fr: string | null;
+        embedding_fr: number[] | null;
+      }[] = [];
+
+      for (const seg of batch) {
+        const embedding = await embedQuery(seg.content);
+        rows.push({
+          document_id: documentId,
+          content: seg.content,
+          position: seg.position,
+          page: seg.page,
+          section_title: seg.section_title,
+          embedding,
+          content_fr: seg.content,
+          embedding_fr: embedding,
+        });
+      }
+
+      await insertChunks(rows);
+      totalInserted += rows.length;
+      LOG("ingestPdfBuffer batch inserted", { batch: Math.floor(i / EMBED_BATCH) + 1, totalInserted, remaining: segments.length - totalInserted });
     }
 
-    await insertChunks(chunks);
+    const chunks = { length: totalInserted };
     await updateDocument(documentId, {
       status: "done",
       ingestion_log: {

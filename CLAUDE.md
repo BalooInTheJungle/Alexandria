@@ -44,14 +44,31 @@ npm run dev        # Next.js dev (http://localhost:3000)
 npm run build      # Build production
 npm run lint       # ESLint
 
-# Ingestion PDF (Python)
+# Ingestion PDF bulk (Python) — corpus data/pdfs/YEAR/
 cd scripts && python3 ingest.py
+
+# Calcul UMAP 2D sur tous les chunks (à relancer après chaque ingestion bulk)
+cd scripts && python3 compute_umap.py
 
 # Migrations Supabase
 npx supabase db push
 
 # Rétention manuelle
 curl -H "Authorization: Bearer $CRON_SECRET" "https://<domaine>/api/cron/retention"
+```
+
+### ⚠️ Avant toute ingestion bulk (> 100 docs) — DROP les index HNSW
+
+Sans cette étape, chaque INSERT dépasse le timeout Supabase (30s) à cause du recalcul du graphe HNSW.
+
+```sql
+-- Dans Supabase SQL Editor — AVANT l'ingestion
+DROP INDEX IF EXISTS idx_chunks_embedding;
+DROP INDEX IF EXISTS idx_chunks_embedding_fr;
+
+-- APRÈS l'ingestion complète — recréer les index
+CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64);
+CREATE INDEX idx_chunks_embedding_fr ON chunks USING hnsw (embedding_fr vector_cosine_ops) WITH (m=16, ef_construction=64);
 ```
 
 **Prérequis système (ingestion Python) :**
@@ -182,7 +199,21 @@ Déclenchée par bouton UI ou cron Vercel (6h UTC) :
 | Paramètres RAG (rag_settings) | ✅ Fonctionnel |
 | Pipeline veille (RSS + OpenAlex + scoring) | ✅ Fonctionnel |
 | Cron rétention 30 jours | ✅ Fonctionnel |
+| Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
+| Logs requêtes RAG (query_logs) | ✅ Fonctionnel |
 | Upload PDF + ingestion | ⚠️ À vérifier |
+| **Ingestion bulk ~15 477 PDFs (2015-2026)** | 🔴 En attente — bloquer sur drop HNSW |
 | Interface front (composants, layout) | ⚠️ À adapter |
+
+### Corpus actuel en base
+- **367 documents** ingérés, status=done
+- **35 584 chunks** avec embeddings EN + FR (embedding_fr = embedding EN sans traduction)
+- **35 584 coordonnées UMAP** calculées (compute_umap.py exécuté)
+- **~15 477 PDFs** à ingérer dans `data/pdfs/2015/` → `data/pdfs/2026/`
+
+### Limite stockage Supabase
+- Plan **Pro (25$/mois)** activé — limite ~8 Go DB
+- Corpus retenu : **2015-2026 uniquement** (~7,4 Go PDFs)
+- 2000-2014 exclus (~5,6 Go supplémentaires, hors budget)
 
 Voir `docs/ROADMAP.md` pour les prochaines étapes.
