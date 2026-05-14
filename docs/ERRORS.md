@@ -125,6 +125,73 @@ python3 -m pip install -r requirements.txt
 
 ---
 
+### [SUPABASE] Statement timeout 57014 — INSERT chunks avec index HNSW
+
+**Symptôme** : `ERROR: canceling statement due to statement timeout (57014)` lors de l'insertion de chunks avec embedding.
+**Cause** : l'index HNSW sur `chunks.embedding` (et `embedding_fr`) recalcule le graphe de voisinage à chaque INSERT. Ce surcoût dépasse le timeout Supabase (30s) lors d'insertions multiples.
+**Solution** : dropper les index HNSW **avant** toute ingestion bulk, les recréer après.
+```sql
+-- Avant ingestion
+DROP INDEX IF EXISTS idx_chunks_embedding;
+DROP INDEX IF EXISTS idx_chunks_embedding_fr;
+
+-- Après ingestion
+CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64);
+CREATE INDEX idx_chunks_embedding_fr ON chunks USING hnsw (embedding_fr vector_cosine_ops) WITH (m=16, ef_construction=64);
+```
+**Fichier concerné** : `scripts/ingest.py`, `lib/db/chunks.ts`
+**Contournement temporaire** : batch=5 + retry 3x + pause 0.3s (lent mais fonctionnel).
+
+---
+
+### [SUPABASE] Project exhausting resources — SQL Editor timeout
+
+**Symptôme** : `Connection terminated due to connection timeout. Your project is currently exhausting multiple resources.`
+**Cause** : trop de requêtes en parallèle sur Supabase (script ingest.py en boucle de retry + tentatives DROP INDEX simultanées).
+**Solution** :
+1. Tuer immédiatement le processus ingest.py (`kill <PID>`)
+2. Attendre 5-10 minutes que Supabase se récupère
+3. Relancer les commandes SQL une par une
+**Prévention** : ne jamais laisser tourner ingest.py pendant qu'on manipule les index en SQL Editor.
+
+---
+
+### [PYTHON] ingest.py — httpx.ReadTimeout dans le handler d'erreur
+
+**Symptôme** : le script crashe avec `httpx.ReadTimeout` à l'intérieur du bloc `except`, après un timeout initial.
+**Cause** : la mise à jour du statut d'erreur en DB (appel Supabase) timeout aussi quand la base est surchargée. L'exception non gérée dans le handler crashe le script entier.
+**Solution** : entourer le bloc `except` d'un `try/except` supplémentaire + `time.sleep(1)` avant la tentative d'update.
+**Fichier concerné** : `scripts/ingest.py`
+
+---
+
+### [PYTHON] ingest.py — Null bytes dans le fichier source
+
+**Symptôme** : `ValueError: embedded null byte` ou fichier non parseable.
+**Cause** : caractère spécial dans la liste des journaux connus (copié depuis un éditeur riche).
+**Solution** : ouvrir le fichier en mode binaire, remplacer `b'\x00'` par `b''`, réécrire.
+**Fichier concerné** : `scripts/ingest.py`
+
+---
+
+### [PYTHON] ingest.py — embeddings stockés comme string JSON dans Supabase
+
+**Symptôme** : `np.array(embeddings)` produit un array d'objets (dtype=object) au lieu de float32.
+**Cause** : pgvector retourne les embeddings comme strings JSON (`"[0.1, 0.2, ...]"`) via l'API Supabase Python.
+**Solution** : détecter et parser si `isinstance(emb, str): emb = json.loads(emb)` avant `np.array()`.
+**Fichier concerné** : `scripts/compute_umap.py`
+
+---
+
+### [PYTHON] ingest.py — Python 3.9 incompatible avec `str | None`
+
+**Symptôme** : `TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'`
+**Cause** : la syntaxe `str | None` pour les unions de types est disponible à partir de Python 3.10 seulement.
+**Solution** : remplacer `str | None` par `object` (ou `Optional[str]` avec import typing) dans toutes les annotations.
+**Fichier concerné** : `scripts/ingest.py`
+
+---
+
 ## Erreurs à investiguer
 
 Ajouter ici les erreurs rencontrées mais non encore résolues :

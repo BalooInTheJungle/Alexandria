@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Ingestion Alexandria : data/pdfs/ → documents + chunks (Supabase).
+Ingestion Alexandria : data/pdfs/**/*.pdf → documents + chunks (Supabase).
+- Scan récursif des sous-dossiers (organisés par année).
 - Parse PDF (PyMuPDF), fallback OCR si peu de texte (PDF scanné).
-- Métadonnées extraites du PDF.
+- Métadonnées : titre, auteurs, DOI, journal, published_at.
+- Dédup par DOI en priorité, puis par storage_path.
 - Chunking par section ou par taille.
-- Embeddings sentence-transformers (384D) pour content et content_fr.
-- Traduction EN→FR (Helsinki-NLP/opus-mt-en-fr) pour content_fr.
+- Embeddings 384D (sentence-transformers). Pas de traduction EN→FR.
 """
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Charger .env.local ou .env depuis la racine du projet
 project_root = Path(__file__).resolve().parent.parent
 env_path = project_root / ".env.local"
 if not env_path.exists():
@@ -25,483 +26,453 @@ if env_path.exists():
 import fitz  # PyMuPDF
 from supabase import create_client
 
-PDF_DIR = project_root / "data" / "pdfs"
-EMBED_DIM = 384
-CHUNK_SIZE = 600
-CHUNK_OVERLAP = 100
-MIN_TEXT_PER_PAGE = 50  # en dessous, on tente l'OCR pour cette page
-TRANSLATE_BATCH_SIZE = 24  # plus gros batch sur M2 (32GB); moins d’appels model.generate
-MAX_INPUT_LENGTH_TRANSLATE = 512  # tokens environ, tronquer pour le traducteur
-TRANSLATE_NUM_BEAMS = 1  # 1 = greedy (rapide); 5 = beam (lent, meilleure qualité)
+PDF_DIR             = project_root / "data" / "pdfs"
+EMBED_DIM           = 384
+CHUNK_SIZE          = 600
+CHUNK_OVERLAP       = 100
+MIN_TEXT_PER_PAGE   = 50    # chars en dessous desquels on tente l'OCR
+INSERT_BATCH        = 5     # chunks par requête Supabase (limite timeout 30s)
+INSERT_PAUSE        = 0.3  # secondes entre chaque batch (évite saturation)
 
+# Journaux connus dans le domaine chimie/magnétisme moléculaire
+_KNOWN_JOURNALS = [
+    "Inorganic Chemistry", "Inorg. Chem.",
+    "Journal of the American Chemical Society", "J. Am. Chem. Soc.",
+    "Angewandte Chemie", "Angew. Chem.",
+    "Chemical Communications", "Chem. Commun.",
+    "Dalton Transactions", "Dalton Trans.",
+    "CrystEngComm",
+    "Chemistry – A European Journal", "Chem. Eur. J.",
+    "European Journal of Inorganic Chemistry", "Eur. J. Inorg. Chem.",
+    "Journal of Materials Chemistry", "J. Mater. Chem.",
+    "New Journal of Chemistry", "New J. Chem.",
+    "Chemical Science",
+    "Nature Chemistry", "Nature Commun",
+    "Physical Chemistry Chemical Physics", "Phys. Chem. Chem. Phys.",
+    "Polyhedron",
+    "Coordination Chemistry Reviews", "Coord. Chem. Rev.",
+    "Journal of Coordination Chemistry", "J. Coord. Chem.",
+    "Magnetochemistry",
+    "Journal of Magnetism and Magnetic Materials",
+    "Molecules",
+    "RSC Advances",
+    "Crystal Growth & Design", "Cryst. Growth Des.",
+]
+
+
+# ── Supabase ─────────────────────────────────────────────────────────────────
 
 def get_supabase():
-    url = (os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "").strip()
+    url = (os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip()
     key = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
     if not url or not key:
-        raise SystemExit("Manque NEXT_PUBLIC_SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY (.env.local)")
-    if not url.startswith("https://") or ".supabase.co" not in url:
-        raise SystemExit(
-            "NEXT_PUBLIC_SUPABASE_URL doit être l’URL du projet (ex. https://xxxxx.supabase.co), "
-            "pas l’URL du dashboard. Supabase → Settings → API → Project URL."
-        )
+        sys.exit("❌  NEXT_PUBLIC_SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant dans .env.local")
     return create_client(url, key)
 
 
-def clean_text_for_db(text: str) -> str:
-    """Supprime les caractères que Postgres n’accepte pas en text (ex. \\u0000)."""
-    if not text:
-        return text
-    return text.replace("\x00", " ").replace("\u0000", " ")
+# ── Texte & nettoyage ────────────────────────────────────────────────────────
 
-
-def _get_translation_device():
-    """MPS (Apple Silicon) > CUDA > CPU pour accélérer la traduction."""
-    try:
-        import torch
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-    except Exception:
-        pass
-    return torch.device("cpu")
-
-
-def translate_en_to_fr_batch(texts: list[str], model, tokenizer, device) -> list[str]:
-    """Traduit une liste de textes EN→FR par batch (MarianMT). Les tensors sont sur device (MPS/CUDA/CPU)."""
-    if not texts:
-        return []
-    out = []
-    total_batches = (len(texts) + TRANSLATE_BATCH_SIZE - 1) // TRANSLATE_BATCH_SIZE
-    for idx in range(0, len(texts), TRANSLATE_BATCH_SIZE):
-        batch_num = idx // TRANSLATE_BATCH_SIZE + 1
-        if batch_num == 1 or batch_num % 5 == 0 or batch_num == total_batches:
-            print(f"  [traduction] batch {batch_num}/{total_batches} ({min(idx + TRANSLATE_BATCH_SIZE, len(texts))}/{len(texts)} textes)", flush=True)
-        batch = texts[idx : idx + TRANSLATE_BATCH_SIZE]
-        truncated = [t[: MAX_INPUT_LENGTH_TRANSLATE * 4] for t in batch]
-        inputs = tokenizer(truncated, return_tensors="pt", padding=True, truncation=True, max_length=512)
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        gen = model.generate(**inputs, max_length=512, num_beams=TRANSLATE_NUM_BEAMS)
-        for ids in gen:
-            out.append(tokenizer.decode(ids, skip_special_tokens=True))
-    return out
+def clean(text: str) -> str:
+    return text.replace("\x00", " ").replace("", " ") if text else text
 
 
 def extract_text_with_ocr_fallback(pdf_path: Path) -> tuple[str, dict[int, str], int]:
-    """Extrait le texte page par page. Si une page a très peu de texte, OCR (pytesseract).
-    Retourne (full_text, page_texts, ocr_pages_count).
-    """
     doc = fitz.open(pdf_path)
     num_pages = len(doc)
-    full_text = []
-    page_texts = {}
-    ocr_pages_count = 0
+    full_text, page_texts, ocr_count = [], {}, 0
     try:
         for i in range(num_pages):
             if (i + 1) % 50 == 0 or i + 1 == num_pages:
-                print(f"  [extraction] page {i + 1}/{num_pages}", flush=True)
+                print(f"  [extraction] page {i+1}/{num_pages}", flush=True)
             page = doc[i]
             text = page.get_text()
-            page_texts[i + 1] = text
             if len(text.strip()) < MIN_TEXT_PER_PAGE:
-                ocr_pages_count += 1
+                ocr_count += 1
                 try:
-                    import pdf2image
-                    import pytesseract
-                    img = pdf2image.convert_from_path(str(pdf_path), first_page=i + 1, last_page=i + 1, dpi=150)
+                    import pdf2image, pytesseract
+                    img = pdf2image.convert_from_path(str(pdf_path), first_page=i+1, last_page=i+1, dpi=150)
                     if img:
                         text = pytesseract.image_to_string(img[0], lang="eng")
-                        page_texts[i + 1] = text
                 except Exception as e:
-                    page_texts[i + 1] = text + f"\n[OCR non disponible: {e}]"
-            full_text.append(page_texts[i + 1])
+                    text = text + f"\n[OCR non disponible: {e}]"
+            page_texts[i + 1] = text
+            full_text.append(text)
     finally:
         doc.close()
-    full_joined = clean_text_for_db("\n\n".join(full_text))
-    page_texts_clean = {k: clean_text_for_db(v) for k, v in page_texts.items()}
-    return full_joined, page_texts_clean, ocr_pages_count
+    joined = clean("\n\n".join(full_text))
+    return joined, {k: clean(v) for k, v in page_texts.items()}, ocr_count
 
 
-def _parse_authors_from_metadata(author_str: str) -> list[str]:
-    """Parse XMP/PDF metadata author string (semicolon or comma separated)."""
-    if not author_str or not author_str.strip():
+# ── Métadonnées ───────────────────────────────────────────────────────────────
+
+def _parse_authors(author_str: str) -> list[str]:
+    if not author_str:
         return []
-    # Split by ; or , and clean
     parts = re.split(r"[;,]", author_str)
-    out = []
-    for p in parts:
-        name = p.strip()
-        if name and len(name) > 1 and len(name) < 200:
-            out.append(name)
-    return out[:50]  # cap
+    return [p.strip() for p in parts if p.strip() and 1 < len(p.strip()) < 200][:50]
 
-def _extract_authors_from_first_page(full_text: str, title: str | None) -> list[str]:
-    """Heuristic: lines between title and Abstract/Introduction often are authors."""
+
+def _extract_authors_heuristic(full_text: str, title: object) -> list[str]:
     head = full_text[:4000]
-    lines = [ln.strip() for ln in head.split("\n") if ln.strip()]
-    # Find first section header
-    section_start = None
-    for i, ln in enumerate(lines):
-        if re.match(
-            r"^(Abstract|Introduction|Keywords|1\.\s|I\.\s)",
-            ln,
-            re.IGNORECASE,
-        ):
-            section_start = i
-            break
-    if section_start is None:
-        section_start = len(lines)
-    # Candidate author lines: before section, not the title, not too long
+    lines = [l.strip() for l in head.split("\n") if l.strip()]
+    section_start = next(
+        (i for i, l in enumerate(lines)
+         if re.match(r"^(Abstract|Introduction|Keywords|1\.\s|I\.\s)", l, re.IGNORECASE)),
+        len(lines)
+    )
     title_lower = (title or "").lower()
     candidates = []
-    for i in range(min(section_start, 15)):
-        ln = lines[i]
-        if not ln or len(ln) > 150:
+    for l in lines[:min(section_start, 15)]:
+        if not l or len(l) > 150:
             continue
-        if title_lower and ln.lower() == title_lower:
+        if title_lower and l.lower() == title_lower:
             continue
-        if re.match(r"^(DOI|https?://|©|Copyright|Published|Received|Accepted)\b", ln, re.IGNORECASE):
+        if re.match(r"^(DOI|https?://|©|Copyright|Published|Received|Accepted)\b", l, re.IGNORECASE):
             continue
-        if re.match(r"^\d+\.?\s*$", ln):
-            continue
-        candidates.append(ln)
+        candidates.append(l)
     if not candidates:
         return []
-    # One line with commas/semicolons → split; several lines → one author per line
     if len(candidates) == 1:
-        return _parse_authors_from_metadata(candidates[0].replace(" and ", "; "))
+        return _parse_authors(candidates[0].replace(" and ", "; "))
     authors = []
     for c in candidates[:10]:
-        # "Name1, Name2, and Name3" or "Name1 & Name2"
         for part in re.split(r",\s*and\s+|\s+and\s+|&", c):
             part = part.strip().rstrip(".,")
             if part and 2 <= len(part) <= 120:
                 authors.append(part)
-    return authors[:30] if authors else []
+    return authors[:30]
 
 
-def extract_metadata(doc: fitz.Document, full_text: str) -> dict:
-    """Métadonnées depuis le PDF (XMP / première page)."""
+def _extract_year_from_folder(pdf_path: Path) -> object:
+    """Extrait l'année depuis le nom du dossier parent si c'est un millésime (ex: '1996')."""
+    parent = pdf_path.parent.name
+    m = re.fullmatch(r"(19\d{2}|20\d{2})", parent)
+    return int(m.group(1)) if m else None
+
+
+def _extract_year_from_text(text: str) -> object:
+    """Cherche une année de publication dans les 3000 premiers caractères."""
+    head = text[:3000]
+    patterns = [
+        r"(?:received|published|accepted|©)\s*(?:\w+\s+)?(\b(?:19|20)\d{2}\b)",
+        r"\b((?:19|20)\d{2})\b",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, head, re.IGNORECASE)
+        if m:
+            year = int(m.group(1))
+            if 1900 <= year <= 2030:
+                return year
+    return None
+
+
+def _extract_journal(text: str) -> object:
+    """Cherche un nom de journal connu dans les 2000 premiers caractères."""
+    head = text[:2000]
+    for journal in _KNOWN_JOURNALS:
+        if journal.lower() in head.lower():
+            return journal
+    # Heuristique générique : ligne courte qui contient des mots-clés de journal
+    for line in head.split("\n"):
+        line = line.strip()
+        if 5 < len(line) < 80:
+            if re.search(r"\b(Journal|Chemistry|Communications?|Letters|Transactions?|Reviews?|Science)\b", line, re.IGNORECASE):
+                if not re.search(r"(https?://|DOI|@|©|\d{4}-\d{4})", line):
+                    return line
+    return None
+
+
+def extract_metadata(doc: fitz.Document, full_text: str, pdf_path: Path) -> dict:
     meta = doc.metadata or {}
     title = (meta.get("title") or "").strip()
-    authors: list[str] = []
+    authors = _parse_authors(meta.get("author") or meta.get("authors") or "")
 
-    # Auteurs : d'abord XMP
-    author_meta = (meta.get("author") or meta.get("authors") or "").strip()
-    if author_meta:
-        authors = _parse_authors_from_metadata(author_meta)
+    doi_m = re.search(r"10\.\d{4,}/[^\s]+", full_text[:10000])
+    doi = doi_m.group(0).rstrip(".,;") if doi_m else None
 
-    doi = None
-    journal = None
-    published_at = None
+    if not title:
+        for block in full_text[:3000].split("\n\n"):
+            b = block.strip()
+            if len(b) > 10 and not b.lower().startswith(("abstract", "keywords")):
+                title = b[:500]
+                break
 
-    # DOI dans le texte (regex courante)
-    doi_match = re.search(r"10\.\d{4,}/[^\s]+", full_text[:10000])
-    if doi_match:
-        doi = doi_match.group(0).rstrip(".,;")
-
-    # Titre souvent sur la première page (première grosse ligne)
-    first_page = full_text[:3000].split("\n\n")
-    for line in first_page:
-        line = line.strip()
-        if len(line) > 10 and not title and not line.lower().startswith(("abstract", "keywords")):
-            title = line[:500]
-            break
-
-    # Auteurs depuis la première page si pas trouvés en XMP
     if not authors:
-        authors = _extract_authors_from_first_page(full_text, title or None)
+        authors = _extract_authors_heuristic(full_text, title or None)
+
+    journal = _extract_journal(full_text)
+
+    year = _extract_year_from_folder(pdf_path) or _extract_year_from_text(full_text)
+    published_at = f"{year}-01-01" if year else None
 
     return {
-        "title": (clean_text_for_db(title).strip() or None) if title else None,
-        "authors": authors,
-        "doi": clean_text_for_db(doi).strip() if doi else None,
-        "journal": clean_text_for_db(journal).strip() if journal else None,
+        "title":        clean(title).strip() or None,
+        "authors":      authors or None,
+        "doi":          clean(doi).strip() if doi else None,
+        "journal":      clean(journal).strip() if journal else None,
         "published_at": published_at,
     }
 
 
-# Sections reconnues : numérotées (1. Introduction) ou non, avec variantes
-_SECTION_PATTERN = re.compile(
+# ── Chunking ─────────────────────────────────────────────────────────────────
+
+_SECTION_RE = re.compile(
     r"^(?:\d+\.?\s*)?"
-    r"(Abstract|Introduction|Methods?|Materials?\s+and\s+Methods?|Results?|Discussion|Conclusion|Conclusions?|References|Acknowledgments?|Acknowledgements?|Experimental|Background|Summary)\s*"
+    r"(Abstract|Introduction|Methods?|Materials?\s+and\s+Methods?|Results?|Discussion"
+    r"|Conclusions?|References|Acknowledgm?ents?|Experimental|Background|Summary)"
     r"(?:\s+and\s+Discussion)?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
 
-def _chunk_one_page_text(text: str) -> list[tuple[str, str | None]]:
-    """Découpe le texte d'une page en chunks (content, section_title)."""
-    chunks_out: list[tuple[str, str | None]] = []
-    current: list[str] = []
-    current_len = 0
-    section_title: str | None = None
-
-    lines = text.split("\n")
-    for line in lines:
+def _chunk_page(text: str) -> list:
+    out, current, current_len, section = [], [], 0, None
+    for line in text.split("\n"):
         stripped = line.strip()
-        match = _SECTION_PATTERN.match(stripped) if stripped else None
-        if match:
+        if stripped and _SECTION_RE.match(stripped):
             if current:
                 block = "\n".join(current).strip()
                 if block:
-                    chunks_out.append((block, section_title))
-            current = [line]
-            current_len = len(line) + 1
-            section_title = stripped
+                    out.append((block, section))
+            current, current_len, section = [line], len(line) + 1, stripped
             continue
         current.append(line)
         current_len += len(line) + 1
         if current_len >= CHUNK_SIZE:
             block = "\n".join(current).strip()
             if block:
-                chunks_out.append((block, section_title))
-            overlap_lines = []
-            overlap_len = 0
+                out.append((block, section))
+            overlap, overlap_len = [], 0
             for ll in reversed(current):
-                overlap_lines.insert(0, ll)
+                overlap.insert(0, ll)
                 overlap_len += len(ll) + 1
                 if overlap_len >= CHUNK_OVERLAP:
                     break
-            current = overlap_lines
+            current = overlap
             current_len = sum(len(ll) + 1 for ll in current)
-
     if current:
         block = "\n".join(current).strip()
         if block:
-            chunks_out.append((block, section_title))
+            out.append((block, section))
+    return out
 
-    return chunks_out
 
-
-def chunk_text(text: str, page_texts: dict[int, str]) -> list[tuple[str, int | None, str | None]]:
-    """Découpe en chunks par page pour avoir un numéro de page par chunk. (content, page, section_title)."""
-    chunks_out: list[tuple[str, int | None, str | None]] = []
+def chunk_text(text: str, page_texts: dict[int, str]) -> list:
     if not page_texts:
-        # Fallback sans page_texts : une seule "page"
-        one_page_chunks = _chunk_one_page_text(text)
-        for content, section_title in one_page_chunks:
-            chunks_out.append((content, 1, section_title))
-        return chunks_out if chunks_out else [(text[:8000].strip(), 1, None)]
-
-    last_section: str | None = None
+        return [(clean(c), 1, s) for c, s in _chunk_page(text)] or [(text[:8000].strip(), 1, None)]
+    out, last_section = [], None
     for page_num in sorted(page_texts.keys()):
-        page_content = page_texts[page_num]
-        if not page_content.strip():
+        content = page_texts[page_num]
+        if not content.strip():
             continue
-        page_chunks = _chunk_one_page_text(page_content)
-        for content, section_title in page_chunks:
-            # Propager la dernière section connue si ce chunk n'a pas de titre (début de page)
-            title = section_title if section_title is not None else last_section
-            if section_title is not None:
-                last_section = section_title
-            chunks_out.append((content, page_num, title))
+        for c, s in _chunk_page(content):
+            title = s if s is not None else last_section
+            if s is not None:
+                last_section = s
+            out.append((clean(c), page_num, title))
+    return out or [(text[:8000].strip(), 1, None)]
 
-    if not chunks_out:
-        chunks_out = [(text[:8000].strip(), 1, None)]
-    return chunks_out
 
+# ── Dédup ─────────────────────────────────────────────────────────────────────
+
+def already_indexed_by_doi(sb, doi: object) -> bool:
+    if not doi:
+        return False
+    r = sb.table("documents").select("id").eq("doi", doi).eq("status", "done").execute()
+    return bool(r.data)
+
+
+def find_existing_by_path(sb, storage_path: str) -> object:
+    r = sb.table("documents").select("id, status").eq("storage_path", storage_path).execute()
+    return r.data[0] if r.data else None
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    supabase = get_supabase()
+    sb = get_supabase()
 
     if not PDF_DIR.exists():
-        print(f"Créer le dossier {PDF_DIR} et y déposer des PDF.")
-        sys.exit(1)
+        sys.exit(f"❌  Dossier {PDF_DIR} introuvable.")
 
-    pdf_files = list(PDF_DIR.glob("*.pdf"))
+    YEAR_MIN, YEAR_MAX = 2015, 2026
+    pdf_files = sorted(
+        p for p in PDF_DIR.rglob("*.pdf")
+        if re.fullmatch(r"20\d{2}", p.parent.name)
+        and YEAR_MIN <= int(p.parent.name) <= YEAR_MAX
+    )
     if not pdf_files:
-        print(f"Aucun fichier .pdf dans {PDF_DIR}")
-        sys.exit(0)
+        sys.exit(f"❌  Aucun PDF dans {PDF_DIR} pour {YEAR_MIN}-{YEAR_MAX}")
 
-    print("Modèle d'embeddings (chargement unique)...")
+    print(f"📂  {len(pdf_files)} PDF trouvés ({YEAR_MIN}–{YEAR_MAX}) dans {PDF_DIR}.")
+
+    print("🤖  Chargement du modèle d'embeddings (all-MiniLM-L6-v2)...")
     from sentence_transformers import SentenceTransformer
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+    print("✅  Modèle prêt.\n")
 
-    print("Modèle de traduction EN→FR (chargement unique)...")
-    from transformers import MarianMTModel, MarianTokenizer
-    _trans_model = MarianMTModel.from_pretrained("Helsinki-NLP/opus-mt-en-fr")
-    _trans_tokenizer = MarianTokenizer.from_pretrained("Helsinki-NLP/opus-mt-en-fr")
-    _trans_device = _get_translation_device()
-    _trans_model = _trans_model.to(_trans_device)
-    print(f"  Traduction: device={_trans_device} (MPS=Chip Apple, CUDA=GPU Nvidia, cpu=CPU).", flush=True)
+    stats = {"done": 0, "skipped": 0, "error": 0}
 
-    for pdf_path in pdf_files:
-        rel_path = f"data/pdfs/{pdf_path.name}"
-        print(f"Traitement: {pdf_path.name}")
-
-        # Déjà en base ?
-        r = supabase.table("documents").select("id, status").eq("storage_path", rel_path).execute()
-        if r.data and len(r.data) > 0:
-            rec = r.data[0]
-            if rec.get("status") == "done":
-                print(f"  Déjà indexé (storage_path), skip.")
-                continue
-            # status error ou processing : on supprime et on ré-ingère
-            doc_id = rec["id"]
-            supabase.table("chunks").delete().eq("document_id", doc_id).execute()
-            supabase.table("documents").delete().eq("id", doc_id).execute()
-            print(f"  Ré-ingestion (ancien status: {rec.get('status')}).")
+    for idx, pdf_path in enumerate(pdf_files, 1):
+        rel_path = str(pdf_path.relative_to(project_root))
+        print(f"[{idx}/{len(pdf_files)}] {pdf_path.relative_to(PDF_DIR)}")
 
         try:
-            print("  [1/6] Extraction texte PDF...", flush=True)
-            full_text, page_texts, ocr_pages_count = extract_text_with_ocr_fallback(pdf_path)
-            print(f"  [1/6] Texte extrait: {len(page_texts)} pages, {len(full_text)} caractères, OCR: {ocr_pages_count} pages.", flush=True)
+            # ── Extraction texte ──────────────────────────────────────────
+            print("  [1/4] Extraction texte...", flush=True)
+            full_text, page_texts, ocr_count = extract_text_with_ocr_fallback(pdf_path)
+            print(f"  [1/4] {len(page_texts)} pages, {len(full_text)} chars, OCR: {ocr_count} pages.", flush=True)
             if not full_text.strip():
-                raise ValueError("Aucun texte extrait (PDF vide ou OCR échoué).")
+                raise ValueError("Aucun texte extrait (PDF vide ou illisible).")
 
+            # ── Métadonnées + dédup ───────────────────────────────────────
             doc_fitz = fitz.open(pdf_path)
             try:
-                meta = extract_metadata(doc_fitz, full_text)
+                meta = extract_metadata(doc_fitz, full_text, pdf_path)
             finally:
                 doc_fitz.close()
 
-            # Log métadonnées documents (vérifier ce qu'on récupère)
-            print("  [documents] Métadonnées extraites:", flush=True)
-            title_val = meta.get("title") or "(vide)"
-            print(f"    • title: {repr(title_val[:100])}{'...' if len(title_val) > 100 else ''}", flush=True)
-            auth_list = meta.get("authors") or []
-            print(f"    • authors: {len(auth_list)} auteur(s) → {auth_list[:3]}{' ...' if len(auth_list) > 3 else ''}", flush=True)
-            print(f"    • doi: {repr(meta.get('doi') or '(vide)')}", flush=True)
-            print(f"    • journal: {repr(meta.get('journal') or '(vide)')}", flush=True)
-            print(f"    • published_at: {repr(meta.get('published_at') or '(vide)')}", flush=True)
+            print(f"  [meta] titre: {repr((meta['title'] or '')[:80])}", flush=True)
+            print(f"  [meta] journal: {repr(meta['journal'] or '(vide)')}", flush=True)
+            print(f"  [meta] published_at: {meta['published_at'] or '(vide)'} | doi: {(meta['doi'] or '')[:40] or '(vide)'}", flush=True)
 
-            # Insert document (processing)
-            doc_row = supabase.table("documents").insert({
-                "title": meta["title"],
-                "authors": meta["authors"] or None,
-                "doi": meta["doi"],
-                "journal": meta["journal"],
+            # Dédup DOI
+            if already_indexed_by_doi(sb, meta["doi"]):
+                print(f"  ⏭   Déjà en base (DOI), skip.")
+                stats["skipped"] += 1
+                continue
+
+            # Dédup storage_path
+            existing = find_existing_by_path(sb, rel_path)
+            if existing:
+                if existing["status"] == "done":
+                    print(f"  ⏭   Déjà indexé (path), skip.")
+                    stats["skipped"] += 1
+                    continue
+                # error ou processing : on nettoie et on ré-ingère
+                doc_id = existing["id"]
+                sb.table("chunks").delete().eq("document_id", doc_id).execute()
+                sb.table("documents").delete().eq("id", doc_id).execute()
+                print(f"  🔄  Ré-ingestion (ancien status: {existing['status']}).")
+
+            # ── Insert document ───────────────────────────────────────────
+            doc_row = sb.table("documents").insert({
+                "title":        meta["title"],
+                "authors":      meta["authors"],
+                "doi":          meta["doi"],
+                "journal":      meta["journal"],
                 "published_at": meta["published_at"],
                 "storage_path": rel_path,
-                "status": "processing",
+                "status":       "processing",
                 "error_message": None,
             }).execute()
             document_id = doc_row.data[0]["id"]
 
-            print("  [2/6] Chunking...", flush=True)
+            # ── Chunking ──────────────────────────────────────────────────
+            print("  [2/4] Chunking...", flush=True)
             chunks_data = chunk_text(full_text, page_texts)
-            n_chunks = len(chunks_data)
-            print(f"  [2/6] Chunking: {n_chunks} chunks.", flush=True)
+            print(f"  [2/4] {len(chunks_data)} chunks.", flush=True)
 
-            # Log chunks (page, section_title)
-            with_page = sum(1 for _, p, _ in chunks_data if p is not None)
-            with_section = sum(1 for _, _, st in chunks_data if st)
-            section_counts: dict[str, int] = {}
-            for _, _, st in chunks_data:
-                if st:
-                    section_counts[st] = section_counts.get(st, 0) + 1
-            print("  [chunks] Statistiques:", flush=True)
-            print(f"    • avec page: {with_page}/{n_chunks}", flush=True)
-            print(f"    • avec section_title: {with_section}/{n_chunks}", flush=True)
-            if section_counts:
-                print(f"    • sections: {dict(sorted(section_counts.items(), key=lambda x: -x[1]))}", flush=True)
+            # ── Embeddings ────────────────────────────────────────────────
+            print("  [3/4] Embeddings...", flush=True)
+            contents = [c[0] for c in chunks_data]
+            embeddings = embed_model.encode(contents, show_progress_bar=False)
+            print(f"  [3/4] {len(embeddings)} embeddings produits.", flush=True)
 
-            contents_en = [c[0] for c in chunks_data]
+            # ── Insert chunks (batchs de INSERT_BATCH) ────────────────────
+            print(f"  [4/4] Insert chunks (batches de {INSERT_BATCH})...", flush=True)
+            batch = []
+            for pos, ((content, page, section_title), emb) in enumerate(zip(chunks_data, embeddings)):
+                batch.append({
+                    "document_id":  document_id,
+                    "content":      content,
+                    "position":     pos,
+                    "page":         page,
+                    "section_title": clean(section_title) if section_title else None,
+                    "embedding":    emb.tolist(),
+                    "content_fr":   content,        # même contenu EN (pas de traduction)
+                    "embedding_fr": emb.tolist(),   # même embedding EN
+                })
+                if len(batch) >= INSERT_BATCH:
+                    for attempt in range(3):
+                        try:
+                            sb.table("chunks").insert(batch).execute()
+                            break
+                        except Exception as e:
+                            if attempt == 2:
+                                raise
+                            print(f"  [4/4] Retry {attempt+1}/3 après erreur: {str(e)[:60]}", flush=True)
+                            time.sleep(2 ** attempt)
+                    print(f"  [4/4] {min(pos+1, len(chunks_data))}/{len(chunks_data)} chunks insérés.", flush=True)
+                    batch = []
+                    time.sleep(INSERT_PAUSE)
+            if batch:
+                for attempt in range(3):
+                    try:
+                        sb.table("chunks").insert(batch).execute()
+                        break
+                    except Exception as e:
+                        if attempt == 2:
+                            raise
+                        time.sleep(2 ** attempt)
+            print(f"  [4/4] {len(chunks_data)}/{len(chunks_data)} chunks insérés.", flush=True)
 
-            print("  [3/6] Embeddings EN...", flush=True)
-            embeddings = model.encode(contents_en, show_progress_bar=False)
-            print("  [3/6] Embeddings EN: fait.", flush=True)
-
-            print("  [4/6] Traduction EN→FR...", flush=True)
-            contents_fr = translate_en_to_fr_batch(contents_en, _trans_model, _trans_tokenizer, _trans_device)
-            contents_fr_clean = [clean_text_for_db(t) for t in contents_fr]
-            print("  [4/6] Traduction: fait.", flush=True)
-
-            print("  [5/6] Embeddings FR...", flush=True)
-            embeddings_fr = model.encode(contents_fr_clean, show_progress_bar=False)
-            print("  [5/6] Embeddings FR: fait.", flush=True)
-
-            INSERT_BATCH = 50
-            print(f"  [6/6] Insert chunks (batches de {INSERT_BATCH})...", flush=True)
-            rows_batch = []
-            for pos, ((content, page, section_title), emb, content_fr, emb_fr) in enumerate(
-                zip(chunks_data, embeddings, contents_fr_clean, embeddings_fr)
-            ):
-                row = {
-                    "document_id": document_id,
-                    "content": clean_text_for_db(content),
-                    "position": pos,
-                    "section_title": clean_text_for_db(section_title) if section_title else None,
-                    "embedding": emb.tolist(),
-                    "content_fr": content_fr,
-                    "embedding_fr": emb_fr.tolist(),
-                }
-                if page is not None:
-                    row["page"] = page
-                rows_batch.append(row)
-                if len(rows_batch) >= INSERT_BATCH:
-                    supabase.table("chunks").insert(rows_batch).execute()
-                    print(f"  [6/6] Insert: {min(pos + 1, n_chunks)}/{n_chunks} chunks.", flush=True)
-                    rows_batch = []
-            if rows_batch:
-                supabase.table("chunks").insert(rows_batch).execute()
-            print(f"  [6/6] Insert: {n_chunks}/{n_chunks} chunks.", flush=True)
-
-            # Log d'ingestion (ce qu'on a récupéré ou non)
+            # ── Finalisation document ─────────────────────────────────────
             ingested_at = datetime.now(timezone.utc).isoformat()
-            ingestion_log = {
-                "title_extracted": bool(meta.get("title")),
-                "doi_extracted": bool(meta.get("doi")),
-                "authors_extracted": bool(meta.get("authors")),
-                "journal_extracted": bool(meta.get("journal")),
-                "published_at_extracted": meta.get("published_at") is not None,
-                "chunks_count": len(chunks_data),
-                "ocr_pages_count": ocr_pages_count,
-                "ingested_at": ingested_at,
-            }
-
-            supabase.table("documents").update({
+            sb.table("documents").update({
                 "status": "done",
                 "error_message": None,
-                "ingestion_log": ingestion_log,
+                "ingestion_log": {
+                    "chunks_count":        len(chunks_data),
+                    "ocr_pages_count":     ocr_count,
+                    "title_extracted":     bool(meta["title"]),
+                    "doi_extracted":       bool(meta["doi"]),
+                    "journal_extracted":   bool(meta["journal"]),
+                    "year_extracted":      bool(meta["published_at"]),
+                    "ingested_at":         ingested_at,
+                },
                 "updated_at": ingested_at,
             }).eq("id", document_id).execute()
 
-            # Log console récap
-            rec = "titre: oui" if meta.get("title") else "titre: non"
-            rec += ", DOI: oui" if meta.get("doi") else ", DOI: non"
-            rec += ", auteurs: oui" if meta.get("authors") else ", auteurs: non"
-            rec += f", {len(chunks_data)} chunks"
-            rec += f" (page: {with_page}/{n_chunks}, section: {with_section}/{n_chunks})"
-            if ocr_pages_count:
-                rec += f", {ocr_pages_count} page(s) OCR"
-            print(f"  OK: {rec}.")
+            print(f"  ✅  OK — {len(chunks_data)} chunks | journal: {meta['journal'] or '-'} | année: {meta['published_at'] or '-'}")
+            stats["done"] += 1
 
         except Exception as e:
-            err_msg = str(e)
-            print(f"  Erreur: {err_msg}")
-            ingested_at = datetime.now(timezone.utc).isoformat()
-            ingestion_log = {"error": err_msg, "ingested_at": ingested_at}
-            r = supabase.table("documents").select("id").eq("storage_path", rel_path).execute()
-            if r.data:
-                supabase.table("documents").update({
-                    "status": "error",
-                    "error_message": err_msg,
-                    "ingestion_log": ingestion_log,
-                    "updated_at": ingested_at,
-                }).eq("id", r.data[0]["id"]).execute()
-            else:
-                supabase.table("documents").insert({
-                    "storage_path": rel_path,
-                    "status": "error",
-                    "error_message": err_msg,
-                    "ingestion_log": ingestion_log,
-                }).execute()
+            err = str(e)[:1000]
+            print(f"  ❌  Erreur: {err}")
+            stats["error"] += 1
+            time.sleep(1)  # pause avant de continuer
+            try:
+                ingested_at = datetime.now(timezone.utc).isoformat()
+                r = sb.table("documents").select("id").eq("storage_path", rel_path).execute()
+                if r.data:
+                    sb.table("documents").update({
+                        "status": "error",
+                        "error_message": err,
+                        "ingestion_log": {"error": err, "ingested_at": ingested_at},
+                        "updated_at": ingested_at,
+                    }).eq("id", r.data[0]["id"]).execute()
+                else:
+                    sb.table("documents").insert({
+                        "storage_path": rel_path,
+                        "status": "error",
+                        "error_message": err,
+                        "ingestion_log": {"error": err, "ingested_at": ingested_at},
+                    }).execute()
+            except Exception as e2:
+                print(f"  ⚠️   Log erreur non enregistré: {str(e2)[:80]}", flush=True)
 
-    # Log récap : vérifier que la base est bien peuplée (chunks EN + FR)
+    # ── Récap final ───────────────────────────────────────────────────────────
+    print(f"\n{'='*60}")
+    print(f"🎉  Ingestion terminée : {stats['done']} OK | {stats['skipped']} skippés | {stats['error']} erreurs")
     try:
-        r_docs = supabase.table("documents").select("id", count="exact").eq("status", "done").execute()
-        n_docs = r_docs.count if hasattr(r_docs, "count") and r_docs.count is not None else len(r_docs.data or [])
-        r_chunks = supabase.table("chunks").select("id", count="exact").execute()
-        n_chunks = r_chunks.count if hasattr(r_chunks, "count") and r_chunks.count is not None else len(r_chunks.data or [])
-        r_fr = supabase.table("chunks").select("id", count="exact").not_.is_("content_fr", "null").execute()
-        n_chunks_fr = r_fr.count if hasattr(r_fr, "count") and r_fr.count is not None else len(r_fr.data or [])
-        print("[Ingestion] Base: {} document(s) done, {} chunk(s) total, {} chunk(s) avec content_fr.".format(n_docs, n_chunks, n_chunks_fr))
-    except Exception as e:
-        print(f"[Ingestion] Log récap non disponible: {e}")
-    print("Terminé.")
+        r = sb.table("documents").select("id", count="exact").eq("status", "done").execute()
+        n = r.count if hasattr(r, "count") and r.count else len(r.data or [])
+        rc = sb.table("chunks").select("id", count="exact").execute()
+        nc = rc.count if hasattr(rc, "count") and rc.count else len(rc.data or [])
+        print(f"📊  Base : {n} documents done | {nc} chunks total")
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

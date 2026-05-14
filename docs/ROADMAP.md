@@ -40,6 +40,28 @@ Mettre à jour ce fichier à chaque jalon atteint.
 | Historique runs `/bibliographie/historique/[id]` | ✅ | Tableau complet avec scores |
 | Streaming SSE + citations `[1][2]` | ⚠️ À vérifier | Messages en `<pre>` brut actuellement |
 | Upload PDF via UI | ⏳ | Pipeline upload → ingestion |
+| Page Database — KPIs + dataviz | ✅ | KPI cards, word cloud, bar chart termes, UMAP scatter, analytics RAG |
+| Page Database — UMAP 2D corpus | ✅ | compute_umap.py → colonnes chunks.umap_x/umap_y → ScatterChart |
+| Logs requêtes RAG (query_logs) | ✅ | Table query_logs, RPC stats daily, fire-and-forget dans /api/rag/chat |
+| Analytics comportement RAG | ✅ | GET /api/analytics/overview, graphe daily queries |
+
+---
+
+## V1.6 — Ingestion corpus bulk (en cours / bloqué)
+
+**Objectif** : ingérer ~15 477 PDFs (2015-2026) depuis `data/pdfs/YEAR/` dans Supabase.
+
+| Étape | État | Détail |
+|-------|------|--------|
+| Script Python `scripts/ingest.py` v2 | ✅ | Récursif, par année 2015-2026, retry 3x, batch=5, pause |
+| Migration `chunks.umap_x / umap_y` | ✅ | SQL appliqué, colonnes présentes |
+| UMAP calculé sur chunks existants (35 584) | ✅ | compute_umap.py exécuté avec succès |
+| Suppression traduction EN→FR | ✅ | content_fr = content EN, embedding_fr = embedding EN |
+| Passage Supabase Pro (25$/mois) | ✅ | Nécessaire pour espace stockage |
+| **Drop index HNSW avant ingestion bulk** | 🔴 BLOQUÉ | Supabase surchargé, SQL Editor timeout — à faire impérativement avant relance |
+| Ingestion 15 477 PDFs | ⏳ En attente | Dépend du drop index HNSW |
+| Recréation index HNSW après ingestion | ⏳ En attente | À faire après ingestion complète |
+| Recalcul UMAP sur nouveaux chunks | ⏳ En attente | Relancer compute_umap.py |
 
 ---
 
