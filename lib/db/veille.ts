@@ -175,12 +175,30 @@ export async function completeRun(runId: string, status: 'completed' | 'failed',
 export async function getKnownDois(): Promise<Set<string>> {
   LOG('getKnownDois')
   const supabase = getAdminSupabase()
-  const { data, error } = await supabase.from('veille_items').select('doi').not('doi', 'is', null)
 
-  if (error) { LOG('getKnownDois error', error.message); return new Set() }
-  const dois = new Set(data.map((r: any) => r.doi as string))
-  LOG('getKnownDois', { count: dois.size })
-  return dois
+  const timeout = new Promise<null>((_, reject) =>
+    setTimeout(() => reject(new Error('getKnownDois timeout after 8s')), 8000)
+  )
+  const query = supabase
+    .from('veille_items')
+    .select('doi')
+    .not('doi', 'is', null)
+    .limit(100000)
+    .then(({ data, error }) => {
+      if (error) throw new Error(error.message)
+      return data
+    })
+
+  try {
+    const data = await Promise.race([query, timeout])
+    if (!data) return new Set()
+    const dois = new Set(data.map((r: any) => r.doi as string))
+    LOG('getKnownDois ok', { count: dois.size })
+    return dois
+  } catch (err: any) {
+    LOG('getKnownDois failed (returning empty set):', err.message)
+    return new Set()
+  }
 }
 
 export async function updateRunPhase(
