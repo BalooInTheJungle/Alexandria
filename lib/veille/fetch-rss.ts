@@ -6,7 +6,7 @@ import Parser from 'rss-parser'
 const USER_AGENT = 'Alexandria/1.0 (mailto:carel.clogenson@epitech.digital)'
 
 const parser = new Parser({
-  timeout: 10000,
+  timeout: 5000,
   headers: { 'User-Agent': USER_AGENT },
   customFields: {
     item: [
