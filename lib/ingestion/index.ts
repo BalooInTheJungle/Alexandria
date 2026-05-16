@@ -1,5 +1,5 @@
 /**
- * Orchestration : parse PDF → chunk → embed (EN + FR POC) → insert documents + chunks.
+ * Orchestration : parse PDF → chunk → embed → insert documents + chunks.
  * Utilisé par l'API upload (un ou plusieurs PDF).
  * Garde-fou : si le PDF contient un DOI déjà présent en base (document status = done), on skip l'ingestion.
  */
@@ -99,8 +99,6 @@ export async function ingestPdfBuffer(
         page: number | null;
         section_title: string | null;
         embedding: number[];
-        content_fr: string | null;
-        embedding_fr: number[] | null;
       }[] = [];
 
       for (const seg of batch) {
@@ -112,8 +110,6 @@ export async function ingestPdfBuffer(
           page: seg.page,
           section_title: seg.section_title,
           embedding,
-          content_fr: seg.content,
-          embedding_fr: embedding,
         });
       }
 

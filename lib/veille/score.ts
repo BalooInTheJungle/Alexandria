@@ -92,30 +92,40 @@ export function scoreHeuristic(abstract: string, corpusTerms: string[]): number 
   return Math.round((matched / corpusTerms.length) * 1000) / 1000
 }
 
-// Score all items that have an abstract.
-// Returns map of id → { similarity, refs }
-// onProgress is called every 50 items with (processed, total) for live reporting.
+const SCORE_CONCURRENCY = 5  // parallel scoring workers
+
+// Score all items that have an abstract, using parallel batches.
+// onProgress is called every 10 items with (processed, total) for live reporting.
 export async function scoreVeilleItems(
   items: { id: string; abstract: string | null }[],
   onProgress?: (processed: number, total: number) => Promise<void>
 ): Promise<Map<string, ScoreResult>> {
   const withAbstract = items.filter(i => i.abstract && i.abstract.length > 50)
-  console.log(`[score] Scoring ${withAbstract.length}/${items.length} items (with abstract)`)
+  const total = withAbstract.length
+  console.log(`[score] Scoring ${total}/${items.length} items (with abstract) — concurrency=${SCORE_CONCURRENCY}`)
 
   const scores = new Map<string, ScoreResult>()
   let processed = 0
+  const startTs = Date.now()
 
-  for (const item of withAbstract) {
-    const result = await scoreAbstract(item.abstract!)
-    scores.set(item.id, result)
-    console.log(`[score] ${item.id.slice(0, 8)}… → similarity=${result.similarity} refs=${result.refs.length}`)
+  for (let i = 0; i < withAbstract.length; i += SCORE_CONCURRENCY) {
+    const batch = withAbstract.slice(i, i + SCORE_CONCURRENCY)
+    const results = await Promise.all(batch.map(item => scoreAbstract(item.abstract!)))
 
-    processed++
-    if (onProgress && processed % 50 === 0) {
-      await onProgress(processed, withAbstract.length)
+    batch.forEach((item, j) => {
+      const result = results[j]
+      scores.set(item.id, result)
+      processed++
+      const elapsed = Math.round((Date.now() - startTs) / 1000)
+      console.log(`[score] ${processed}/${total} — id=${item.id.slice(0, 8)}… similarity=${result.similarity} refs=${result.refs.length} elapsed=${elapsed}s`)
+    })
+
+    if (onProgress && processed % 10 === 0) {
+      await onProgress(processed, total)
     }
   }
 
-  console.log(`[score] Done — ${scores.size}/${withAbstract.length} scored`)
+  const totalElapsed = Math.round((Date.now() - startTs) / 1000)
+  console.log(`[score] Done — ${scores.size}/${total} scored in ${totalElapsed}s`)
   return scores
 }

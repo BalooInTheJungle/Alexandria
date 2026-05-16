@@ -3,7 +3,6 @@ import { searchChunks } from "@/lib/rag/search";
 import { createRagAnswerStream } from "@/lib/rag/openai";
 import { chunksToSources } from "@/lib/rag/citations";
 import { getRagSettings } from "@/lib/rag/settings";
-import { detectQueryLanguage } from "@/lib/rag/detect-lang";
 import {
   getOrCreateConversation,
   insertMessage,
@@ -47,11 +46,9 @@ export async function POST(request: Request) {
     }
 
     const settings = await getRagSettings();
-    const lang = detectQueryLanguage(query);
-    LOG("Settings", { use_similarity_guard: settings.use_similarity_guard, context_turns: settings.context_turns, similarity_threshold: settings.similarity_threshold, match_count: settings.match_count, lang });
+    LOG("Settings", { use_similarity_guard: settings.use_similarity_guard, context_turns: settings.context_turns, similarity_threshold: settings.similarity_threshold, match_count: settings.match_count });
 
     const { chunks, bestVectorSimilarity } = await searchChunks(query, {
-      lang,
       matchThreshold: 0.01,
       matchCount: settings.match_count,
       settings,
@@ -93,7 +90,6 @@ export async function POST(request: Request) {
     // Log RAG — fire and forget, ne bloque pas la réponse
     insertQueryLog({
       query_text: query,
-      lang,
       chunks_retrieved: chunks.length,
       best_similarity: bestVectorSimilarity ?? null,
       was_guardrailed: isOutOfDomain,
@@ -125,7 +121,7 @@ export async function POST(request: Request) {
     if (!useStream) {
       const { generateRagAnswer } = await import("@/lib/rag/openai");
       LOG("Calling OpenAI (non-stream)");
-      const answer = await generateRagAnswer(query, chunks, history, lang, allowGeneralKnowledge);
+      const answer = await generateRagAnswer(query, chunks, history, allowGeneralKnowledge);
       const { id: msgId } = await insertMessage(convId, "assistant", answer, sources);
       LOG("Assistant message inserted", { msgId, answerLength: answer.length });
       return NextResponse.json<ChatResponse>({
@@ -137,7 +133,7 @@ export async function POST(request: Request) {
     }
 
     LOG("Calling OpenAI (stream)");
-    const stream = await createRagAnswerStream(query, chunks, history, lang, allowGeneralKnowledge);
+    const stream = await createRagAnswerStream(query, chunks, history, allowGeneralKnowledge);
 
     const encoder = new TextEncoder();
     let fullContent = "";

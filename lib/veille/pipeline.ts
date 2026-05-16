@@ -40,8 +40,11 @@ async function fetchRssInParallel(sources: RssSource[]): Promise<Map<string, Rss
   return results
 }
 
+function ts() { return new Date().toISOString().slice(11, 19) }
+
 export async function runVeillePipeline(existingRunId?: string): Promise<{ inserted: number; skipped: number; errors: number }> {
-  console.log(`[pipeline] Starting (lookback=${LOOKBACK_DAYS}d, rss_concurrency=${PARALLEL_RSS_CONCURRENCY})`)
+  const pipelineStart = Date.now()
+  console.log(`[pipeline][${ts()}] Starting (lookback=${LOOKBACK_DAYS}d, rss_concurrency=${PARALLEL_RSS_CONCURRENCY})`)
   const runId = existingRunId ?? await createRun()
   const stats = { inserted: 0, skipped: 0, errors: 0 }
 
@@ -52,10 +55,12 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     // ── Phase 1: Fetch all RSS in parallel ────────────────────────────────
     await updateRunPhase(runId, 'sources')
     const rssSources = await getRssSources()
-    console.log(`[pipeline] Fetching ${rssSources.length} RSS sources in parallel (${PARALLEL_RSS_CONCURRENCY} concurrent)`)
+    console.log(`[pipeline][${ts()}] Phase 1 — Fetching ${rssSources.length} RSS sources in parallel (${PARALLEL_RSS_CONCURRENCY} concurrent)`)
     const rssResults = await fetchRssInParallel(rssSources)
+    console.log(`[pipeline][${ts()}] Phase 1 done — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)
 
     // ── Phase 2: Filter + dedup + collect enrichment needs ────────────────
+    console.log(`[pipeline][${ts()}] Phase 2 — Filtering + dedup + enrichment plan`)
     await updateRunPhase(runId, 'urls')
     // Cross-source: collect all DOIs needing abstract across ALL sources before fetching
     const needsAbstract: { doi: string }[] = []
@@ -81,21 +86,24 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }
 
     const uniqueDois = Array.from(new Set(needsAbstract.map(x => x.doi)))
-    console.log(`[pipeline] Enrichment: ${uniqueDois.length} unique DOIs need abstract, ${needsDoi.length} articles need DOI`)
+    console.log(`[pipeline][${ts()}] Phase 2 done — ${uniqueDois.length} DOIs need abstract, ${needsDoi.length} articles need DOI — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)
 
     // ── Phase 3: Cross-source batch abstract fetch ─────────────────────────
-    // All sources combined → 1 batch call per 50 DOIs instead of N per-source calls
+    console.log(`[pipeline][${ts()}] Phase 3 — OpenAlex batch abstract fetch (${uniqueDois.length} DOIs)`)
     const abstractMap = uniqueDois.length > 0
       ? await fetchAbstractsByDois(uniqueDois)
       : new Map<string, AbstractResult>()
+    console.log(`[pipeline][${ts()}] Phase 3 done — ${abstractMap.size} abstracts fetched — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)
 
     // ── Phase 4: Individual DOI lookup (Elsevier pattern — few articles/day)
+    console.log(`[pipeline][${ts()}] Phase 4 — Individual DOI lookup (${needsDoi.length} articles)`)
     const doiByKey = new Map<string, string | null>()
     for (const { article, source } of needsDoi) {
       const doi = await fetchDoiByTitle(article.title, source.issn)
       doiByKey.set(`${source.id}::${article.title}`, doi)
       await sleep(OPENALEX_DELAY_MS)
     }
+    console.log(`[pipeline][${ts()}] Phase 4 done — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)
 
     // ── Phase 5: Assemble final items ──────────────────────────────────────
     for (const source of rssSources) {
@@ -140,7 +148,7 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
     // ── Phase 6: OpenAlex-only sources (MDPI — no RSS) ────────────────────
     const openAlexSources = await getOpenAlexSources()
-    console.log(`[pipeline] Processing ${openAlexSources.length} OpenAlex-only sources`)
+    console.log(`[pipeline][${ts()}] Phase 6 — OpenAlex-only sources (${openAlexSources.length})`)
 
     for (const source of openAlexSources) {
       const articles = await fetchRecentByIssn(source.issn, LOOKBACK_DAYS)
@@ -172,23 +180,24 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }
 
     // ── Phase 7: Insert ────────────────────────────────────────────────────
+    console.log(`[pipeline][${ts()}] Phase 7 — Inserting ${itemsToInsert.length} items`)
     await updateRunPhase(runId, 'items', 0, itemsToInsert.length)
-    console.log(`[pipeline] Inserting ${itemsToInsert.length} items`)
     const insertedIds = await insertVeilleItemsWithIds(itemsToInsert)
     stats.inserted = insertedIds.length
+    console.log(`[pipeline][${ts()}] Phase 7 done — ${insertedIds.length} inserted — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)
 
     // ── Phase 8: Score against corpus (similarity + heuristic + corpus_refs) ─
     const bothScores = new Map<string, { similarity: number | null; heuristic: number | null; refs: import('../db/types').CorpusRef[] }>()
 
     if (insertedIds.length > 0) {
-      console.log('[pipeline] Loading corpus terms for heuristic scoring')
+      console.log(`[pipeline][${ts()}] Phase 8 — Loading corpus terms for heuristic scoring`)
       const corpusTerms = await loadCorpusTerms(80)
 
-      console.log('[pipeline] Scoring abstracts against corpus')
+      console.log(`[pipeline][${ts()}] Phase 8 — Scoring ${insertedIds.length} abstracts against corpus (parallel batches of 5)`)
       const toScore  = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
       const simScores = await scoreVeilleItems(toScore, async (done, total) => {
         await updateRunPhase(runId, 'items', done, total)
-        console.log(`[pipeline] scoring progress ${done}/${total}`)
+        console.log(`[pipeline][${ts()}] scoring progress ${done}/${total} — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)
       })
 
       for (const { id, abstract } of toScore) {
@@ -203,9 +212,11 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
       await updateVeilleItemBothScores(bothScores)
       await updateRunPhase(runId, 'items', toScore.length, toScore.length)
+      console.log(`[pipeline][${ts()}] Phase 8 done — scoring complete — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)
     }
 
     // ── Phase 9: AI summary of top articles ───────────────────────────────
+    console.log(`[pipeline][${ts()}] Phase 9 — Generating AI summary`)
     await updateRunPhase(runId, 'summary')
 
     // Build source lookup for summary context
@@ -234,10 +245,12 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
     await updateRunPhase(runId, 'done')
     await completeRun(runId, 'completed')
-    console.log(`[pipeline] Done — inserted=${stats.inserted} skipped=${stats.skipped} errors=${stats.errors}`)
+    const totalSec = Math.round((Date.now() - pipelineStart) / 1000)
+    console.log(`[pipeline][${ts()}] Done — inserted=${stats.inserted} skipped=${stats.skipped} errors=${stats.errors} total=${totalSec}s`)
 
   } catch (err: any) {
-    console.error('[pipeline] Fatal error:', err.message)
+    const totalSec = Math.round((Date.now() - pipelineStart) / 1000)
+    console.error(`[pipeline][${ts()}] Fatal error after ${totalSec}s:`, err.message)
     stats.errors++
     await completeRun(runId, 'failed', err.message)
   }
