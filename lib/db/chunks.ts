@@ -1,5 +1,5 @@
 /**
- * Insertion de chunks (content, embedding, content_fr, embedding_fr).
+ * Insertion de chunks (content, embedding).
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -14,8 +14,6 @@ export type ChunkInsert = {
   page?: number | null;
   section_title?: string | null;
   embedding: number[];
-  content_fr?: string | null;
-  embedding_fr?: number[] | null;
 };
 
 const CHUNK_BATCH_SIZE = 20;
@@ -30,8 +28,6 @@ export async function insertChunks(rows: ChunkInsert[]): Promise<void> {
     page: r.page ?? null,
     section_title: r.section_title ?? null,
     embedding: r.embedding,
-    content_fr: r.content_fr ?? null,
-    embedding_fr: r.embedding_fr ?? null,
   }));
 
   LOG("insertChunks", { count: payload.length, document_id: rows[0]?.document_id });

@@ -6,7 +6,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { embedQuery } from "./embed";
 import { getRagSettings, type RagSettings } from "./settings";
-import type { DetectedLang } from "./detect-lang";
 
 export type MatchedChunk = {
   id: string;
@@ -97,32 +96,25 @@ export type SearchChunksResult = {
 
 /**
  * Recherche hybride : vector + FTS puis fusion RRF.
- * Si lang === 'fr' : match_chunks_fr + search_chunks_fts_fr (contexte content_fr).
- * Sinon : match_chunks + search_chunks_fts (contexte content).
  * Si fts_weight = 0 ou requête vide pour FTS, retourne uniquement les résultats vectoriels (top hybrid_top_k).
  * Le garde-fou doit utiliser bestVectorSimilarity (premier résultat vectoriel, avant fusion).
  */
 export async function searchChunks(
   query: string,
   options?: {
-    lang?: DetectedLang;
     matchThreshold?: number;
     matchCount?: number;
     settings?: RagSettings;
   }
 ): Promise<SearchChunksResult> {
-  const lang = options?.lang ?? "en";
   const threshold = options?.matchThreshold ?? DEFAULT_MATCH_THRESHOLD;
   const matchCount = options?.matchCount ?? DEFAULT_MATCH_COUNT;
   const settings = options?.settings ?? (await getRagSettings());
 
   const hybridTopK = Math.max(1, settings.hybrid_top_k);
   const useFts = settings.fts_weight > 0 && query.trim().length > 0;
-  const matchRpc = lang === "fr" ? "match_chunks_fr" : "match_chunks";
-  const ftsRpc = lang === "fr" ? "search_chunks_fts_fr" : "search_chunks_fts";
 
   LOG("searchChunks", {
-    lang,
     queryLength: query.length,
     threshold,
     matchCount,
@@ -141,41 +133,21 @@ export async function searchChunks(
 
   let vectorChunks: MatchedChunk[] = [];
   let bestVectorSimilarity = 0;
-  let effectiveMatchRpc = matchRpc;
-  let effectiveFtsRpc = ftsRpc;
 
-  const { data: vectorData, error: vectorError } = await supabase.rpc(matchRpc, {
+  const { data: vectorData, error: vectorError } = await supabase.rpc("match_chunks", {
     query_embedding: embedding,
     match_threshold: threshold,
     match_count: limit,
   });
 
   if (vectorError) {
-    console.error("[RAG/search]", matchRpc, "error", vectorError);
+    console.error("[RAG/search] match_chunks error", vectorError);
     throw new Error(`RAG search failed: ${vectorError.message}`);
   }
 
   vectorChunks = (vectorData ?? []) as MatchedChunk[];
   bestVectorSimilarity = vectorChunks[0]?.similarity ?? 0;
-  LOG(matchRpc, "result", { count: vectorChunks.length, bestVectorSimilarity });
-
-  if (lang === "fr" && vectorChunks.length === 0) {
-    LOG("FR pipeline returned 0 chunks, fallback to EN (match_chunks + search_chunks_fts)");
-    effectiveMatchRpc = "match_chunks";
-    effectiveFtsRpc = "search_chunks_fts";
-    const { data: enData, error: enError } = await supabase.rpc("match_chunks", {
-      query_embedding: embedding,
-      match_threshold: threshold,
-      match_count: limit,
-    });
-    if (enError) {
-      console.error("[RAG/search] match_chunks (fallback) error", enError);
-      return { chunks: [], bestVectorSimilarity: 0 };
-    }
-    vectorChunks = (enData ?? []) as MatchedChunk[];
-    bestVectorSimilarity = vectorChunks[0]?.similarity ?? 0;
-    LOG("match_chunks (fallback) result", { count: vectorChunks.length, bestVectorSimilarity });
-  }
+  LOG("match_chunks result", { count: vectorChunks.length, bestVectorSimilarity });
 
   if (!useFts || vectorChunks.length === 0) {
     return {
@@ -184,13 +156,13 @@ export async function searchChunks(
     };
   }
 
-  const { data: ftsData, error: ftsError } = await supabase.rpc(effectiveFtsRpc, {
+  const { data: ftsData, error: ftsError } = await supabase.rpc("search_chunks_fts", {
     query_text: query.trim(),
     match_limit: hybridTopK * 2,
   });
 
   if (ftsError) {
-    LOG(effectiveFtsRpc, "error (fallback vector only)", ftsError.message);
+    LOG("search_chunks_fts error (fallback vector only)", ftsError.message);
     return {
       chunks: vectorChunks.slice(0, hybridTopK),
       bestVectorSimilarity,
@@ -198,7 +170,7 @@ export async function searchChunks(
   }
 
   const ftsChunks = (ftsData ?? []) as FtsChunkRow[];
-  LOG(effectiveFtsRpc, "result", { count: ftsChunks.length });
+  LOG("search_chunks_fts result", { count: ftsChunks.length });
 
   const merged = rrfMerge(vectorChunks, ftsChunks, {
     vector_weight: settings.vector_weight,

@@ -4,7 +4,7 @@ const LOG = (msg: string, ...args: unknown[]) => console.log("[db/query-logs]", 
 
 export type QueryLogInsert = {
   query_text: string;
-  lang: "fr" | "en";
+  lang?: "fr" | "en";
   chunks_retrieved: number;
   best_similarity: number | null;
   was_guardrailed: boolean;
@@ -21,14 +21,13 @@ export type DailyStatRow = {
 
 export async function insertQueryLog(entry: QueryLogInsert): Promise<void> {
   LOG("insertQueryLog input:", {
-    lang: entry.lang,
     chunks_retrieved: entry.chunks_retrieved,
     best_similarity: entry.best_similarity,
     was_guardrailed: entry.was_guardrailed,
   });
   try {
     const supabase = createAdminClient();
-    const { error } = await supabase.from("query_logs").insert(entry);
+    const { error } = await supabase.from("query_logs").insert({ lang: "en", ...entry });
     if (error) {
       LOG("insertQueryLog error:", error.message);
     } else {

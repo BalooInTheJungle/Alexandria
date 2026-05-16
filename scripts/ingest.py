@@ -390,8 +390,6 @@ def main():
                     "page":         page,
                     "section_title": clean(section_title) if section_title else None,
                     "embedding":    emb.tolist(),
-                    "content_fr":   content,        # même contenu EN (pas de traduction)
-                    "embedding_fr": emb.tolist(),   # même embedding EN
                 })
                 if len(batch) >= INSERT_BATCH:
                     for attempt in range(3):
