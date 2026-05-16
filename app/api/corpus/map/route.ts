@@ -9,9 +9,10 @@ export type MapPoint = {
   y: number;
   doc_id: string;
   doc_title: string | null;
+  year: number | null;
 };
 
-const SAMPLE_SIZE = 3000;
+const SAMPLE_SIZE = 5000;
 
 export async function GET() {
   console.log("[API] GET /api/corpus/map input:", { sample: SAMPLE_SIZE });
@@ -21,7 +22,7 @@ export async function GET() {
     // Chunks avec coordonnées UMAP + document title via join
     const { data, error } = await supabase
       .from("chunks")
-      .select("id, umap_x, umap_y, document_id, documents(title)")
+      .select("id, umap_x, umap_y, document_id, documents(title, published_at)")
       .not("umap_x", "is", null)
       .not("umap_y", "is", null)
       .limit(SAMPLE_SIZE);
@@ -31,13 +32,19 @@ export async function GET() {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const points: MapPoint[] = (data ?? []).map((row) => ({
-      id: row.id,
-      x: row.umap_x as number,
-      y: row.umap_y as number,
-      doc_id: row.document_id,
-      doc_title: (Array.isArray(row.documents) ? row.documents[0]?.title : (row.documents as { title?: string | null } | null)?.title) ?? null,
-    }));
+    const points: MapPoint[] = (data ?? []).map((row) => {
+      const doc = Array.isArray(row.documents)
+        ? (row.documents[0] as { title?: string | null; published_at?: string | null } | undefined)
+        : (row.documents as { title?: string | null; published_at?: string | null } | null);
+      return {
+        id: row.id,
+        x: row.umap_x as number,
+        y: row.umap_y as number,
+        doc_id: row.document_id,
+        doc_title: doc?.title ?? null,
+        year: doc?.published_at ? new Date(doc.published_at).getFullYear() : null,
+      };
+    });
 
     console.log("[API] GET /api/corpus/map result:", { points: points.length });
     return NextResponse.json({ points, computed: points.length > 0 });
