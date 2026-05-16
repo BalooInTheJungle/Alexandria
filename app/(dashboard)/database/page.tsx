@@ -1,22 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Cell,
   LineChart,
   Line,
   CartesianGrid,
   ScatterChart,
   Scatter,
   ZAxis,
+  BarChart,
+  Bar,
+  Cell,
 } from "recharts";
 
 type UploadResult = {
@@ -28,7 +28,9 @@ type UploadResult = {
   skipped?: boolean;
 };
 
-type MapPoint = { id: string; x: number; y: number; doc_id: string; doc_title: string | null };
+type MapPoint = { id: string; x: number; y: number; doc_id: string; doc_title: string | null; year: number | null };
+type CleracDoc = { id: string; title: string | null; year: number | null; authors: string[] };
+type TimelinePoint = { year: number; count: number };
 
 type QueryAnalytics = {
   total: number;
@@ -46,7 +48,96 @@ type DocumentStats = {
   errorDocs: { id: string; title: string | null; error_message: string | null; created_at: string }[];
 };
 
+const CLUSTER_COLORS = [
+  "#3b82f6", "#22c55e", "#ef4444", "#f97316",
+  "#a855f7", "#06b6d4", "#ec4899", "#eab308",
+];
+
+const K_CLUSTERS = 8;
+
+const STOP_WORDS = new Set([
+  "the", "of", "and", "in", "to", "a", "is", "for", "with", "on", "at", "by",
+  "from", "that", "this", "are", "was", "as", "be", "it", "an", "or", "not",
+  "have", "been", "has", "which", "we", "its", "our", "these", "their", "can",
+  "were", "also", "using", "based", "new", "high", "low", "via", "two", "one",
+]);
+
+function kmeansCluster(pts: { x: number; y: number }[], k: number): number[] {
+  if (pts.length === 0) return [];
+  const centroids: { x: number; y: number }[] = [];
+  centroids.push({ ...pts[Math.floor(Math.random() * pts.length)] });
+  for (let ci = 1; ci < k; ci++) {
+    let maxDist = -1, bestIdx = 0;
+    for (let pi = 0; pi < pts.length; pi++) {
+      let minDist = Infinity;
+      for (let j = 0; j < centroids.length; j++) {
+        const d = (pts[pi].x - centroids[j].x) ** 2 + (pts[pi].y - centroids[j].y) ** 2;
+        if (d < minDist) minDist = d;
+      }
+      if (minDist > maxDist) { maxDist = minDist; bestIdx = pi; }
+    }
+    centroids.push({ ...pts[bestIdx] });
+  }
+  const assignments = new Array(pts.length).fill(0);
+  for (let iter = 0; iter < 80; iter++) {
+    let changed = false;
+    for (let pi = 0; pi < pts.length; pi++) {
+      let minDist = Infinity, cluster = 0;
+      for (let j = 0; j < k; j++) {
+        const d = (pts[pi].x - centroids[j].x) ** 2 + (pts[pi].y - centroids[j].y) ** 2;
+        if (d < minDist) { minDist = d; cluster = j; }
+      }
+      if (assignments[pi] !== cluster) { assignments[pi] = cluster; changed = true; }
+    }
+    if (!changed) break;
+    const sums = Array.from({ length: k }, () => ({ x: 0, y: 0, n: 0 }));
+    for (let pi = 0; pi < pts.length; pi++) {
+      sums[assignments[pi]].x += pts[pi].x;
+      sums[assignments[pi]].y += pts[pi].y;
+      sums[assignments[pi]].n++;
+    }
+    for (let j = 0; j < k; j++) {
+      if (sums[j].n > 0) centroids[j] = { x: sums[j].x / sums[j].n, y: sums[j].y / sums[j].n };
+    }
+  }
+  return assignments;
+}
+
+function clusterLabel(titles: (string | null)[]): string {
+  const freq: Record<string, number> = {};
+  for (const title of titles) {
+    if (!title) continue;
+    for (const w of title.toLowerCase().split(/\W+/)) {
+      if (w.length > 3 && !STOP_WORDS.has(w)) freq[w] = (freq[w] ?? 0) + 1;
+    }
+  }
+  return (
+    Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([w]) => w)
+      .join(" · ") || "Cluster"
+  );
+}
+
+type ClusterPoint = { x: number; y: number; name: string; year: number | null };
+
 function CorpusMap({ points }: { points: MapPoint[] }) {
+  const clusterData = useMemo(() => {
+    if (!points.length) return null;
+    const assignments = kmeansCluster(points.map((p) => ({ x: p.x, y: p.y })), K_CLUSTERS);
+    const groups: { pt: ClusterPoint; title: string | null }[][] = Array.from({ length: K_CLUSTERS }, () => []);
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      groups[assignments[i]].push({ pt: { x: p.x, y: p.y, name: p.doc_title ?? "Sans titre", year: p.year }, title: p.doc_title });
+    }
+    return groups.map((g, i) => ({
+      data: g.map((e) => e.pt),
+      label: clusterLabel(g.map((e) => e.title)),
+      color: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
+    }));
+  }, [points]);
+
   if (!points.length) return (
     <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
       <p className="text-sm text-muted-foreground">
@@ -55,29 +146,42 @@ function CorpusMap({ points }: { points: MapPoint[] }) {
     </div>
   );
 
-  const data = points.map((p) => ({ x: p.x, y: p.y, name: p.doc_title ?? "Sans titre" }));
-
   return (
-    <ResponsiveContainer width="100%" height={420}>
-      <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-        <XAxis type="number" dataKey="x" hide domain={["auto", "auto"]} />
-        <YAxis type="number" dataKey="y" hide domain={["auto", "auto"]} />
-        <ZAxis range={[4, 4]} />
-        <Tooltip
-          cursor={{ strokeDasharray: "3 3" }}
-          content={({ payload }) => {
-            const p = payload?.[0]?.payload;
-            if (!p) return null;
-            return (
-              <div className="rounded border bg-background px-2 py-1 text-xs shadow">
-                {p.name}
-              </div>
-            );
-          }}
-        />
-        <Scatter data={data} fill="hsl(var(--primary))" fillOpacity={0.45} />
-      </ScatterChart>
-    </ResponsiveContainer>
+    <div>
+      <ResponsiveContainer width="100%" height={440}>
+        <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <XAxis type="number" dataKey="x" hide domain={["auto", "auto"]} />
+          <YAxis type="number" dataKey="y" hide domain={["auto", "auto"]} />
+          <ZAxis range={[5, 5]} />
+          <Tooltip
+            cursor={{ strokeDasharray: "3 3" }}
+            content={({ payload }) => {
+              const p = payload?.[0]?.payload as ClusterPoint | undefined;
+              if (!p) return null;
+              return (
+                <div className="rounded border bg-background px-3 py-2 text-xs shadow max-w-[220px]">
+                  <p className="font-medium line-clamp-2 leading-snug">{p.name}</p>
+                  {p.year && <p className="text-muted-foreground mt-1">{p.year}</p>}
+                </div>
+              );
+            }}
+          />
+          {clusterData?.map((cluster, i) => (
+            <Scatter key={i} name={cluster.label} data={cluster.data} fill={cluster.color} fillOpacity={0.55} />
+          ))}
+        </ScatterChart>
+      </ResponsiveContainer>
+      {clusterData && (
+        <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+          {clusterData.map((cluster, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cluster.color }} />
+              <span className="truncate text-muted-foreground capitalize">{cluster.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -111,69 +215,138 @@ function ActivityChart({
   );
 }
 
-function TermsChart({ terms }: { terms: { word: string; nentry: number }[] }) {
-  if (!terms.length) return null;
-  const data = terms.slice(0, 15).map((t) => ({ word: t.word, occurrences: t.nentry }));
-  const max = Math.max(...data.map((d) => d.occurrences));
-
+function TimelineChart({ data }: { data: TimelinePoint[] }) {
+  if (!data.length) return (
+    <p className="text-sm text-muted-foreground py-8 text-center">
+      Aucune donnée temporelle disponible.
+    </p>
+  );
+  const max = Math.max(...data.map((d) => d.count));
   return (
-    <ResponsiveContainer width="100%" height={360}>
-      <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 72 }}>
-        <XAxis type="number" hide />
-        <YAxis
-          type="category"
-          dataKey="word"
-          tick={{ fontSize: 13 }}
-          tickLine={false}
-          axisLine={false}
-          width={68}
-        />
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+        <XAxis dataKey="year" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+        <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} allowDecimals={false} />
         <Tooltip
-          formatter={(v) => [typeof v === "number" ? v.toLocaleString("fr-FR") : v, "occurrences"]}
-          cursor={{ fill: "hsl(var(--muted))" }}
+          formatter={(v) => [v, "documents"]}
           contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid hsl(var(--border))" }}
         />
-        <Bar dataKey="occurrences" radius={[0, 4, 4, 0]}>
-          {data.map((d) => {
-            const ratio = d.occurrences / max;
-            const opacity = 0.35 + ratio * 0.65;
-            return <Cell key={d.word} fill={`hsl(var(--primary))`} fillOpacity={opacity} />;
-          })}
+        <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+          {data.map((d) => (
+            <Cell
+              key={d.year}
+              fill="hsl(var(--primary))"
+              fillOpacity={0.35 + (d.count / max) * 0.65}
+            />
+          ))}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-function WordCloud({ terms }: { terms: { word: string; nentry: number }[] }) {
-  if (!terms.length) return null;
+function CleracSection({ docs }: { docs: CleracDoc[] }) {
+  if (!docs.length) return (
+    <p className="text-sm text-muted-foreground">Aucune publication trouvée pour Rodolphe Clérac.</p>
+  );
+  return (
+    <ul className="divide-y divide-border rounded border">
+      {docs.map((doc) => (
+        <li key={doc.id} className="flex items-start justify-between gap-4 px-4 py-3">
+          <span className="text-sm leading-snug line-clamp-2">
+            {doc.title ?? <span className="italic text-muted-foreground">Sans titre</span>}
+          </span>
+          {doc.year && (
+            <span className="text-xs text-muted-foreground tabular-nums shrink-0 mt-0.5">{doc.year}</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
-  const max = Math.max(...terms.map((t) => t.nentry));
-  const min = Math.min(...terms.map((t) => t.nentry));
-  const range = Math.max(max - min, 1);
+function CorpusMapV2({ points, cleracDocIds }: { points: MapPoint[]; cleracDocIds: Set<string> }) {
+  const clusterData = useMemo(() => {
+    if (!points.length) return null;
+    const assignments = kmeansCluster(points.map((p) => ({ x: p.x, y: p.y })), K_CLUSTERS);
+    const groups: { pt: ClusterPoint; title: string | null }[][] = Array.from({ length: K_CLUSTERS }, () => []);
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      groups[assignments[i]].push({ pt: { x: p.x, y: p.y, name: p.doc_title ?? "Sans titre", year: p.year }, title: p.doc_title });
+    }
+    return groups.map((g, i) => ({
+      data: g.map((e) => e.pt),
+      label: clusterLabel(g.map((e) => e.title)),
+      color: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
+    }));
+  }, [points]);
 
-  const fontSize = (n: number) => {
-    const ratio = (n - min) / range;
-    return +(0.85 + ratio * 1.55).toFixed(2);
-  };
+  const cleracPoints: ClusterPoint[] = useMemo(
+    () => points.filter((p) => cleracDocIds.has(p.doc_id)).map((p) => ({
+      x: p.x, y: p.y, name: p.doc_title ?? "Sans titre", year: p.year,
+    })),
+    [points, cleracDocIds]
+  );
 
-  const opacity = (n: number) => {
-    const ratio = (n - min) / range;
-    return +(0.4 + ratio * 0.6).toFixed(2);
-  };
+  if (!points.length) return (
+    <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
+      <p className="text-sm text-muted-foreground">
+        Carte non disponible — lance <code className="bg-muted px-1 rounded text-xs">scripts/compute_umap.py</code> pour calculer les coordonnées.
+      </p>
+    </div>
+  );
 
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-3 items-center justify-center py-2 px-2">
-      {terms.map(({ word, nentry }) => (
-        <span
-          key={word}
-          title={`${nentry.toLocaleString("fr-FR")} occurrences`}
-          style={{ fontSize: `${fontSize(nentry)}rem`, opacity: opacity(nentry) }}
-          className="font-semibold text-primary cursor-default select-none transition-opacity hover:opacity-100"
-        >
-          {word}
-        </span>
-      ))}
+    <div>
+      <ResponsiveContainer width="100%" height={440}>
+        <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <XAxis type="number" dataKey="x" hide domain={["auto", "auto"]} />
+          <YAxis type="number" dataKey="y" hide domain={["auto", "auto"]} />
+          <ZAxis range={[5, 5]} />
+          <Tooltip
+            cursor={{ strokeDasharray: "3 3" }}
+            content={({ payload }) => {
+              const p = payload?.[0]?.payload as ClusterPoint | undefined;
+              if (!p) return null;
+              return (
+                <div className="rounded border bg-background px-3 py-2 text-xs shadow max-w-[220px]">
+                  <p className="font-medium line-clamp-2 leading-snug">{p.name}</p>
+                  {p.year && <p className="text-muted-foreground mt-1">{p.year}</p>}
+                </div>
+              );
+            }}
+          />
+          {clusterData?.map((cluster, i) => (
+            <Scatter key={i} name={cluster.label} data={cluster.data} fill={cluster.color} fillOpacity={0.55} />
+          ))}
+          {cleracPoints.length > 0 && (
+            <Scatter
+              name="Rodolphe Clérac"
+              data={cleracPoints}
+              fill="#ff6b00"
+              stroke="#fff"
+              strokeWidth={1}
+              fillOpacity={1}
+            />
+          )}
+        </ScatterChart>
+      </ResponsiveContainer>
+      <div className="mt-4 space-y-2">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+          {clusterData?.map((cluster, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cluster.color }} />
+              <span className="truncate text-muted-foreground capitalize">{cluster.label}</span>
+            </div>
+          ))}
+        </div>
+        {cleracPoints.length > 0 && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: "#ff6b00" }} />
+            <span className="text-foreground font-medium">Rodolphe Clérac ({cleracPoints.length} chunks)</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -255,6 +428,10 @@ export default function DatabasePage() {
   const [stats, setStats] = useState<DocumentStats | null>(null);
   const [analytics, setAnalytics] = useState<QueryAnalytics | null>(null);
   const [mapPoints, setMapPoints] = useState<MapPoint[]>([]);
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
+  const [cleracDocs, setCleracDocs] = useState<CleracDoc[]>([]);
+  const [cleracDocIds, setCleracDocIds] = useState<Set<string>>(new Set());
+  const [cleracTotal, setCleracTotal] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResults, setUploadResults] = useState<UploadResult[] | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -263,10 +440,12 @@ export default function DatabasePage() {
     let cancelled = false;
     (async () => {
       try {
-        const [resStats, resAnalytics, resMap] = await Promise.all([
+        const [resStats, resAnalytics, resMap, resTimeline, resClerac] = await Promise.all([
           fetch("/api/documents/stats"),
           fetch("/api/analytics/overview"),
           fetch("/api/corpus/map"),
+          fetch("/api/corpus/timeline"),
+          fetch("/api/corpus/clerac"),
         ]);
         if (!cancelled) {
           if (resStats.ok) setStats(await resStats.json());
@@ -274,6 +453,16 @@ export default function DatabasePage() {
           if (resMap.ok) {
             const mapData = await resMap.json();
             setMapPoints(mapData.points ?? []);
+          }
+          if (resTimeline.ok) {
+            const tlData = await resTimeline.json();
+            setTimeline(tlData.timeline ?? []);
+          }
+          if (resClerac.ok) {
+            const clData = await resClerac.json();
+            setCleracDocs(clData.docs ?? []);
+            setCleracDocIds(new Set(clData.docIds ?? []));
+            if (clData.openAlexTotal != null) setCleracTotal(clData.openAlexTotal);
           }
         }
       } catch {
@@ -400,7 +589,6 @@ export default function DatabasePage() {
           <CardTitle>Activité du chercheur — 30 derniers jours</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* KPI comportement */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div>
               <p className="text-xs text-muted-foreground">Requêtes totales</p>
@@ -428,13 +616,11 @@ export default function DatabasePage() {
             </div>
           </div>
 
-          {/* Courbe d'activité quotidienne */}
           <div>
             <p className="text-sm font-medium mb-3">Requêtes par jour</p>
             <ActivityChart data={analytics?.dailyStats ?? []} />
           </div>
 
-          {/* Top requêtes */}
           {analytics && analytics.topQueries.length > 0 && (
             <div>
               <p className="text-sm font-medium mb-2">Questions les plus fréquentes</p>
@@ -457,33 +643,6 @@ export default function DatabasePage() {
         </CardContent>
       </Card>
 
-      {/* Word Cloud */}
-      {stats && stats.topTerms.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Termes dominants du corpus</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <WordCloud terms={stats.topTerms} />
-            <p className="mt-4 text-xs text-muted-foreground text-center">
-              {stats.topTerms.length} termes scientifiques — taille proportionnelle à la fréquence dans les chunks
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Bar chart top termes */}
-      {stats && stats.topTerms.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Top 15 termes — fréquence dans le corpus</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <TermsChart terms={stats.topTerms} />
-          </CardContent>
-        </Card>
-      )}
-
       {/* Carte vectorielle UMAP */}
       <Card>
         <CardHeader>
@@ -493,7 +652,51 @@ export default function DatabasePage() {
           <CorpusMap points={mapPoints} />
           {mapPoints.length > 0 && (
             <p className="mt-3 text-xs text-muted-foreground text-center">
-              {mapPoints.length.toLocaleString("fr-FR")} chunks affichés — chaque point = un segment de texte, les clusters = zones thématiques proches
+              {mapPoints.length.toLocaleString("fr-FR")} chunks affichés · {K_CLUSTERS} clusters thématiques détectés automatiquement
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Couverture temporelle */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Couverture temporelle du corpus</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <TimelineChart data={timeline} />
+          {timeline.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground text-center">
+              {timeline.reduce((s, d) => s + d.count, 0).toLocaleString("fr-FR")} documents avec année renseignée · {timeline[0]?.year}–{timeline[timeline.length - 1]?.year}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Publications Clérac */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Publications de Rodolphe Clérac</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            {cleracDocs.length} publication{cleracDocs.length !== 1 ? "s" : ""} dans le corpus
+            {cleracTotal != null && ` · ${cleracTotal} publications au total sur OpenAlex · couverture ${Math.round((cleracDocs.length / Math.max(cleracTotal, 1)) * 100)}%`}
+          </p>
+          <CleracSection docs={cleracDocs} />
+        </CardContent>
+      </Card>
+
+      {/* Carte UMAP v2 — Clérac mis en évidence */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Carte du corpus v2 — publications de Clérac</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CorpusMapV2 points={mapPoints} cleracDocIds={cleracDocIds} />
+          {mapPoints.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground text-center">
+              Clusters colorés · points orange = publications de Rodolphe Clérac
             </p>
           )}
         </CardContent>
