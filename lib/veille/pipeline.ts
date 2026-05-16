@@ -193,8 +193,14 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       console.log(`[pipeline][${ts()}] Phase 8 — Loading corpus terms for heuristic scoring`)
       const corpusTerms = await loadCorpusTerms(80)
 
-      console.log(`[pipeline][${ts()}] Phase 8 — Scoring ${insertedIds.length} abstracts against corpus (parallel batches of 5)`)
-      const toScore  = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
+      const MAX_SCORE = 300
+      const toScore = insertedIds
+        .map(item => ({ id: item.id, abstract: item.abstract }))
+        .slice(0, MAX_SCORE)
+      if (insertedIds.length > MAX_SCORE) {
+        console.log(`[pipeline][${ts()}] Phase 8 — Capping scoring at ${MAX_SCORE}/${insertedIds.length} items`)
+      }
+      console.log(`[pipeline][${ts()}] Phase 8 — Scoring ${toScore.length} abstracts against corpus (parallel batches of 10)`)
       const simScores = await scoreVeilleItems(toScore, async (done, total) => {
         await updateRunPhase(runId, 'items', done, total)
         console.log(`[pipeline][${ts()}] scoring progress ${done}/${total} — ${Math.round((Date.now() - pipelineStart) / 1000)}s elapsed`)

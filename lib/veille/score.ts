@@ -92,7 +92,7 @@ export function scoreHeuristic(abstract: string, corpusTerms: string[]): number 
   return Math.round((matched / corpusTerms.length) * 1000) / 1000
 }
 
-const SCORE_CONCURRENCY = 5  // parallel scoring workers
+const SCORE_CONCURRENCY = 10  // parallel scoring workers
 
 // Score all items that have an abstract, using parallel batches.
 // onProgress is called every 10 items with (processed, total) for live reporting.
