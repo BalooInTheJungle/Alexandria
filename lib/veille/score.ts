@@ -22,6 +22,8 @@ type ScoreResult = {
   refs: CorpusRef[]
 }
 
+const MATCH_TIMEOUT_MS = 4000  // abort match_chunks if no response in 4s (no HNSW index = slow scan)
+
 // Score a single abstract against the corpus.
 // Returns top-1 similarity score and up to 3 corpus refs (similarity >= CORPUS_REF_THRESHOLD).
 async function scoreAbstract(abstract: string): Promise<ScoreResult> {
@@ -29,24 +31,38 @@ async function scoreAbstract(abstract: string): Promise<ScoreResult> {
     const embedding = await embedQuery(abstract)
     const supabase  = getSupabase()
 
-    const { data, error } = await supabase.rpc('match_chunks', {
+    const rpcPromise = supabase.rpc('match_chunks', {
       query_embedding:  embedding,
       match_threshold:  0.0,
       match_count:      3,
     })
+    const timeoutPromise = new Promise<null>((_, reject) =>
+      setTimeout(() => reject(new Error('match_chunks timeout')), MATCH_TIMEOUT_MS)
+    )
 
-    if (error) {
-      console.error('[score] match_chunks error:', error.message)
+    let data: unknown, error: unknown
+    try {
+      const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: unknown }
+      data = result?.data
+      error = result?.error
+    } catch (timeoutErr: any) {
+      console.error('[score] match_chunks timeout — returning null similarity')
       return { similarity: null, refs: [] }
     }
 
-    if (!data || data.length === 0) return { similarity: null, refs: [] }
+    if (error) {
+      console.error('[score] match_chunks error:', (error as any).message)
+      return { similarity: null, refs: [] }
+    }
 
-    const similarity = typeof data[0].similarity === 'number'
-      ? Math.round(data[0].similarity * 1000) / 1000
+    if (!data || (data as unknown[]).length === 0) return { similarity: null, refs: [] }
+
+    const rows = data as { doc_title: string; content: string; page: number | null; similarity: number }[]
+    const similarity = typeof rows[0].similarity === 'number'
+      ? Math.round(rows[0].similarity * 1000) / 1000
       : null
 
-    const refs: CorpusRef[] = (data as {
+    const refs: CorpusRef[] = (rows as {
       doc_title: string; content: string; page: number | null; similarity: number
     }[])
       .filter(row => row.similarity >= CORPUS_REF_THRESHOLD)
