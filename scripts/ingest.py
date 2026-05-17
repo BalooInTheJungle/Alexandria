@@ -23,8 +23,13 @@ if env_path.exists():
     from dotenv import load_dotenv
     load_dotenv(env_path)
 
+import psycopg2
 import fitz  # PyMuPDF
 from supabase import create_client
+
+# Connexion directe pour opérations longues (index, vacuum)
+SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL", "")
+# Format : postgresql://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres
 
 PDF_DIR             = project_root / "data" / "pdfs"
 EMBED_DIM           = 384
@@ -287,6 +292,29 @@ def find_existing_by_path(sb, storage_path: str) -> object:
     return r.data[0] if r.data else None
 
 
+# ── Index pgvector ────────────────────────────────────────────────────────────
+
+def create_vector_index():
+    """Crée l'index IVFFlat sur chunks.embedding via connexion directe psycopg2."""
+    if not SUPABASE_DB_URL:
+        print("[index] SUPABASE_DB_URL not set — skipping index creation", flush=True)
+        return
+    print("[index] Connecting via psycopg2 for index creation...", flush=True)
+    conn = psycopg2.connect(SUPABASE_DB_URL)
+    conn.set_session(autocommit=True)
+    cur = conn.cursor()
+    cur.execute("SET statement_timeout = '0';")
+    print("[index] Creating IVFFlat index on chunks.embedding (lists=10)...", flush=True)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chunks_embedding
+        ON chunks USING ivfflat (embedding vector_cosine_ops)
+        WITH (lists=10)
+    """)
+    print("[index] Index created successfully.", flush=True)
+    cur.close()
+    conn.close()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -459,6 +487,9 @@ def main():
                     }).execute()
             except Exception as e2:
                 print(f"  ⚠️   Log erreur non enregistré: {str(e2)[:80]}", flush=True)
+
+    # ── Index pgvector (après tous les inserts) ───────────────────────────────
+    create_vector_index()
 
     # ── Récap final ───────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
