@@ -304,11 +304,11 @@ def create_vector_index():
     conn.set_session(autocommit=True)
     cur = conn.cursor()
     cur.execute("SET statement_timeout = '0';")
-    print("[index] Creating IVFFlat index on chunks.embedding (lists=10)...", flush=True)
+    print("[index] Creating IVFFlat index on chunks.embedding (lists=100)...", flush=True)
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_chunks_embedding
         ON chunks USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists=10)
+        WITH (lists=100)
     """)
     print("[index] Index created successfully.", flush=True)
     cur.close()
