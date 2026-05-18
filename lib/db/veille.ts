@@ -234,14 +234,25 @@ export async function updateVeilleItemBothScores(
   LOG('updateVeilleItemBothScores', { count: scores.size })
   const supabase = getAdminSupabase()
 
-  for (const [id, { similarity, heuristic, refs }] of Array.from(scores)) {
+  const entries = Array.from(scores).filter(([, { similarity, heuristic, refs }]) => {
     const patch: Record<string, unknown> = {}
     if (similarity !== null) patch.similarity_score = similarity
     if (heuristic !== null)  patch.heuristic_score  = heuristic
     if (refs && refs.length > 0) patch.corpus_refs = refs
-    if (Object.keys(patch).length === 0) continue
-    const { error } = await supabase.from('veille_items').update(patch).eq('id', id)
-    if (error) LOG('updateVeilleItemBothScores error', id, error.message)
+    return Object.keys(patch).length > 0
+  })
+
+  const BATCH = 50
+  for (let i = 0; i < entries.length; i += BATCH) {
+    const batch = entries.slice(i, i + BATCH)
+    await Promise.all(batch.map(async ([id, { similarity, heuristic, refs }]) => {
+      const patch: Record<string, unknown> = {}
+      if (similarity !== null) patch.similarity_score = similarity
+      if (heuristic !== null)  patch.heuristic_score  = heuristic
+      if (refs && refs.length > 0) patch.corpus_refs = refs
+      const { error } = await supabase.from('veille_items').update(patch).eq('id', id)
+      if (error) LOG('updateVeilleItemBothScores error', id, error.message)
+    }))
   }
 }
 
