@@ -224,7 +224,7 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
     console.log('[pipeline] Generating AI summary')
     try {
-      const THRESHOLD = 0.75
+      const THRESHOLD = 0.30
       const { summary, highScoreCount } = await generateVeilleSummary(scoredForSummary, THRESHOLD)
       await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: THRESHOLD })
       console.log(`[pipeline] AI summary saved — ${highScoreCount} articles >= ${THRESHOLD}`)

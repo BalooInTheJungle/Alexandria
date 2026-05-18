@@ -236,7 +236,7 @@ function globalProgress(
   return Math.round((start + end) / 2);
 }
 
-const DEFAULT_THRESHOLD = 0.75;
+const DEFAULT_THRESHOLD = 0.30;
 
 function ScoreStat({ score }: { score: number | null }) {
   if (score == null) return (
@@ -853,6 +853,26 @@ export default function BibliographiePage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Sélecteur de seuil de similarité */}
+          {currentRun && !isRunning && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>Seuil de pertinence :</span>
+              <select
+                value={threshold}
+                onChange={e => setThreshold(parseFloat(e.target.value))}
+                className="border border-border bg-background text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value={0.20}>≥ 20%</option>
+                <option value={0.25}>≥ 25%</option>
+                <option value={0.30}>≥ 30%</option>
+                <option value={0.40}>≥ 40%</option>
+                <option value={0.50}>≥ 50%</option>
+                <option value={0.70}>≥ 70%</option>
+              </select>
+              <span className="text-xs">({items.length} articles affichés)</span>
+            </div>
+          )}
 
           {/* Résumé IA — structuré (nouveau) ou texte brut (legacy) */}
           {currentRun?.ai_summary && !isRunning && (() => {
