@@ -36,8 +36,8 @@ EMBED_DIM           = 384
 CHUNK_SIZE          = 600
 CHUNK_OVERLAP       = 100
 MIN_TEXT_PER_PAGE   = 50    # chars en dessous desquels on tente l'OCR
-INSERT_BATCH        = 5     # chunks par requête Supabase (limite timeout 30s)
-INSERT_PAUSE        = 0.3  # secondes entre chaque batch (évite saturation)
+INSERT_BATCH        = 50    # chunks par requête Supabase (index HNSW droppé)
+INSERT_PAUSE        = 0.1  # secondes entre chaque batch
 
 # Journaux connus dans le domaine chimie/magnétisme moléculaire
 _KNOWN_JOURNALS = [
@@ -323,7 +323,7 @@ def main():
     if not PDF_DIR.exists():
         sys.exit(f"❌  Dossier {PDF_DIR} introuvable.")
 
-    YEAR_MIN, YEAR_MAX = 2015, 2026
+    YEAR_MIN, YEAR_MAX = 2025, 2025
     pdf_files = sorted(
         p for p in PDF_DIR.rglob("*.pdf")
         if re.fullmatch(r"20\d{2}", p.parent.name)

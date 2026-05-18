@@ -194,26 +194,32 @@ Déclenchée par bouton UI ou cron Vercel (6h UTC) :
 
 | Fonctionnalité | État |
 |---------------|------|
-| RAG chat (FR + EN, streaming, garde-fou) | ✅ Fonctionnel |
+| RAG chat (EN, streaming, garde-fou) | ✅ Fonctionnel |
 | Conversations + historique | ✅ Fonctionnel |
 | Paramètres RAG (rag_settings) | ✅ Fonctionnel |
 | Pipeline veille (RSS + OpenAlex + scoring) | ✅ Fonctionnel |
+| Sélecteur seuil veille (20→70%, défaut 30%) | ✅ Fonctionnel |
+| Résumé IA veille (GPT-4o-mini, thèmes + articles) | ✅ Fonctionnel |
 | Cron rétention 30 jours | ✅ Fonctionnel |
 | Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
 | Logs requêtes RAG (query_logs) | ✅ Fonctionnel |
 | Upload PDF + ingestion | ⚠️ À vérifier |
-| **Ingestion bulk ~15 477 PDFs (2015-2026)** | 🔴 En attente — bloquer sur drop HNSW |
-| Interface front (composants, layout) | ⚠️ À adapter |
+| UMAP sur nouveau corpus | ⏳ À relancer (compute_umap.py) |
 
 ### Corpus actuel en base
-- **367 documents** ingérés, status=done
-- **35 584 chunks** avec embeddings EN + FR (embedding_fr = embedding EN sans traduction)
-- **35 584 coordonnées UMAP** calculées (compute_umap.py exécuté)
-- **~15 477 PDFs** à ingérer dans `data/pdfs/2015/` → `data/pdfs/2026/`
+- **2510 documents** ingérés (2024-2025), status=done
+- **497 523 chunks** avec embeddings EN (384D)
+- **Index IVFFlat** `idx_chunks_embedding` (lists=100) opérationnel
+- UMAP non recalculé sur ce corpus (à faire)
+
+### Ingestion
+- `scripts/ingest.py` crée l'index IVFFlat automatiquement via psycopg2 après tous les inserts
+- Paramétrage : `YEAR_MIN, YEAR_MAX` dans `main()` — actuellement 2024-2025
+- Pour relancer : modifier ces valeurs, `TRUNCATE chunks, documents`, puis `python3 ingest.py`
 
 ### Limite stockage Supabase
 - Plan **Pro (25$/mois)** activé — limite ~8 Go DB
-- Corpus retenu : **2015-2026 uniquement** (~7,4 Go PDFs)
-- 2000-2014 exclus (~5,6 Go supplémentaires, hors budget)
+- DB actuelle : **6 Go** (2510 docs, 497k chunks)
+- Marge : ~2 Go pour étendre le corpus si besoin
 
 Voir `docs/ROADMAP.md` pour les prochaines étapes.
