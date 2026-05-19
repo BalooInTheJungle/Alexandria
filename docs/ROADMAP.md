@@ -60,6 +60,10 @@ Mettre à jour ce fichier à chaque jalon atteint.
 | Pipeline veille scoring fonctionnel | ✅ | 134 articles ≥ 30% sur corpus 2024-2025 |
 | Sélecteur seuil veille (20→70%) | ✅ | Défaut 30%, modifiable depuis l'UI |
 | Batch score updates veille (50 parallèle) | ✅ | Was séquentiel → bloquait pipeline 2-3min |
+| Nettoyage titres espacés (`fix_spaced_text`) | ✅ | 2656 titres corrigés en DB + fix dans ingest.py |
+| Réorganisation PDFs par année publication | ✅ | `reorganize_pdfs.py` → `data/pdfs2/YEAR/` |
+| Ingestion incrémentale 2025 (pdfs2/) | 🔄 En cours | ~1172 PDFs, dédup DOI automatique |
+| Ingestion 2026 (146 docs) | ✅ | Ajoutés au corpus |
 | Recalcul UMAP sur nouveaux chunks | ⏳ À faire | Relancer compute_umap.py après ingestion |
 | Extension corpus 2015-2023 | ⏳ Option | ~13 000 PDFs supplémentaires, dépend espace DB |
 

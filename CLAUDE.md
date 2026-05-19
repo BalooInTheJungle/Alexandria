@@ -207,19 +207,26 @@ Déclenchée par bouton UI ou cron Vercel (6h UTC) :
 | UMAP sur nouveau corpus | ⏳ À relancer (compute_umap.py) |
 
 ### Corpus actuel en base
-- **2510 documents** ingérés (2024-2025), status=done
-- **497 523 chunks** avec embeddings EN (384D)
+- **~3700 documents** (2024 + 2025 + 2026), ingestion 2025 en cours
+- **~530k chunks** avec embeddings EN (384D)
 - **Index IVFFlat** `idx_chunks_embedding` (lists=100) opérationnel
 - UMAP non recalculé sur ce corpus (à faire)
+- **Titres nettoyés** : `fix_spaced_text()` appliqué à l'ingestion + `clean_titles.py` passé sur les 2656 docs existants
+
+### Structure PDFs
+- `data/pdfs/YEAR/` — organisation par année d'acquisition (original)
+- `data/pdfs2/YEAR/` — organisation par **année de publication** (via `reorganize_pdfs.py`)
+- L'ingestion incrémentale utilise `data/pdfs2/` depuis mai 2026
 
 ### Ingestion
 - `scripts/ingest.py` crée l'index IVFFlat automatiquement via psycopg2 après tous les inserts
-- Paramétrage : `YEAR_MIN, YEAR_MAX` dans `main()` — actuellement 2024-2025
-- Pour relancer : modifier ces valeurs, `TRUNCATE chunks, documents`, puis `python3 ingest.py`
+- Source : `PDF_DIR = data/pdfs2/`, `YEAR_MIN, YEAR_MAX` dans `main()`
+- Dédup automatique par DOI puis par storage_path — safe à relancer
+- Pour ingestion complète : `TRUNCATE chunks, documents`, modifier années, `python3 ingest.py`
 
 ### Limite stockage Supabase
 - Plan **Pro (25$/mois)** activé — limite ~8 Go DB
-- DB actuelle : **6 Go** (2510 docs, 497k chunks)
-- Marge : ~2 Go pour étendre le corpus si besoin
+- DB actuelle : **~6.5 Go** en cours de remplissage
+- Marge : ~1.5 Go pour étendre le corpus si besoin
 
 Voir `docs/ROADMAP.md` pour les prochaines étapes.
