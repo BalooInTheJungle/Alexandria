@@ -26,7 +26,7 @@ if env_path.exists():
 import fitz  # PyMuPDF
 from supabase import create_client
 
-PDF_DIR             = project_root / "data" / "pdfs"
+PDF_DIR             = project_root / "data" / "pdfs2"
 EMBED_DIM           = 384
 CHUNK_SIZE          = 600
 CHUNK_OVERLAP       = 100
@@ -74,6 +74,21 @@ def get_supabase():
 
 def clean(text: str) -> str:
     return text.replace("\x00", " ").replace("", " ") if text else text
+
+
+def fix_spaced_text(s: str) -> str:
+    """Fix PDFs where each character is separated by a space: 'T h e   R o l e' → 'The Role'."""
+    if not s:
+        return s
+    s = s.strip()
+    tokens = [t for t in s.split(' ') if t]
+    if len(tokens) < 6:
+        return s
+    if sum(1 for t in tokens if len(t) == 1) / len(tokens) < 0.55:
+        return s
+    # Split on 2+ spaces (word boundaries), collapse single spaces within each word
+    words = re.split(r' {2,}', s)
+    return ' '.join(''.join(w.split()) for w in words if w.strip())
 
 
 def extract_text_with_ocr_fallback(pdf_path: Path) -> tuple[str, dict[int, str], int]:
@@ -206,7 +221,7 @@ def extract_metadata(doc: fitz.Document, full_text: str, pdf_path: Path) -> dict
     published_at = f"{year}-01-01" if year else None
 
     return {
-        "title":        clean(title).strip() or None,
+        "title":        fix_spaced_text(clean(title).strip()) or None,
         "authors":      authors or None,
         "doi":          clean(doi).strip() if doi else None,
         "journal":      clean(journal).strip() if journal else None,
@@ -295,7 +310,7 @@ def main():
     if not PDF_DIR.exists():
         sys.exit(f"❌  Dossier {PDF_DIR} introuvable.")
 
-    YEAR_MIN, YEAR_MAX = 2025, 2025
+    YEAR_MIN, YEAR_MAX = 2026, 2026
     pdf_files = sorted(
         p for p in PDF_DIR.rglob("*.pdf")
         if re.fullmatch(r"20\d{2}", p.parent.name)
