@@ -310,7 +310,7 @@ def main():
     if not PDF_DIR.exists():
         sys.exit(f"❌  Dossier {PDF_DIR} introuvable.")
 
-    YEAR_MIN, YEAR_MAX = 2026, 2026
+    YEAR_MIN, YEAR_MAX = 2025, 2025
     pdf_files = sorted(
         p for p in PDF_DIR.rglob("*.pdf")
         if re.fullmatch(r"20\d{2}", p.parent.name)
