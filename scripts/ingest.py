@@ -7,7 +7,12 @@ Ingestion Alexandria : data/pdfs/**/*.pdf → documents + chunks (Supabase).
 - Dédup par DOI en priorité, puis par storage_path.
 - Chunking par section ou par taille.
 - Embeddings 384D (sentence-transformers). Pas de traduction EN→FR.
+
+Modes :
+  python3 ingest.py                   # corpus général (data/pdfs2/)
+  python3 ingest.py --author          # articles du chercheur (data/Articles auteur/)
 """
+import argparse
 import os
 import re
 import sys
@@ -26,7 +31,8 @@ if env_path.exists():
 import fitz  # PyMuPDF
 from supabase import create_client
 
-PDF_DIR             = project_root / "data" / "pdfs2"
+PDF_DIR              = project_root / "data" / "pdfs2"
+AUTHOR_ARTICLES_DIR  = project_root / "data" / "Articles auteur"
 EMBED_DIM           = 384
 CHUNK_SIZE          = 600
 CHUNK_OVERLAP       = 100
@@ -159,10 +165,22 @@ def _extract_authors_heuristic(full_text: str, title: object) -> list[str]:
 
 
 def _extract_year_from_folder(pdf_path: Path) -> object:
-    """Extrait l'année depuis le nom du dossier parent si c'est un millésime (ex: '1996')."""
+    """Extrait l'année depuis le nom du dossier parent.
+
+    Supporte deux formats :
+    - corpus    : '2024'           (dossier = année seule)
+    - auteur    : '2024-8-537'     (dossier = année-nb_annee-cumul_total)
+    """
     parent = pdf_path.parent.name
+    # Format corpus : "2024"
     m = re.fullmatch(r"(19\d{2}|20\d{2})", parent)
-    return int(m.group(1)) if m else None
+    if m:
+        return int(m.group(1))
+    # Format articles auteur : "2024-8-537" — on prend les 4 premiers chiffres
+    m = re.match(r"^(19\d{2}|20\d{2})-", parent)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 def _extract_year_from_text(text: str) -> object:
@@ -305,21 +323,44 @@ def find_existing_by_path(sb, storage_path: str) -> object:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Ingestion Alexandria PDF → Supabase")
+    parser.add_argument(
+        "--author",
+        action="store_true",
+        help="Ingérer les articles du chercheur (data/Articles auteur/) avec is_author_article=True",
+    )
+    args = parser.parse_args()
+
     sb = get_supabase()
 
-    if not PDF_DIR.exists():
-        sys.exit(f"❌  Dossier {PDF_DIR} introuvable.")
+    # ── Sélection du dossier et du flag selon le mode ─────────────────────────
+    if args.author:
+        source_dir      = AUTHOR_ARTICLES_DIR
+        is_author_article = True
+        # Les sous-dossiers sont nommés YEAR-NB-CUMUL (ex: 2024-8-537)
+        # On récupère tous les PDFs récursivement sans filtre d'année strict
+        pdf_files = sorted(source_dir.rglob("*.pdf"))
+        label = "articles auteur (data/Articles auteur/)"
+    else:
+        source_dir      = PDF_DIR
+        is_author_article = False
+        YEAR_MIN, YEAR_MAX = 2025, 2025
+        pdf_files = sorted(
+            p for p in source_dir.rglob("*.pdf")
+            if re.fullmatch(r"20\d{2}", p.parent.name)
+            and YEAR_MIN <= int(p.parent.name) <= YEAR_MAX
+        )
+        label = f"corpus ({YEAR_MIN}–{YEAR_MAX}) dans {source_dir}"
 
-    YEAR_MIN, YEAR_MAX = 2025, 2025
-    pdf_files = sorted(
-        p for p in PDF_DIR.rglob("*.pdf")
-        if re.fullmatch(r"20\d{2}", p.parent.name)
-        and YEAR_MIN <= int(p.parent.name) <= YEAR_MAX
-    )
+    if not source_dir.exists():
+        sys.exit(f"❌  Dossier {source_dir} introuvable.")
+
     if not pdf_files:
-        sys.exit(f"❌  Aucun PDF dans {PDF_DIR} pour {YEAR_MIN}-{YEAR_MAX}")
+        sys.exit(f"❌  Aucun PDF trouvé pour {label}")
 
-    print(f"📂  {len(pdf_files)} PDF trouvés ({YEAR_MIN}–{YEAR_MAX}) dans {PDF_DIR}.")
+    mode_label = "🔬 MODE ARTICLES AUTEUR (is_author_article=True)" if is_author_article else "📚 MODE CORPUS GÉNÉRAL"
+    print(f"{mode_label}")
+    print(f"📂  {len(pdf_files)} PDF trouvés — {label}.")
 
     print("🤖  Chargement du modèle d'embeddings (all-MiniLM-L6-v2)...")
     from sentence_transformers import SentenceTransformer
@@ -330,7 +371,9 @@ def main():
 
     for idx, pdf_path in enumerate(pdf_files, 1):
         rel_path = str(pdf_path.relative_to(project_root))
-        print(f"[{idx}/{len(pdf_files)}] {pdf_path.relative_to(PDF_DIR)}")
+        # Normalise les espaces dans le chemin (ex: "Articles auteur") pour Supabase
+        rel_path = rel_path.replace("\\", "/")
+        print(f"[{idx}/{len(pdf_files)}] {pdf_path.relative_to(source_dir)}")
 
         try:
             # ── Extraction texte ──────────────────────────────────────────
@@ -372,14 +415,15 @@ def main():
 
             # ── Insert document ───────────────────────────────────────────
             doc_row = sb.table("documents").insert({
-                "title":        meta["title"],
-                "authors":      meta["authors"],
-                "doi":          meta["doi"],
-                "journal":      meta["journal"],
-                "published_at": meta["published_at"],
-                "storage_path": rel_path,
-                "status":       "processing",
-                "error_message": None,
+                "title":              meta["title"],
+                "authors":            meta["authors"],
+                "doi":                meta["doi"],
+                "journal":            meta["journal"],
+                "published_at":       meta["published_at"],
+                "storage_path":       rel_path,
+                "status":             "processing",
+                "error_message":      None,
+                "is_author_article":  is_author_article,
             }).execute()
             document_id = doc_row.data[0]["id"]
 

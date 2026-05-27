@@ -44,8 +44,18 @@ npm run dev        # Next.js dev (http://localhost:3000)
 npm run build      # Build production
 npm run lint       # ESLint
 
-# Ingestion PDF bulk (Python) — corpus data/pdfs/YEAR/
+# Ingestion PDF bulk (Python) — corpus data/pdfs2/YEAR/
 cd scripts && python3 ingest.py
+
+# Ingestion articles auteur (data/Articles auteur/)
+cd scripts && python3 ingest.py --author
+
+# Correction titres espacés articles auteur (après ingestion --author)
+cd scripts && python3 fix_author_titles.py --apply
+
+# Correction texte espacé dans les chunks (dry-run d'abord, puis apply)
+cd scripts && python3 fix_spaced_chunks.py --dry-run
+cd scripts && python3 fix_spaced_chunks.py --apply
 
 # Calcul UMAP 2D sur tous les chunks (à relancer après chaque ingestion bulk)
 cd scripts && python3 compute_umap.py
@@ -57,19 +67,48 @@ npx supabase db push
 curl -H "Authorization: Bearer $CRON_SECRET" "https://<domaine>/api/cron/retention"
 ```
 
-### ⚠️ Avant toute ingestion bulk (> 100 docs) — DROP les index HNSW
+### ⚠️ Rebuild index via psql (pas SQL Editor — timeout HTTP à 30s)
 
-Sans cette étape, chaque INSERT dépasse le timeout Supabase (30s) à cause du recalcul du graphe HNSW.
+```bash
+# Toujours utiliser psql directement, jamais le SQL Editor Supabase pour les opérations longues
+psql "postgresql://postgres:<PASSWORD>@db.<REF>.supabase.co:5432/postgres" \
+  -c "SET statement_timeout = 0;" \
+  -c "DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding;" \
+  -c "CREATE INDEX CONCURRENTLY idx_chunks_embedding ON public.chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists=100);"
+
+# Suivi progression
+psql "..." -c "SELECT phase, blocks_done, blocks_total,
+  round(blocks_done::numeric / nullif(blocks_total,0) * 100, 1) AS pct
+  FROM pg_stat_progress_create_index WHERE relid = 'public.chunks'::regclass;"
+```
+
+> **Piège** : `CREATE INDEX CONCURRENTLY` ne peut pas tourner dans un bloc transaction.
+> Utiliser deux `-c` séparés (pas `SET ...; CREATE ...` dans un seul `-c`).
+> `$SUPABASE_DB_URL` n'est pas chargée dans le shell — utiliser la valeur littérale ou `export` dans `~/.zshrc`.
+
+### ⚠️ Après toute ingestion bulk (> 50k chunks) — REBUILD l'index IVFFlat
+
+L'index IVFFlat utilise des clusters fixes. Après beaucoup d'inserts, les nouveaux vecteurs tombent dans les mauvais clusters → les requêtes passent de ~50ms à 16s+. Reconstruire après chaque ingestion bulk.
 
 ```sql
--- Dans Supabase SQL Editor — AVANT l'ingestion
-DROP INDEX IF EXISTS idx_chunks_embedding;
-DROP INDEX IF EXISTS idx_chunks_embedding_fr;
+-- Dans Supabase SQL Editor — APRÈS l'ingestion complète
+-- (ingest.py le fait automatiquement, mais si ingestion manuelle ou partielle :)
+DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding;
+CREATE INDEX CONCURRENTLY idx_chunks_embedding
+  ON public.chunks
+  USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);
 
--- APRÈS l'ingestion complète — recréer les index
-CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64);
-CREATE INDEX idx_chunks_embedding_fr ON chunks USING hnsw (embedding_fr vector_cosine_ops) WITH (m=16, ef_construction=64);
+-- Idem pour l'index FR si utilisé
+DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding_fr;
+CREATE INDEX CONCURRENTLY idx_chunks_embedding_fr
+  ON public.chunks
+  USING ivfflat (embedding_fr vector_cosine_ops)
+  WITH (lists = 100);
 ```
+
+> **Durée** : ~5-15 minutes sur 600k chunks. `CONCURRENTLY` = DB reste opérationnelle.
+> **Suivi** : `SELECT phase, blocks_done, blocks_total FROM pg_stat_progress_create_index WHERE relid = 'public.chunks'::regclass;`
 
 **Prérequis système (ingestion Python) :**
 - macOS : `brew install poppler tesseract tesseract-lang`
@@ -135,12 +174,17 @@ components/
   ui/                      # shadcn/ui : button, card, dialog, input...
 
 scripts/
-  ingest.py                # Ingestion PDF (Python, manuel)
+  ingest.py                # Ingestion PDF (Python, manuel) — flag --author pour articles auteur
+  fix_author_titles.py     # Correction titres espacés des articles auteur (--dry-run / --apply)
+  fix_spaced_chunks.py     # Correction texte espacé dans chunks + re-embed (--dry-run / --apply)
   import-sources.ts        # Upsert des 43 sources en DB
   test-veille.ts           # Test pipeline veille
+  compute_umap.py          # Calcul coordonnées UMAP 2D sur les chunks
 
-supabase/migrations/       # 14 migrations SQL (ordre chronologique)
-data/pdfs/                 # PDFs à indexer (non versionnés)
+supabase/migrations/       # 16 migrations SQL (ordre chronologique)
+data/pdfs/                 # PDFs corpus (non versionnés)
+data/pdfs2/                # PDFs réorganisés par année de publication
+data/Articles auteur/      # PDFs articles publiés du chercheur (non versionnés)
 ```
 
 ### Pipeline RAG (flux d'une requête)
@@ -203,30 +247,41 @@ Déclenchée par bouton UI ou cron Vercel (6h UTC) :
 | Cron rétention 30 jours | ✅ Fonctionnel |
 | Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
 | Logs requêtes RAG (query_logs) | ✅ Fonctionnel |
+| Articles auteur indexés (521 docs, is_author_article) | ✅ Fonctionnel |
+| Comparaison articles auteur ↔ corpus | ✅ Fonctionnel |
+| Correction texte espacé (797k chunks re-embeddés) | ✅ Terminé |
 | Upload PDF + ingestion | ⚠️ À vérifier |
 | UMAP sur nouveau corpus | ⏳ À relancer (compute_umap.py) |
 
 ### Corpus actuel en base
-- **~3700 documents** (2024 + 2025 + 2026), ingestion 2025 en cours
-- **~530k chunks** avec embeddings EN (384D)
-- **Index IVFFlat** `idx_chunks_embedding` (lists=100) opérationnel
-- UMAP non recalculé sur ce corpus (à faire)
-- **Titres nettoyés** : `fix_spaced_text()` appliqué à l'ingestion + `clean_titles.py` passé sur les 2656 docs existants
+- **~3 700 documents corpus** (2024 + 2025 + 2026) + **521 articles auteur** (`is_author_article=true`)
+- **848 857 chunks** avec embeddings EN (384D) — **tous corrigés** (fix_spaced_chunks.py)
+- **Index IVFFlat** `idx_chunks_embedding` (lists=100) — valid=t, 1.3 Go
+- UMAP non recalculé sur ce corpus (à faire — compute_umap.py)
+- **Titres nettoyés** : `fix_spaced_text()` à l'ingestion + `fix_author_titles.py` sur 521 articles auteur
 
 ### Structure PDFs
 - `data/pdfs/YEAR/` — organisation par année d'acquisition (original)
 - `data/pdfs2/YEAR/` — organisation par **année de publication** (via `reorganize_pdfs.py`)
+- `data/Articles auteur/YEAR/` — articles publiés du chercheur
 - L'ingestion incrémentale utilise `data/pdfs2/` depuis mai 2026
 
 ### Ingestion
 - `scripts/ingest.py` crée l'index IVFFlat automatiquement via psycopg2 après tous les inserts
-- Source : `PDF_DIR = data/pdfs2/`, `YEAR_MIN, YEAR_MAX` dans `main()`
+- `scripts/ingest.py --author` pour les articles auteur (`data/Articles auteur/`)
+- Source corpus : `PDF_DIR = data/pdfs2/`, `YEAR_MIN, YEAR_MAX` dans `main()`
 - Dédup automatique par DOI puis par storage_path — safe à relancer
 - Pour ingestion complète : `TRUNCATE chunks, documents`, modifier années, `python3 ingest.py`
+- **Après ingestion bulk (>50k chunks)** : rebuild IVFFlat via psql (pas SQL Editor)
+
+### Qualité des embeddings
+- `scripts/fix_spaced_chunks.py` : détecte et corrige le texte espacé dans les chunks
+- **Exécuté** sur 797k chunks en mai 2026 — à relancer avec `--dry-run` après chaque nouvelle ingestion bulk
+- La route `/similar` utilise la **moyenne de tous les embeddings** (pas position=0) pour éviter les faux positifs sur headers de PDF
 
 ### Limite stockage Supabase
 - Plan **Pro (25$/mois)** activé — limite ~8 Go DB
-- DB actuelle : **~6.5 Go** en cours de remplissage
-- Marge : ~1.5 Go pour étendre le corpus si besoin
+- DB actuelle : **~7 Go** après correction des embeddings
+- Marge : ~1 Go pour étendre le corpus si besoin
 
 Voir `docs/ROADMAP.md` pour les prochaines étapes.

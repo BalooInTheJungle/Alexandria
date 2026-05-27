@@ -69,6 +69,24 @@ Mettre à jour ce fichier à chaque jalon atteint.
 
 ---
 
+## V1.7 — Articles auteur + comparaison corpus ✅ (terminé — Mai 2026)
+
+**Objectif** : indexer les articles publiés du chercheur et visualiser leurs liens avec le corpus général.
+
+| Étape | État | Détail |
+|-------|------|--------|
+| Flag `is_author_article` sur `documents` | ✅ | Migration + index partiel |
+| Ingestion 521 articles auteur (`--author`) | ✅ | `scripts/ingest.py --author`, dossier `data/Articles auteur/` |
+| Correction 126 titres espacés | ✅ | `scripts/fix_author_titles.py` |
+| RPC `match_corpus_docs` | ✅ | SQL function IVFFlat, filtre corpus, agrège par doc |
+| Route `GET /api/corpus/author-articles` | ✅ | Liste paginée, filtre année |
+| Route `GET /api/corpus/author-articles/[id]/similar` | ✅ | Embedding moyen → top N corpus |
+| UI Database — section comparaison | ✅ | Accordion, SimilarityBadge, cache résultats |
+| Correction 797k chunks texte espacé | ✅ | `scripts/fix_spaced_chunks.py`, 0 erreur |
+| Rebuild IVFFlat sur embeddings propres | ✅ | 1.3 Go, valid=t |
+
+---
+
 ## V2 — Veille augmentée
 
 **Objectif** : aller plus loin dans la personnalisation et l'exploitation de la veille.

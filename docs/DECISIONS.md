@@ -98,21 +98,22 @@ Ne pas revenir sur ces décisions sans bonne raison et mise à jour de ce fichie
 
 ---
 
-## D12 — Drop des index HNSW avant ingestion bulk
+## D12 — Index IVFFlat (pas HNSW) pour `chunks.embedding`
 
-**Décision** : avant toute ingestion bulk (> 100 documents), dropper les index HNSW sur `chunks.embedding` et `chunks.embedding_fr`, puis les recréer après.
-**Raison** : chaque INSERT dans une table avec index HNSW déclenche une mise à jour du graphe de voisinage. Avec m=16 et ef_construction=64, ce surcoût dépasse le timeout statement Supabase (30s) dès que plusieurs chunks sont insérés en parallèle.
-**Procédure** :
+**Décision** : utiliser **IVFFlat** (lists=100) sur `chunks.embedding`, pas HNSW.
+**Raison** : HNSW cause des timeouts (57014) à chaque INSERT car il recalcule le graphe de voisinage. Avec ~15k PDFs à ingérer et des inserts en batch, HNSW est prohibitif. IVFFlat ne se met pas à jour à l'INSERT → aucun timeout d'ingestion.
+**Contrepartie** : l'index IVFFlat se dégrade si de nombreux chunks sont insérés sans rebuild. Procédure : reconstruire avec `CREATE INDEX CONCURRENTLY` après chaque ingestion bulk (> 50k chunks). Durée : 5-15 min.
+**Procédure de rebuild** :
 ```sql
--- Avant ingestion
-DROP INDEX IF EXISTS idx_chunks_embedding;
-DROP INDEX IF EXISTS idx_chunks_embedding_fr;
-
--- Après ingestion
-CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64);
-CREATE INDEX idx_chunks_embedding_fr ON chunks USING hnsw (embedding_fr vector_cosine_ops) WITH (m=16, ef_construction=64);
+DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding;
+CREATE INDEX CONCURRENTLY idx_chunks_embedding
+  ON public.chunks
+  USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);
 ```
-**Conséquence** : pendant l'ingestion, la recherche vectorielle est plus lente (scan séquentiel). Acceptable car l'ingestion se fait en dehors des heures d'usage.
+**Note** : `ingest.py` crée l'index IVFFlat automatiquement via psycopg2 à la fin de chaque run d'ingestion.
+**Conséquence** : pendant l'ingestion (avant rebuild), la recherche vectorielle est plus lente. Acceptable car l'ingestion se fait hors des heures d'usage.
+**Alternative écartée** : HNSW (m=16, ef_construction=64) → timeouts garantis sur ingestion bulk, même avec batch=5.
 
 ---
 
@@ -133,6 +134,33 @@ CREATE INDEX idx_chunks_embedding_fr ON chunks USING hnsw (embedding_fr vector_c
 **Décision** : le script `scripts/ingest.py` insère par batch de 5 chunks avec 3 tentatives (backoff exponentiel) et 0.3s de pause entre batches.
 **Raison** : les timeouts Supabase sont inévitables avec l'index HNSW actif. Le retry permet de ne pas crasher. Le batch petit réduit la probabilité de timeout.
 **Note** : cette décision est temporaire — avec le drop HNSW (D12), on pourra passer à batch=50 sans problème.
+
+---
+
+## D15 — Correction rétroactive du texte espacé dans les chunks
+
+**Décision** : lancer `scripts/fix_spaced_chunks.py --apply` pour corriger le contenu et re-générer les embeddings de tous les chunks avec texte espacé.
+**Constat** : 797 379 chunks sur 848 857 (94%) avaient leur `content` encodé avec des espaces entre chaque caractère (`D   C       m   a   g   n   e   t   i   z   a   t   i   o   n`). Cause : PyMuPDF + certains encodages PDF anciens. L'embedding de `"D   C   ..."` est différent de l'embedding de `"DC magnetization..."` → qualité sémantique dégradée.
+**Solution** :
+1. Détection SQL : `content ~ '([A-Za-z] {2,4}){10,}'` (rapide, ne scanne pas en Python)
+2. Fix Python : `fix_spaced_text()` — supprime les espaces inter-caractères, reconstruit les mots
+3. Re-embed avec `all-MiniLM-L6-v2`
+4. UPDATE `chunks.content` + `chunks.embedding` — trigger met à jour `content_tsv` automatiquement
+5. Rebuild IVFFlat après (embeddings changés)
+**Résultat** : 797 379 chunks corrigés, 0 erreur. Qualité sémantique RAG et comparaison articles auteur améliorée.
+**Script** : `scripts/fix_spaced_chunks.py` (options `--dry-run`, `--apply`, `--limit`, `--author-only`)
+**À refaire si** : nouvelle ingestion bulk de PDFs anciens (vérifier avec `--dry-run` d'abord).
+
+---
+
+## D16 — Embedding moyen pour comparer les articles auteur au corpus
+
+**Décision** : la route `/api/corpus/author-articles/[id]/similar` utilise la **moyenne de tous les embeddings** des chunks d'un article auteur comme vecteur requête, pas le chunk en position=0.
+**Raison** : `position=0` est souvent le header ou la page de garde du PDF — pour les vieux articles, c'est du texte espacé ou des métadonnées. L'embedding de ce chunk est non représentatif du contenu scientifique.
+La moyenne de tous les embeddings capture la sémantique globale de l'article (méthodes, résultats, discussion).
+**Impact observé** : avant la correction, "Furor over quantum computing" (98%) apparaissait comme similaire à un article sur les polyoxomolybdènes. Après : résultats cohérents (coordination chemistry, spin crossover, complexes de métaux de transition).
+**Implémentation** : `averageEmbeddings()` dans `app/api/corpus/author-articles/[id]/similar/route.ts`.
+**Coût** : légèrement plus lent (~3-4s au lieu de ~2s) — on charge tous les chunks de l'article (~163 chunks en moyenne).
 
 ---
 

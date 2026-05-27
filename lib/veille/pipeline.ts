@@ -172,9 +172,14 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }
 
     // ── Phase 7: Insert ────────────────────────────────────────────────────
-    await updateRunPhase(runId, 'items', 0, itemsToInsert.length)
-    console.log(`[pipeline] Inserting ${itemsToInsert.length} items`)
-    const insertedIds = await insertVeilleItemsWithIds(itemsToInsert)
+    const MAX_ITEMS = 1000
+    if (itemsToInsert.length > MAX_ITEMS) {
+      console.warn(`[pipeline] Capping items: ${itemsToInsert.length} → ${MAX_ITEMS} (timeout protection)`)
+    }
+    const cappedItems = itemsToInsert.slice(0, MAX_ITEMS)
+    await updateRunPhase(runId, 'items', 0, cappedItems.length)
+    console.log(`[pipeline] Inserting ${cappedItems.length} items`)
+    const insertedIds = await insertVeilleItemsWithIds(cappedItems)
     stats.inserted = insertedIds.length
 
     // ── Phase 8: Score against corpus (similarity + heuristic + corpus_refs) ─

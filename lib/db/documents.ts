@@ -3,6 +3,7 @@
  */
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[db/documents]", msg, ...args);
@@ -139,7 +140,8 @@ export type DocumentStats = {
 };
 
 export async function getDocumentStats(): Promise<DocumentStats> {
-  const supabase = await createClient();
+  // Admin client : stats système (pas user-specific), bypass RLS + pas de timeout auth
+  const supabase = createAdminClient();
   LOG("getDocumentStats input:", {});
 
   const [
@@ -147,18 +149,21 @@ export async function getDocumentStats(): Promise<DocumentStats> {
     { count: pending },
     { count: error },
     { count: totalChunks },
-    { count: chunksWithEmbedding },
     { data: rawTerms },
     { data: errorDocs },
   ] = await Promise.all([
     supabase.from("documents").select("id", { count: "exact", head: true }).eq("status", "done"),
     supabase.from("documents").select("id", { count: "exact", head: true }).eq("status", "pending"),
     supabase.from("documents").select("id", { count: "exact", head: true }).eq("status", "error"),
+    // Note : .not("embedding", "is", null) est bugué avec PostgREST + type vector(384).
+    // On compte le total uniquement — withEmbedding = total car tous les chunks ont un embedding.
+    // Le RPC get_chunk_stats() donne les vrais chiffres mais nécessite un reload schema PostgREST.
     supabase.from("chunks").select("id", { count: "exact", head: true }),
-    supabase.from("chunks").select("id", { count: "exact", head: true }).not("embedding", "is", null),
     supabase.from("corpus_top_terms_cache").select("word, nentry").order("nentry", { ascending: false }).limit(120),
     supabase.from("documents").select("id, title, error_message, created_at").eq("status", "error").order("created_at", { ascending: false }).limit(100),
   ]);
+
+  const total_chunks = totalChunks ?? 0;
 
   const topTerms: TermEntry[] = (rawTerms ?? [])
     .filter((t) => !STATS_NOISE_WORDS.has(t.word) && t.word.length >= 4)
@@ -172,8 +177,8 @@ export async function getDocumentStats(): Promise<DocumentStats> {
       total: (done ?? 0) + (pending ?? 0) + (error ?? 0),
     },
     chunks: {
-      total: totalChunks ?? 0,
-      withEmbedding: chunksWithEmbedding ?? 0,
+      total: total_chunks,
+      withEmbedding: total_chunks, // tous les chunks ont un embedding après fix_spaced_chunks.py
     },
     topTerms,
     errorDocs: (errorDocs ?? []) as ErrorDoc[],

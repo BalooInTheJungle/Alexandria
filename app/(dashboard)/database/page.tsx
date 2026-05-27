@@ -28,9 +28,27 @@ type UploadResult = {
   skipped?: boolean;
 };
 
+type AuthorArticleUI = {
+  id: string;
+  title: string | null;
+  journal: string | null;
+  year: number | null;
+  doi: string | null;
+};
+
+type SimilarDocUI = {
+  document_id: string;
+  title: string | null;
+  journal: string | null;
+  year: number | null;
+  doi: string | null;
+  best_similarity: number;
+  best_chunk: string | null;
+};
+
 type MapPoint = { id: string; x: number; y: number; doc_id: string; doc_title: string | null; year: number | null };
-type CleracDoc = { id: string; title: string | null; year: number | null; authors: string[] };
 type TimelinePoint = { year: number; count: number };
+type JournalStat = { journal: string; count: number };
 
 type QueryAnalytics = {
   total: number;
@@ -103,6 +121,21 @@ function kmeansCluster(pts: { x: number; y: number }[], k: number): number[] {
   return assignments;
 }
 
+function medianYear(years: number[]): number | null {
+  const valid = years.filter((y) => y > 1900);
+  if (!valid.length) return null;
+  valid.sort((a, b) => a - b);
+  return valid[Math.floor(valid.length / 2)];
+}
+
+function freshnessInfo(year: number | null): { badge: string; colorClass: string } | null {
+  if (year === null) return null;
+  if (year >= 2020) return { badge: `${year} · Actif`, colorClass: "text-emerald-600 dark:text-emerald-400" };
+  if (year >= 2015) return { badge: `${year} · Récent`, colorClass: "text-yellow-600 dark:text-yellow-400" };
+  if (year >= 2010) return { badge: `${year} · Vieillissant`, colorClass: "text-orange-500 dark:text-orange-400" };
+  return { badge: `${year} · Ancien`, colorClass: "text-red-600 dark:text-red-400" };
+}
+
 function clusterLabel(titles: (string | null)[]): string {
   const freq: Record<string, number> = {};
   for (const title of titles) {
@@ -114,9 +147,9 @@ function clusterLabel(titles: (string | null)[]): string {
   return (
     Object.entries(freq)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([w]) => w)
-      .join(" · ") || "Cluster"
+      .slice(0, 4)
+      .map(([w]) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(", ") || "Cluster"
   );
 }
 
@@ -135,6 +168,7 @@ function CorpusMap({ points }: { points: MapPoint[] }) {
       data: g.map((e) => e.pt),
       label: clusterLabel(g.map((e) => e.title)),
       color: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
+      medYear: medianYear(g.map((e) => e.pt.year).filter((y): y is number => y != null)),
     }));
   }, [points]);
 
@@ -172,11 +206,18 @@ function CorpusMap({ points }: { points: MapPoint[] }) {
         </ScatterChart>
       </ResponsiveContainer>
       {clusterData && (
-        <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3">
           {clusterData.map((cluster, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs min-w-0">
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cluster.color }} />
-              <span className="truncate text-muted-foreground capitalize">{cluster.label}</span>
+            <div key={i} className="flex items-start gap-2 text-xs">
+              <span className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5" style={{ backgroundColor: cluster.color }} />
+              <div className="min-w-0">
+                <p className="text-muted-foreground leading-snug break-words">{cluster.label}</p>
+                {freshnessInfo(cluster.medYear) && (
+                  <p className={`text-[11px] font-medium ${freshnessInfo(cluster.medYear)!.colorClass}`}>
+                    {freshnessInfo(cluster.medYear)!.badge}
+                  </p>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -245,109 +286,46 @@ function TimelineChart({ data }: { data: TimelinePoint[] }) {
   );
 }
 
-function CleracSection({ docs }: { docs: CleracDoc[] }) {
-  if (!docs.length) return (
-    <p className="text-sm text-muted-foreground">Aucune publication trouvée pour Rodolphe Clérac.</p>
+function JournalsChart({ data }: { data: JournalStat[] }) {
+  if (!data.length) return (
+    <p className="text-sm text-muted-foreground py-8 text-center">
+      Aucun journal renseigné dans le corpus.
+    </p>
   );
+  const max = data[0]?.count ?? 1;
   return (
-    <ul className="divide-y divide-border rounded border">
-      {docs.map((doc) => (
-        <li key={doc.id} className="flex items-start justify-between gap-4 px-4 py-3">
-          <span className="text-sm leading-snug line-clamp-2">
-            {doc.title ?? <span className="italic text-muted-foreground">Sans titre</span>}
-          </span>
-          {doc.year && (
-            <span className="text-xs text-muted-foreground tabular-nums shrink-0 mt-0.5">{doc.year}</span>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function CorpusMapV2({ points, cleracDocIds }: { points: MapPoint[]; cleracDocIds: Set<string> }) {
-  const clusterData = useMemo(() => {
-    if (!points.length) return null;
-    const assignments = kmeansCluster(points.map((p) => ({ x: p.x, y: p.y })), K_CLUSTERS);
-    const groups: { pt: ClusterPoint; title: string | null }[][] = Array.from({ length: K_CLUSTERS }, () => []);
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i];
-      groups[assignments[i]].push({ pt: { x: p.x, y: p.y, name: p.doc_title ?? "Sans titre", year: p.year }, title: p.doc_title });
-    }
-    return groups.map((g, i) => ({
-      data: g.map((e) => e.pt),
-      label: clusterLabel(g.map((e) => e.title)),
-      color: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
-    }));
-  }, [points]);
-
-  const cleracPoints: ClusterPoint[] = useMemo(
-    () => points.filter((p) => cleracDocIds.has(p.doc_id)).map((p) => ({
-      x: p.x, y: p.y, name: p.doc_title ?? "Sans titre", year: p.year,
-    })),
-    [points, cleracDocIds]
-  );
-
-  if (!points.length) return (
-    <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
-      <p className="text-sm text-muted-foreground">
-        Carte non disponible — lance <code className="bg-muted px-1 rounded text-xs">scripts/compute_umap.py</code> pour calculer les coordonnées.
-      </p>
-    </div>
-  );
-
-  return (
-    <div>
-      <ResponsiveContainer width="100%" height={440}>
-        <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-          <XAxis type="number" dataKey="x" hide domain={["auto", "auto"]} />
-          <YAxis type="number" dataKey="y" hide domain={["auto", "auto"]} />
-          <ZAxis range={[5, 5]} />
-          <Tooltip
-            cursor={{ strokeDasharray: "3 3" }}
-            content={({ payload }) => {
-              const p = payload?.[0]?.payload as ClusterPoint | undefined;
-              if (!p) return null;
-              return (
-                <div className="rounded border bg-background px-3 py-2 text-xs shadow max-w-[220px]">
-                  <p className="font-medium line-clamp-2 leading-snug">{p.name}</p>
-                  {p.year && <p className="text-muted-foreground mt-1">{p.year}</p>}
-                </div>
-              );
-            }}
-          />
-          {clusterData?.map((cluster, i) => (
-            <Scatter key={i} name={cluster.label} data={cluster.data} fill={cluster.color} fillOpacity={0.55} />
-          ))}
-          {cleracPoints.length > 0 && (
-            <Scatter
-              name="Rodolphe Clérac"
-              data={cleracPoints}
-              fill="#ff6b00"
-              stroke="#fff"
-              strokeWidth={1}
-              fillOpacity={1}
+    <ResponsiveContainer width="100%" height={data.length * 32 + 16}>
+      <BarChart
+        data={data}
+        layout="vertical"
+        margin={{ top: 0, right: 48, bottom: 0, left: 8 }}
+      >
+        <XAxis type="number" hide domain={[0, max]} />
+        <YAxis
+          type="category"
+          dataKey="journal"
+          width={180}
+          tick={{ fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={(v: string) => v.length > 28 ? v.slice(0, 27) + "…" : v}
+        />
+        <Tooltip
+          cursor={{ fill: "hsl(var(--muted))" }}
+          formatter={(v) => [v, "documents"]}
+          contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid hsl(var(--border))" }}
+        />
+        <Bar dataKey="count" radius={[0, 3, 3, 0]}>
+          {data.map((entry, i) => (
+            <Cell
+              key={entry.journal}
+              fill="hsl(var(--primary))"
+              fillOpacity={0.85 - (i / data.length) * 0.5}
             />
-          )}
-        </ScatterChart>
-      </ResponsiveContainer>
-      <div className="mt-4 space-y-2">
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
-          {clusterData?.map((cluster, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs min-w-0">
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cluster.color }} />
-              <span className="truncate text-muted-foreground capitalize">{cluster.label}</span>
-            </div>
           ))}
-        </div>
-        {cleracPoints.length > 0 && (
-          <div className="flex items-center gap-2 text-xs">
-            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: "#ff6b00" }} />
-            <span className="text-foreground font-medium">Rodolphe Clérac ({cleracPoints.length} chunks)</span>
-          </div>
-        )}
-      </div>
-    </div>
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -424,14 +402,278 @@ function KpiCard({
   );
 }
 
+/**
+ * Détecte le texte espacé des vieux PDFs : "K a s u y a – Y o s i d a..."
+ * Si > 50% des mots sont des caractères isolés → texte inutilisable à l'affichage.
+ */
+function isSpacedText(text: string): boolean {
+  const words = text.trim().split(/\s+/);
+  if (words.length < 8) return false;
+  const singleChars = words.filter((w) => w.length <= 1).length;
+  return singleChars / words.length > 0.5;
+}
+
+function SimilarityBadge({ score }: { score: number }) {
+  const pct = Math.round(score * 100);
+  const colorClass =
+    pct >= 80 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" :
+    pct >= 60 ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300" :
+                "bg-muted text-muted-foreground";
+  return (
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full tabular-nums shrink-0 ${colorClass}`}>
+      {pct}%
+    </span>
+  );
+}
+
+function AuthorArticlesSection() {
+  const [articles, setArticles] = useState<AuthorArticleUI[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [similarMap, setSimilarMap] = useState<Record<string, SimilarDocUI[]>>({});
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [errorId, setErrorId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [yearFilter, setYearFilter] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
+
+  useEffect(() => {
+    console.log("[AuthorArticlesSection] fetching author articles");
+    (async () => {
+      try {
+        const res = await fetch("/api/corpus/author-articles?pageSize=200");
+        if (res.ok) {
+          const data = await res.json();
+          setArticles(data.articles ?? []);
+          setTotal(data.total ?? 0);
+          console.log("[AuthorArticlesSection] loaded:", data.total);
+        }
+      } catch (e) {
+        console.error("[AuthorArticlesSection] error:", e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleSelect = async (id: string) => {
+    if (selectedId === id) { setSelectedId(null); return; }
+    setSelectedId(id);
+    setErrorId(null);
+    if (similarMap[id]) return;
+    setLoadingId(id);
+    console.log("[AuthorArticlesSection] fetching similar for:", id);
+    try {
+      const res = await fetch(`/api/corpus/author-articles/${id}/similar?limit=10`);
+      if (res.ok) {
+        const data = await res.json();
+        setSimilarMap((prev) => ({ ...prev, [id]: data.results ?? [] }));
+        console.log("[AuthorArticlesSection] similar loaded:", data.results?.length ?? 0);
+      } else {
+        setErrorId(id);
+        console.error("[AuthorArticlesSection] similar error:", res.status);
+      }
+    } catch (e) {
+      setErrorId(id);
+      console.error("[AuthorArticlesSection] similar fetch error:", e);
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  // Années disponibles (triées desc)
+  const years = useMemo(() => {
+    const set = new Set(articles.map((a) => a.year).filter((y): y is number => y !== null));
+    return Array.from(set).sort((a, b) => b - a);
+  }, [articles]);
+
+  // Articles filtrés
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return articles.filter((a) => {
+      if (yearFilter && a.year !== yearFilter) return false;
+      if (q && !(a.title ?? "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [articles, search, yearFilter]);
+
+  if (loading) {
+    return <p className="text-sm text-muted-foreground py-8 text-center">Chargement des articles…</p>;
+  }
+  if (!articles.length) {
+    return (
+      <p className="text-sm text-muted-foreground py-8 text-center">
+        Aucun article auteur indexé. Lancez <code className="bg-muted px-1 rounded text-xs">python3 ingest.py --author</code>.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Barre de recherche + filtre année */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <input
+          type="text"
+          placeholder="Rechercher par titre…"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setSelectedId(null); setPage(1); }}
+          className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        <select
+          value={yearFilter ?? ""}
+          onChange={(e) => { setYearFilter(e.target.value ? parseInt(e.target.value) : null); setSelectedId(null); setPage(1); }}
+          className="rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Toutes les années</option>
+          {years.map((y) => (
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Compteur */}
+      {(() => {
+        const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+        const safePage = Math.min(page, Math.max(1, totalPages));
+        const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+        return (
+          <>
+            <p className="text-xs text-muted-foreground">
+              {filtered.length === total
+                ? `${total} articles publiés indexés`
+                : `${filtered.length} résultat${filtered.length > 1 ? "s" : ""} sur ${total} articles`}
+              {filtered.length > 0 && ` · page ${safePage}/${totalPages}`}
+              {" · "}Cliquez pour voir les similaires dans le corpus
+            </p>
+
+            {filtered.length === 0 && (
+              <p className="text-sm text-muted-foreground py-8 text-center">
+                Aucun article ne correspond à cette recherche.
+              </p>
+            )}
+
+            <ul className="divide-y divide-border rounded border">
+              {paginated.map((article) => {
+          const isOpen = selectedId === article.id;
+          const isLoadingThis = loadingId === article.id;
+          const similar = similarMap[article.id];
+          const hasError = errorId === article.id;
+
+          return (
+            <li key={article.id}>
+              {/* ── En-tête de l'article auteur ── */}
+              <button
+                className="w-full text-left px-4 py-3 hover:bg-muted/40 transition-colors flex items-start justify-between gap-4"
+                onClick={() => handleSelect(article.id)}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium line-clamp-1">
+                    {article.title ?? <span className="italic text-muted-foreground">Sans titre</span>}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {[article.journal, article.year].filter(Boolean).join(" · ")}
+                    {article.doi && (
+                      <span className="ml-2 opacity-60">DOI: {article.doi}</span>
+                    )}
+                  </p>
+                </div>
+                <span className="text-muted-foreground text-xs shrink-0 mt-0.5 select-none">
+                  {isOpen ? "▲" : "▼"}
+                </span>
+              </button>
+
+              {/* ── Panneau similaires ── */}
+              {isOpen && (
+                <div className="px-4 pb-4 bg-muted/20 border-t">
+                  {isLoadingThis && (
+                    <p className="text-sm text-muted-foreground py-4 text-center">
+                      Recherche dans le corpus…
+                    </p>
+                  )}
+                  {hasError && !isLoadingThis && (
+                    <p className="text-sm text-destructive py-4 text-center">
+                      Erreur lors de la recherche. Réessayez dans quelques secondes.
+                    </p>
+                  )}
+                  {!isLoadingThis && !hasError && similar?.length === 0 && (
+                    <p className="text-sm text-muted-foreground py-4 text-center">
+                      Aucun document suffisamment similaire trouvé dans le corpus (seuil 30%).
+                    </p>
+                  )}
+                  {!isLoadingThis && !hasError && similar && similar.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        Documents corpus similaires
+                      </p>
+                      {similar.map((doc) => (
+                        <div
+                          key={doc.document_id}
+                          className="rounded border bg-background px-3 py-2.5"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium line-clamp-2 leading-snug">
+                                {doc.title ?? <span className="italic text-muted-foreground">Sans titre</span>}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {[doc.journal, doc.year].filter(Boolean).join(" · ")}
+                              </p>
+                              {doc.best_chunk && !isSpacedText(doc.best_chunk) && (
+                                <p className="text-xs text-muted-foreground mt-1 line-clamp-2 italic leading-relaxed">
+                                  &ldquo;{doc.best_chunk.trim()}&rdquo;
+                                </p>
+                              )}
+                            </div>
+                            <SimilarityBadge score={doc.best_similarity} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  onClick={() => { setPage((p) => Math.max(1, p - 1)); setSelectedId(null); }}
+                  disabled={safePage <= 1}
+                  className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-muted transition-colors"
+                >
+                  ← Précédent
+                </button>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {safePage} / {totalPages}
+                </span>
+                <button
+                  onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); setSelectedId(null); }}
+                  disabled={safePage >= totalPages}
+                  className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-40 hover:bg-muted transition-colors"
+                >
+                  Suivant →
+                </button>
+              </div>
+            )}
+          </>
+        );
+      })()}
+    </div>
+  );
+}
+
 export default function DatabasePage() {
   const [stats, setStats] = useState<DocumentStats | null>(null);
-  const [analytics, setAnalytics] = useState<QueryAnalytics | null>(null);
   const [mapPoints, setMapPoints] = useState<MapPoint[]>([]);
   const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
-  const [cleracDocs, setCleracDocs] = useState<CleracDoc[]>([]);
-  const [cleracDocIds, setCleracDocIds] = useState<Set<string>>(new Set());
-  const [cleracTotal, setCleracTotal] = useState<number | null>(null);
+  const [journals, setJournals] = useState<JournalStat[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadResults, setUploadResults] = useState<UploadResult[] | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -440,16 +682,14 @@ export default function DatabasePage() {
     let cancelled = false;
     (async () => {
       try {
-        const [resStats, resAnalytics, resMap, resTimeline, resClerac] = await Promise.all([
+        const [resStats, resMap, resTimeline, resJournals] = await Promise.all([
           fetch("/api/documents/stats"),
-          fetch("/api/analytics/overview"),
           fetch("/api/corpus/map"),
           fetch("/api/corpus/timeline"),
-          fetch("/api/corpus/clerac"),
+          fetch("/api/corpus/journals"),
         ]);
         if (!cancelled) {
           if (resStats.ok) setStats(await resStats.json());
-          if (resAnalytics.ok) setAnalytics(await resAnalytics.json());
           if (resMap.ok) {
             const mapData = await resMap.json();
             setMapPoints(mapData.points ?? []);
@@ -458,11 +698,9 @@ export default function DatabasePage() {
             const tlData = await resTimeline.json();
             setTimeline(tlData.timeline ?? []);
           }
-          if (resClerac.ok) {
-            const clData = await resClerac.json();
-            setCleracDocs(clData.docs ?? []);
-            setCleracDocIds(new Set(clData.docIds ?? []));
-            if (clData.openAlexTotal != null) setCleracTotal(clData.openAlexTotal);
+          if (resJournals.ok) {
+            const jData = await resJournals.json();
+            setJournals(jData.journals ?? []);
           }
         }
       } catch {
@@ -583,61 +821,16 @@ export default function DatabasePage() {
         />
       </div>
 
-      {/* Analytics comportement chercheur */}
+      {/* Top journaux */}
       <Card>
         <CardHeader>
-          <CardTitle>Activité du chercheur — 30 derniers jours</CardTitle>
+          <CardTitle>Top journaux du corpus</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div>
-              <p className="text-xs text-muted-foreground">Requêtes totales</p>
-              <p className="text-2xl font-semibold tabular-nums">
-                {analytics ? analytics.total.toLocaleString("fr-FR") : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Ce mois-ci</p>
-              <p className="text-2xl font-semibold tabular-nums">
-                {analytics ? analytics.last30Days.toLocaleString("fr-FR") : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Hors corpus (garde-fou)</p>
-              <p className={`text-2xl font-semibold tabular-nums ${analytics && analytics.guardrailedPct > 30 ? "text-destructive" : ""}`}>
-                {analytics ? `${analytics.guardrailedPct}%` : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Requêtes en français</p>
-              <p className="text-2xl font-semibold tabular-nums">
-                {analytics ? `${analytics.langFrPct}%` : "—"}
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <p className="text-sm font-medium mb-3">Requêtes par jour</p>
-            <ActivityChart data={analytics?.dailyStats ?? []} />
-          </div>
-
-          {analytics && analytics.topQueries.length > 0 && (
-            <div>
-              <p className="text-sm font-medium mb-2">Questions les plus fréquentes</p>
-              <ul className="space-y-1">
-                {analytics.topQueries.map((q, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <span className="text-muted-foreground tabular-nums w-6 shrink-0">{q.count}×</span>
-                    <span className="text-foreground line-clamp-1">{q.query_text}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {analytics && analytics.total === 0 && (
-            <p className="text-sm text-muted-foreground">
-              Aucune requête encore loggée. Le logging démarre à partir de maintenant.
+        <CardContent>
+          <JournalsChart data={journals} />
+          {journals.length > 0 && (
+            <p className="mt-3 text-xs text-muted-foreground text-center">
+              {journals.length} journaux distincts affichés · {journals.reduce((s, j) => s + j.count, 0).toLocaleString("fr-FR")} documents avec journal renseigné
             </p>
           )}
         </CardContent>
@@ -673,32 +866,13 @@ export default function DatabasePage() {
         </CardContent>
       </Card>
 
-      {/* Publications Clérac */}
+      {/* Articles publiés du chercheur — comparaison corpus */}
       <Card>
         <CardHeader>
-          <CardTitle>Publications de Rodolphe Clérac</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            {cleracDocs.length} publication{cleracDocs.length !== 1 ? "s" : ""} dans le corpus
-            {cleracTotal != null && ` · ${cleracTotal} publications au total sur OpenAlex · couverture ${Math.round((cleracDocs.length / Math.max(cleracTotal, 1)) * 100)}%`}
-          </p>
-          <CleracSection docs={cleracDocs} />
-        </CardContent>
-      </Card>
-
-      {/* Carte UMAP v2 — Clérac mis en évidence */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Carte du corpus v2 — publications de Clérac</CardTitle>
+          <CardTitle>Articles publiés du chercheur — liens avec le corpus</CardTitle>
         </CardHeader>
         <CardContent>
-          <CorpusMapV2 points={mapPoints} cleracDocIds={cleracDocIds} />
-          {mapPoints.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground text-center">
-              Clusters colorés · points orange = publications de Rodolphe Clérac
-            </p>
-          )}
+          <AuthorArticlesSection />
         </CardContent>
       </Card>
 
