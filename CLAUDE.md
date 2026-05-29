@@ -201,13 +201,18 @@ data/Articles auteur/      # PDFs articles publiés du chercheur (non versionné
 
 ### Pipeline Veille
 
-Déclenchée par bouton UI ou cron Vercel (6h UTC) :
+Déclenchée par bouton UI (`/api/veille/scrape`) ou cron GitHub Actions (2h Paris → `/api/cron/veille`) :
 1. `createRun()` → `veille_runs` avec `status=running`
 2. Sources RSS (43 journaux) → titre, DOI, abstract, auteurs — filtre 7 jours — dédup DOI
 3. Enrichissement OpenAlex en batch (abstracts manquants ACS)
 4. Sources OpenAlex directes (MDPI et similaires)
 5. Insert par batch de 50 → `scoreVeilleItems()` → embed abstract → `match_chunks` → `similarity_score`
-6. `completeRun(runId, 'completed'|'failed')`
+6. Cap `MAX_ITEMS = 1000` — scoring des 1000 articles les plus récents (~40 min sur Hobby)
+7. Résumé IA : top 8 articles (≥30%) → GPT-4o-mini → `saveRunSummary()` (timeout 120s)
+8. `completeRun(runId, 'completed'|'failed')`
+
+> **`waitUntil`** (`@vercel/functions`) sur les deux routes — répond immédiatement, pipeline en background.
+> **Fallback** : si GPT échoue, `high_score_count` est sauvegardé sans `ai_summary`.
 
 ### Base de données — points critiques
 
@@ -226,11 +231,13 @@ Déclenchée par bouton UI ou cron Vercel (6h UTC) :
 | `lib/supabase/server.ts` | Server (cookies) | API routes (RLS authenticated) |
 | `lib/supabase/admin.ts` | Service role | Cron, ingestion |
 
-### Déploiement Vercel
+### Déploiement Vercel + GitHub Actions
 
-- `vercel.json` : cron `GET /api/cron/retention` à 4h UTC, `GET /api/cron/veille` à 6h UTC
+- `vercel.json` : cron `GET /api/cron/retention` à 4h UTC (rétention)
+- **Cron veille** : GitHub Actions (`.github/workflows/veille-cron.yml`) — 0h UTC (2h Paris) → appelle `/api/cron/veille`
+  - Secrets GitHub requis : `CRON_SECRET`, `VERCEL_APP_URL` (= `https://alexandria-dusky.vercel.app`)
 - `OPENAI_API_KEY` : uniquement des caractères ASCII imprimables (sanitisation déjà en place)
-- `maxDuration=300` sur la route veille (pipeline longue)
+- Plan Hobby : pas de `maxDuration` — pipeline tourne via `waitUntil` (~40 min, Vercel le supporte)
 
 ---
 
@@ -243,7 +250,9 @@ Déclenchée par bouton UI ou cron Vercel (6h UTC) :
 | Paramètres RAG (rag_settings) | ✅ Fonctionnel |
 | Pipeline veille (RSS + OpenAlex + scoring) | ✅ Fonctionnel |
 | Sélecteur seuil veille (20→70%, défaut 30%) | ✅ Fonctionnel |
-| Résumé IA veille (GPT-4o-mini, thèmes + articles) | ✅ Fonctionnel |
+| Résumé IA veille (GPT-4o-mini, top 8 articles ≥30%) | ✅ Fonctionnel |
+| Cron veille automatique (GitHub Actions, 2h Paris) | ✅ Fonctionnel |
+| Résumé IA sur page détail run historique | ✅ Fonctionnel |
 | Cron rétention 30 jours | ✅ Fonctionnel |
 | Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
 | Logs requêtes RAG (query_logs) | ✅ Fonctionnel |
