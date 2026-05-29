@@ -6,12 +6,12 @@ import OpenAI from 'openai'
 import type { CorpusRef } from '../db/types'
 
 const SCORE_THRESHOLD    = 0.75
-const MAX_ARTICLES       = 15
-const MAX_ABSTRACT_CHARS = 500
-const MAX_EXCERPT_CHARS  = 250
+const MAX_ARTICLES       = 8
+const MAX_ABSTRACT_CHARS = 300
+const MAX_EXCERPT_CHARS  = 150
 
 function getOpenAI() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60_000 })
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 120_000 })
 }
 
 interface ArticleInput {
