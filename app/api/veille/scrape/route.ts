@@ -1,7 +1,8 @@
 // POST /api/veille/scrape — triggers the veille pipeline (fire and forget)
-// Returns immediately; pipeline runs in background
+// Returns immediately; pipeline runs in background via waitUntil
 
 import { NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { runVeillePipeline } from '../../../../lib/veille/pipeline'
@@ -25,9 +26,10 @@ export async function POST() {
 
   const runId = await createRun()
 
-  // Fire and forget — pipeline runs async in background
-  runVeillePipeline(runId).catch(err =>
-    console.error('[/api/veille/scrape] Pipeline error:', err.message)
+  waitUntil(
+    runVeillePipeline(runId)
+      .then(stats => console.log(`[/api/veille/scrape] Done — inserted=${stats.inserted} skipped=${stats.skipped}`))
+      .catch(err => console.error('[/api/veille/scrape] Pipeline error:', err.message))
   )
 
   console.log(`[/api/veille/scrape] Pipeline started run=${runId}`)
