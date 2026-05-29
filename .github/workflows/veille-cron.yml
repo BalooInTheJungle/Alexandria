@@ -1,0 +1,27 @@
+name: Veille quotidienne
+
+on:
+  schedule:
+    # 2h du matin heure Paris (UTC+2 en été, UTC+1 en hiver)
+    # 0h UTC = 2h Paris (heure d'été)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # permet de lancer manuellement depuis GitHub
+
+jobs:
+  run-veille:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Déclencher le pipeline veille
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_APP_URL }}/api/cron/veille")
+
+          echo "HTTP status: $response"
+
+          if [ "$response" != "200" ]; then
+            echo "Erreur : le pipeline veille a retourné HTTP $response"
+            exit 1
+          fi
+
+          echo "Pipeline veille démarré avec succès"
