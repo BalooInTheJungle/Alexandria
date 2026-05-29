@@ -50,6 +50,9 @@ interface RunSummary {
   scored: number;
   best: number | null;
   avg: number | null;
+  ai_summary: string | null;
+  high_score_count: number | null;
+  score_threshold: number | null;
 }
 
 interface LiveStatus {
@@ -77,6 +80,7 @@ function StatusDot({ status }: { status: string }) {
 }
 
 function RunRow({ run, onSelect }: { run: RunSummary; onSelect?: () => void }) {
+  const [expanded, setExpanded] = useState(false);
   const date = new Date(run.started_at).toLocaleString("fr-FR", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
@@ -86,31 +90,49 @@ function RunRow({ run, onSelect }: { run: RunSummary; onSelect?: () => void }) {
     : null;
 
   return (
-    <div className="flex items-center gap-4 px-4 py-3 border-b border-border last:border-0 text-sm">
-      <StatusDot status={run.status} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-3">
-          <span className="text-muted-foreground text-xs">{date}</span>
-          {duration && <span className="text-muted-foreground text-xs">{duration}s</span>}
+    <div className="border-b border-border last:border-0">
+      <div className="flex items-center gap-4 px-4 py-3 text-sm">
+        <StatusDot status={run.status} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-xs">{date}</span>
+            {duration && <span className="text-muted-foreground text-xs">{duration}s</span>}
+          </div>
+          {run.error_message && (
+            <p className="text-xs text-destructive truncate">{run.error_message}</p>
+          )}
         </div>
-        {run.error_message && (
-          <p className="text-xs text-destructive truncate">{run.error_message}</p>
-        )}
+        <div className="text-right text-xs text-muted-foreground shrink-0">
+          {run.total > 0 ? (
+            <>
+              <div>{run.total} articles</div>
+              {run.high_score_count !== null && run.score_threshold !== null && (
+                <div>{run.high_score_count} ≥ {Math.round((run.score_threshold) * 100)}%</div>
+              )}
+            </>
+          ) : (
+            <div>—</div>
+          )}
+        </div>
+        <div className="flex gap-2 shrink-0">
+          {run.ai_summary && (
+            <Button size="sm" variant="ghost" onClick={() => setExpanded(e => !e)} className="text-xs h-7">
+              {expanded ? "Masquer" : "Résumé IA"}
+            </Button>
+          )}
+          {onSelect && run.status === "completed" && run.total > 0 && (
+            <Button size="sm" variant="outline" onClick={onSelect} className="text-xs h-7">
+              Voir
+            </Button>
+          )}
+        </div>
       </div>
-      <div className="text-right text-xs text-muted-foreground shrink-0">
-        {run.total > 0 ? (
-          <>
-            <div>{run.total} articles</div>
-            {run.best !== null && <div>meilleur {Math.round(run.best * 100)}%</div>}
-          </>
-        ) : (
-          <div>—</div>
-        )}
-      </div>
-      {onSelect && run.status === "completed" && run.total > 0 && (
-        <Button size="sm" variant="outline" onClick={onSelect} className="text-xs h-7">
-          Voir
-        </Button>
+      {expanded && run.ai_summary && (
+        <div className="px-4 pb-4">
+          <div className="rounded-md bg-muted/50 p-3 text-xs text-foreground whitespace-pre-wrap leading-relaxed">
+            {run.ai_summary}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -179,7 +201,21 @@ export default function VeilleDashboard() {
     const res = await fetch("/api/veille/runs");
     if (res.ok) {
       const json = await res.json();
-      setRuns(json.runs ?? []);
+      const raw = Array.isArray(json) ? json : (json.runs ?? []);
+      setRuns(raw.map((r: any) => ({
+        id: r.id,
+        status: r.status,
+        started_at: r.started_at,
+        completed_at: r.completed_at,
+        error_message: r.error_message,
+        total: r.items_count ?? 0,
+        scored: r.scored ?? 0,
+        best: r.best ?? null,
+        avg: r.avg ?? null,
+        ai_summary: r.ai_summary ?? null,
+        high_score_count: r.high_score_count ?? null,
+        score_threshold: r.score_threshold ?? null,
+      })));
     }
     setLoadingRuns(false);
   }, []);
