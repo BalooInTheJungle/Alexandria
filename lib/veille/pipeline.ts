@@ -41,6 +41,7 @@ async function fetchRssInParallel(sources: RssSource[]): Promise<Map<string, Rss
 }
 
 export async function runVeillePipeline(existingRunId?: string): Promise<{ inserted: number; skipped: number; errors: number }> {
+  const pipelineStart = Date.now()
   console.log(`[pipeline] Starting (lookback=${LOOKBACK_DAYS}d, rss_concurrency=${PARALLEL_RSS_CONCURRENCY})`)
   const runId = existingRunId ?? await createRun()
   const stats = { inserted: 0, skipped: 0, errors: 0 }
@@ -227,17 +228,15 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       corpus_refs:      bothScores.get(item.id)?.refs ?? [],
     }))
 
-    console.log('[pipeline] Generating AI summary')
     const THRESHOLD = 0.30
     const eligibleCount = scoredForSummary.filter(i => (i.similarity_score ?? 0) >= THRESHOLD).length
-    console.log(`[pipeline] ${eligibleCount} articles >= ${THRESHOLD} eligible for summary`)
+    console.log(`[pipeline] Phase 9: AI summary — ${eligibleCount} articles >= ${THRESHOLD}, total elapsed=${Math.round((Date.now() - pipelineStart) / 1000)}s`)
     try {
       const { summary, highScoreCount } = await generateVeilleSummary(scoredForSummary, THRESHOLD)
       await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: THRESHOLD })
-      console.log(`[pipeline] AI summary saved — ${highScoreCount} articles >= ${THRESHOLD}`)
+      console.log(`[pipeline] AI summary saved — ${highScoreCount} articles, elapsed=${Math.round((Date.now() - pipelineStart) / 1000)}s`)
     } catch (err: any) {
-      console.error('[pipeline] AI summary failed (non-fatal):', err.message, err.stack?.slice(0, 300))
-      // Save count even if OpenAI failed
+      console.error('[pipeline] AI summary failed (non-fatal):', err.message)
       await saveRunSummary(runId, { aiSummary: '', highScoreCount: eligibleCount, scoreThreshold: THRESHOLD })
         .catch(() => {})
     }

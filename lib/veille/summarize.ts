@@ -11,7 +11,7 @@ const MAX_ABSTRACT_CHARS = 300
 const MAX_EXCERPT_CHARS  = 150
 
 function getOpenAI() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 120_000 })
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 180_000 })
 }
 
 interface ArticleInput {
@@ -133,18 +133,27 @@ export async function generateVeilleSummary(
   const prompt = buildPrompt(toProcess)
 
   console.log(`[summarize] Calling GPT — ${toProcess.length} articles, corpus_refs pre-computed`)
+  const gptStart = Date.now()
 
-  const response = await openai.chat.completions.create({
-    model:           'gpt-4o-mini',
-    max_tokens:      8000,
-    temperature:     0.3,
-    response_format: { type: 'json_object' },
-    messages:        [{ role: 'user', content: prompt }],
-  })
+  let response
+  try {
+    response = await openai.chat.completions.create({
+      model:           'gpt-4o-mini',
+      max_tokens:      4000,
+      temperature:     0.3,
+      response_format: { type: 'json_object' },
+      messages:        [{ role: 'user', content: prompt }],
+    })
+  } catch (gptErr: any) {
+    const elapsed = Math.round((Date.now() - gptStart) / 1000)
+    console.error(`[summarize] GPT call failed after ${elapsed}s — status=${gptErr.status ?? 'n/a'} type=${gptErr.type ?? 'n/a'} message=${gptErr.message}`)
+    throw gptErr
+  }
 
+  const elapsed = Math.round((Date.now() - gptStart) / 1000)
   const summary = response.choices[0]?.message?.content
     ?? JSON.stringify({ themes: [], articles: [] })
 
-  console.log(`[summarize] Done — ${summary.length} chars`)
+  console.log(`[summarize] Done in ${elapsed}s — ${summary.length} chars`)
   return { summary, highScoreCount }
 }
