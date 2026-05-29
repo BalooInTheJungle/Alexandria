@@ -54,13 +54,17 @@ export async function listVeilleRuns(limit = 50): Promise<VeilleRunRow[]> {
 export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWithCount[]> {
   const supabase = await createClient()
   const lim = Math.max(1, Math.min(100, limit))
-  const { data, error } = await supabase.rpc('get_veille_runs_with_counts', { lim })
+  const { data, error } = await supabase
+    .from('veille_runs')
+    .select('id, status, started_at, completed_at, error_message, created_at, ai_summary, high_score_count, score_threshold, veille_items(count)')
+    .order('created_at', { ascending: false })
+    .limit(lim)
   if (error) { LOG('listVeilleRunsWithCounts error', error.message); throw error }
-  const rows = (data ?? []) as (VeilleRunRow & { items_count: string })[]
+  const rows = (data ?? []) as any[]
   LOG('listVeilleRunsWithCounts', { count: rows.length })
   return rows.map((r) => ({
     ...r,
-    items_count: typeof r.items_count === 'number' ? r.items_count : parseInt(String(r.items_count), 10) || 0,
+    items_count: r.veille_items?.[0]?.count ?? 0,
   }))
 }
 

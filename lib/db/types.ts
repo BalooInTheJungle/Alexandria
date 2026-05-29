@@ -42,6 +42,12 @@ export type VeilleRun = {
   id: string;
   status: string;
   created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+  ai_summary?: string | null;
+  high_score_count?: number | null;
+  score_threshold?: number | null;
 };
 
 export type CorpusRef = {

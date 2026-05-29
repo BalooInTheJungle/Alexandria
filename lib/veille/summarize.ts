@@ -11,7 +11,7 @@ const MAX_ABSTRACT_CHARS = 500
 const MAX_EXCERPT_CHARS  = 250
 
 function getOpenAI() {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60_000 })
 }
 
 interface ArticleInput {
