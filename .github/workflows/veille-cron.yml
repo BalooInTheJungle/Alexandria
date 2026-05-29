@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Déclencher le pipeline veille
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" \
+          response=$(curl -s -L -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             "${{ secrets.VERCEL_APP_URL }}/api/cron/veille")
 
