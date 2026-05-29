@@ -136,19 +136,28 @@ export async function generateVeilleSummary(
   const gptStart = Date.now()
 
   let response
-  try {
-    response = await openai.chat.completions.create({
-      model:           'gpt-4o-mini',
-      max_tokens:      4000,
-      temperature:     0.3,
-      response_format: { type: 'json_object' },
-      messages:        [{ role: 'user', content: prompt }],
-    })
-  } catch (gptErr: any) {
-    const elapsed = Math.round((Date.now() - gptStart) / 1000)
-    console.error(`[summarize] GPT call failed after ${elapsed}s — status=${gptErr.status ?? 'n/a'} type=${gptErr.type ?? 'n/a'} message=${gptErr.message}`)
-    throw gptErr
+  const MAX_ATTEMPTS = 3
+  let lastErr: any
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      response = await openai.chat.completions.create({
+        model:           'gpt-4o-mini',
+        max_tokens:      4000,
+        temperature:     0.3,
+        response_format: { type: 'json_object' },
+        messages:        [{ role: 'user', content: prompt }],
+      })
+      break  // success
+    } catch (gptErr: any) {
+      lastErr = gptErr
+      const elapsed = Math.round((Date.now() - gptStart) / 1000)
+      console.error(`[summarize] GPT attempt ${attempt}/${MAX_ATTEMPTS} failed after ${elapsed}s — ${gptErr.message}`)
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, 3000 * attempt))  // 3s, then 6s
+      }
+    }
   }
+  if (!response) throw lastErr
 
   const elapsed = Math.round((Date.now() - gptStart) / 1000)
   const summary = response.choices[0]?.message?.content
