@@ -123,7 +123,7 @@ export async function getRunById(id: string): Promise<VeilleRunRow | null> {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('veille_runs')
-    .select('id, status, started_at, completed_at, error_message, created_at, phase, items_processed, items_total, ai_summary, high_score_count, score_threshold')
+    .select('id, status, started_at, completed_at, error_message, created_at, phase, items_processed, items_total, ai_summary, high_score_count, score_threshold, pipeline_logs')
     .eq('id', id)
     .maybeSingle()
 
@@ -201,6 +201,16 @@ export async function getKnownDois(): Promise<Set<string>> {
     LOG('getKnownDois failed (returning empty set):', err.message)
     return new Set()
   }
+}
+
+export async function savePipelineLogs(runId: string, logs: import('./types').RunLogEntry[]): Promise<void> {
+  if (logs.length === 0) return
+  const supabase = getAdminSupabase()
+  const { error } = await supabase
+    .from('veille_runs')
+    .update({ pipeline_logs: logs })
+    .eq('id', runId)
+  if (error) LOG('savePipelineLogs error', error.message)
 }
 
 export async function updateRunPhase(

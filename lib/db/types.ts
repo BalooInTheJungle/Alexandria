@@ -38,6 +38,15 @@ export type Source = {
 
 export type SourceInsert = Omit<Source, 'id' | 'created_at' | 'last_checked_at'>
 
+export type RunLogLevel = 'info' | 'error' | 'warn'
+
+export type RunLogEntry = {
+  ts:    string        // ISO timestamp
+  level: RunLogLevel
+  phase: string        // e.g. 'sources', 'scoring', 'summary'
+  msg:   string
+}
+
 export type VeilleRun = {
   id: string;
   status: string;
@@ -48,6 +57,7 @@ export type VeilleRun = {
   ai_summary?: string | null;
   high_score_count?: number | null;
   score_threshold?: number | null;
+  pipeline_logs?: RunLogEntry[];
 };
 
 export type CorpusRef = {

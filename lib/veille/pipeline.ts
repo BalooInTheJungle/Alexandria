@@ -8,7 +8,8 @@
 import { getRssSources, getOpenAlexSources }          from './sources'
 import { fetchRssFeed }                                from './fetch-rss'
 import { fetchAbstractsByDois, fetchDoiByTitle, fetchRecentByIssn, type AbstractResult } from './openalex'
-import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, saveRunSummary } from '../db/veille'
+import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, saveRunSummary, savePipelineLogs } from '../db/veille'
+import type { RunLogEntry, RunLogLevel } from '../db/types'
 import { scoreVeilleItems, loadCorpusTerms, scoreHeuristic } from './score'
 import { generateVeilleSummary } from './summarize'
 import type { VeilleItemInsert }                       from '../db/veille'
@@ -46,6 +47,13 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
   const runId = existingRunId ?? await createRun()
   const stats = { inserted: 0, skipped: 0, errors: 0 }
 
+  const logs: RunLogEntry[] = []
+  const elapsed = () => Math.round((Date.now() - pipelineStart) / 1000)
+  function plog(phase: string, msg: string, level: RunLogLevel = 'info') {
+    console.log(`[pipeline/${phase}] ${msg}`)
+    logs.push({ ts: new Date().toISOString(), level, phase, msg })
+  }
+
   try {
     const knownDois = await getKnownDois()
     const itemsToInsert: VeilleItemInsert[] = []
@@ -53,28 +61,23 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     // ── Phase 1: Fetch all RSS in parallel ────────────────────────────────
     await updateRunPhase(runId, 'sources')
     const rssSources = await getRssSources()
-    console.log(`[pipeline] Fetching ${rssSources.length} RSS sources in parallel (${PARALLEL_RSS_CONCURRENCY} concurrent)`)
+    plog('sources', `Fetching ${rssSources.length} sources RSS en parallèle`)
     const rssResults = await fetchRssInParallel(rssSources)
 
     // ── Phase 2: Filter + dedup + collect enrichment needs ────────────────
     await updateRunPhase(runId, 'urls')
-    // Cross-source: collect all DOIs needing abstract across ALL sources before fetching
     const needsAbstract: { doi: string }[] = []
     const needsDoi: { article: RssArticle; source: RssSource }[] = []
     const freshBySource = new Map<string, RssArticle[]>()
+    const rssErrors: string[] = []
 
     for (const source of rssSources) {
       const all = rssResults.get(source.id) ?? []
       const recent = all.filter(a => isRecent(a.published_at))
-      const skipped = all.length - recent.length
-      if (skipped > 0) console.log(`[pipeline] ${source.name}: ${skipped} articles older than ${LOOKBACK_DAYS}d — skipped`)
-
       const fresh = recent.filter(a => !a.doi || !knownDois.has(a.doi))
       stats.skipped += recent.length - fresh.length
       if (fresh.length === 0) continue
-
       freshBySource.set(source.id, fresh)
-
       for (const article of fresh) {
         if (article.doi && !article.abstract)  needsAbstract.push({ doi: article.doi })
         if (!article.doi && article.abstract)  needsDoi.push({ article, source })
@@ -82,10 +85,10 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }
 
     const uniqueDois = Array.from(new Set(needsAbstract.map(x => x.doi)))
-    console.log(`[pipeline] Enrichment: ${uniqueDois.length} unique DOIs need abstract, ${needsDoi.length} articles need DOI`)
+    plog('urls', `${uniqueDois.length} DOIs à enrichir via OpenAlex, ${needsDoi.length} titres à résoudre`)
+    if (rssErrors.length > 0) plog('sources', `Erreurs RSS : ${rssErrors.join(', ')}`, 'warn')
 
     // ── Phase 3: Cross-source batch abstract fetch ─────────────────────────
-    // All sources combined → 1 batch call per 50 DOIs instead of N per-source calls
     const abstractMap = uniqueDois.length > 0
       ? await fetchAbstractsByDois(uniqueDois)
       : new Map<string, AbstractResult>()
@@ -111,114 +114,91 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
           const enriched = abstractMap.get(doi)
           if (enriched) {
             abstract = enriched.abstract
-            // Skip non-journal articles detected by OpenAlex (preprints, book chapters, etc.)
-            if (!enriched.is_final) {
-              console.log(`[pipeline] Skipping non-journal article (OpenAlex type): ${doi}`)
-              stats.skipped++
-              continue
-            }
+            if (!enriched.is_final) { stats.skipped++; continue }
           }
         }
         if (!doi && abstract)  doi = doiByKey.get(`${source.id}::${article.title}`) ?? null
 
-        // Post-enrichment dedup (DOI resolved after lookup)
         if (doi && knownDois.has(doi)) { stats.skipped++; continue }
         if (doi) knownDois.add(doi)
 
         itemsToInsert.push({
-          run_id:       runId,
-          source_id:    source.id,
-          url:          article.url,
-          title:        article.title,
-          authors:      article.authors,
-          doi,
-          abstract,
-          published_at: article.published_at,
-          last_error:   null,
+          run_id: runId, source_id: source.id, url: article.url,
+          title: article.title, authors: article.authors, doi, abstract,
+          published_at: article.published_at, last_error: null,
         })
       }
     }
 
     // ── Phase 6: OpenAlex-only sources (MDPI — no RSS) ────────────────────
     const openAlexSources = await getOpenAlexSources()
-    console.log(`[pipeline] Processing ${openAlexSources.length} OpenAlex-only sources`)
-
     for (const source of openAlexSources) {
       const articles = await fetchRecentByIssn(source.issn, LOOKBACK_DAYS)
-
       for (const article of articles) {
-        // Skip non-journal articles (preprints, book chapters, proceedings…)
-        if (!article.is_final) {
-          console.log(`[pipeline] Skipping non-journal article (OpenAlex type): ${article.doi ?? article.title.slice(0, 40)}`)
-          stats.skipped++
-          continue
-        }
+        if (!article.is_final) { stats.skipped++; continue }
         if (article.doi && knownDois.has(article.doi)) { stats.skipped++; continue }
         if (article.doi) knownDois.add(article.doi)
-
         itemsToInsert.push({
-          run_id:       runId,
-          source_id:    source.id,
-          url:          article.doi ? `https://doi.org/${article.doi}` : '',
-          title:        article.title,
-          authors:      article.authors,
-          doi:          article.doi,
-          abstract:     article.abstract,
-          published_at: article.published_at,
-          last_error:   null,
+          run_id: runId, source_id: source.id,
+          url: article.doi ? `https://doi.org/${article.doi}` : '',
+          title: article.title, authors: article.authors, doi: article.doi,
+          abstract: article.abstract, published_at: article.published_at, last_error: null,
         })
       }
-
       await sleep(OPENALEX_DELAY_MS)
     }
 
     // ── Phase 7: Insert ────────────────────────────────────────────────────
     const MAX_ITEMS = 1000
-    if (itemsToInsert.length > MAX_ITEMS) {
-      console.warn(`[pipeline] Capping items: ${itemsToInsert.length} → ${MAX_ITEMS} (timeout protection)`)
-    }
     const cappedItems = itemsToInsert.slice(0, MAX_ITEMS)
+    if (itemsToInsert.length > MAX_ITEMS) {
+      plog('insert', `Cap appliqué : ${itemsToInsert.length} → ${MAX_ITEMS} articles`, 'warn')
+    }
     await updateRunPhase(runId, 'items', 0, cappedItems.length)
-    console.log(`[pipeline] Inserting ${cappedItems.length} items`)
+    plog('insert', `Insertion de ${cappedItems.length} articles (${stats.skipped} déjà connus)`)
     const insertedIds = await insertVeilleItemsWithIds(cappedItems)
     stats.inserted = insertedIds.length
+    plog('insert', `${insertedIds.length} articles insérés en base — +${elapsed()}s`)
 
     // ── Phase 8: Score against corpus (similarity + heuristic + corpus_refs) ─
     const bothScores = new Map<string, { similarity: number | null; heuristic: number | null; refs: import('../db/types').CorpusRef[] }>()
 
     if (insertedIds.length > 0) {
-      console.log('[pipeline] Loading corpus terms for heuristic scoring')
       const corpusTerms = await loadCorpusTerms(80)
+      const toScore = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
 
-      console.log('[pipeline] Scoring abstracts against corpus')
-      const toScore  = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
+      plog('scoring', `Scoring de ${toScore.length} articles (similarité corpus + heuristique) — +${elapsed()}s`)
       const simScores = await scoreVeilleItems(toScore, async (done, total) => {
         await updateRunPhase(runId, 'items', done, total)
-        console.log(`[pipeline] scoring progress ${done}/${total}`)
       })
 
+      let timeouts = 0
       for (const { id, abstract } of toScore) {
         const result     = simScores.get(id)
         const similarity = result?.similarity ?? null
         const refs       = result?.refs ?? []
         const heuristic  = abstract && abstract.length > 50 && corpusTerms.length > 0
-          ? scoreHeuristic(abstract, corpusTerms)
-          : null
+          ? scoreHeuristic(abstract, corpusTerms) : null
         bothScores.set(id, { similarity, heuristic, refs })
+        if (similarity === null) timeouts++
       }
 
       await updateVeilleItemBothScores(bothScores)
       await updateRunPhase(runId, 'items', toScore.length, toScore.length)
+
+      const scored = toScore.length - timeouts
+      if (timeouts > 0) {
+        plog('scoring', `${timeouts}/${toScore.length} articles en timeout match_chunks (similarity=null)`, 'warn')
+      }
+      plog('scoring', `Scoring terminé — ${scored} scorés, +${elapsed()}s`)
     }
 
     // ── Phase 9: AI summary of top articles ───────────────────────────────
     await updateRunPhase(runId, 'summary')
 
-    // Build source lookup for summary context
     const sourceMap = new Map<string, string>()
     for (const s of [...rssSources, ...openAlexSources]) sourceMap.set(s.id, s.name)
 
-    // Pair inserted items with their titles (itemsToInsert is in same insertion order)
     const scoredForSummary = insertedIds.map((item, idx) => ({
       id:               item.id,
       title:            itemsToInsert[idx]?.title ?? '',
@@ -230,24 +210,27 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
     const THRESHOLD = 0.30
     const eligibleCount = scoredForSummary.filter(i => (i.similarity_score ?? 0) >= THRESHOLD).length
-    console.log(`[pipeline] Phase 9: AI summary — ${eligibleCount} articles >= ${THRESHOLD}, total elapsed=${Math.round((Date.now() - pipelineStart) / 1000)}s`)
+    plog('summary', `${eligibleCount} articles >= ${THRESHOLD} éligibles pour le résumé IA — +${elapsed()}s`)
+
     try {
       const { summary, highScoreCount } = await generateVeilleSummary(scoredForSummary, THRESHOLD)
       await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: THRESHOLD })
-      console.log(`[pipeline] AI summary saved — ${highScoreCount} articles, elapsed=${Math.round((Date.now() - pipelineStart) / 1000)}s`)
+      plog('summary', `Résumé IA généré — top ${highScoreCount} articles — +${elapsed()}s`)
     } catch (err: any) {
-      console.error('[pipeline] AI summary failed (non-fatal):', err.message)
+      plog('summary', `Échec résumé IA : ${err.message}`, 'error')
       await saveRunSummary(runId, { aiSummary: '', highScoreCount: eligibleCount, scoreThreshold: THRESHOLD })
         .catch(() => {})
     }
 
     await updateRunPhase(runId, 'done')
+    plog('done', `Pipeline terminé — inséré=${stats.inserted} ignoré=${stats.skipped} erreurs=${stats.errors} — +${elapsed()}s`)
+    await savePipelineLogs(runId, logs)
     await completeRun(runId, 'completed')
-    console.log(`[pipeline] Done — inserted=${stats.inserted} skipped=${stats.skipped} errors=${stats.errors}`)
 
   } catch (err: any) {
-    console.error('[pipeline] Fatal error:', err.message)
+    plog('fatal', `Erreur fatale : ${err.message}`, 'error')
     stats.errors++
+    await savePipelineLogs(runId, logs).catch(() => {})
     await completeRun(runId, 'failed', err.message)
   }
 

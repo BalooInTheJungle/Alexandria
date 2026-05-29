@@ -15,6 +15,13 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+type RunLogEntry = {
+  ts:    string
+  level: 'info' | 'warn' | 'error'
+  phase: string
+  msg:   string
+}
+
 type VeilleRun = {
   id: string;
   status: string;
@@ -23,6 +30,7 @@ type VeilleRun = {
   ai_summary?: string | null;
   high_score_count?: number | null;
   score_threshold?: number | null;
+  pipeline_logs?: RunLogEntry[];
 };
 
 type VeilleItem = {
@@ -156,6 +164,67 @@ function LegacySummaryView({ raw, run }: { raw: string; run: VeilleRun }) {
   )
 }
 
+// ── Pipeline logs ─────────────────────────────────────────────────────────────
+
+const PHASE_LABELS: Record<string, string> = {
+  sources: 'Sources RSS',
+  urls:    'Enrichissement',
+  insert:  'Insertion',
+  scoring: 'Scoring',
+  summary: 'Résumé IA',
+  done:    'Terminé',
+  fatal:   'Erreur fatale',
+}
+
+const LEVEL_STYLES: Record<string, string> = {
+  info:  'text-foreground',
+  warn:  'text-amber-600',
+  error: 'text-red-600 font-medium',
+}
+
+const PHASE_BADGE: Record<string, string> = {
+  sources: 'bg-blue-100 text-blue-700',
+  urls:    'bg-indigo-100 text-indigo-700',
+  insert:  'bg-teal-100 text-teal-700',
+  scoring: 'bg-purple-100 text-purple-700',
+  summary: 'bg-orange-100 text-orange-700',
+  done:    'bg-green-100 text-green-700',
+  fatal:   'bg-red-100 text-red-700',
+}
+
+function PipelineLogsView({ logs }: { logs: RunLogEntry[] }) {
+  if (logs.length === 0) return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Logs pipeline</CardTitle></CardHeader>
+      <CardContent><p className="text-sm text-muted-foreground">Aucun log disponible pour cette run (exécutée avant la mise à jour).</p></CardContent>
+    </Card>
+  )
+
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Logs pipeline</CardTitle></CardHeader>
+      <CardContent>
+        <div className="font-mono text-xs space-y-1 max-h-72 overflow-y-auto">
+          {logs.map((entry, i) => {
+            const time = new Date(entry.ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            const badge = PHASE_BADGE[entry.phase] ?? 'bg-gray-100 text-gray-700'
+            const textStyle = LEVEL_STYLES[entry.level] ?? 'text-foreground'
+            return (
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-muted-foreground shrink-0 w-16">{time}</span>
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${badge}`}>
+                  {PHASE_LABELS[entry.phase] ?? entry.phase}
+                </span>
+                <span className={textStyle}>{entry.msg}</span>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function HistoriqueRunPage({ params }: { params: { runId: string } }) {
@@ -205,6 +274,9 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
         if (structured) return <StructuredSummaryView summary={structured} run={run} items={items} />
         return <LegacySummaryView raw={run.ai_summary} run={run} />
       })()}
+
+      {/* Logs pipeline */}
+      {!loading && <PipelineLogsView logs={run?.pipeline_logs ?? []} />}
 
       {/* Tableau des articles */}
       <Card>
