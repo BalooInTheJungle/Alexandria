@@ -11,11 +11,10 @@ Mettre à jour ce fichier à chaque jalon atteint.
 
 | Fonctionnalité | État | Détail |
 |---------------|------|--------|
-| Ingestion PDF (Python) | ✅ | Parse + chunk + embed EN + traduction FR |
-| Recherche hybride (FTS + vector + RRF) | ✅ | Bilingue FR/EN, paramètres dynamiques |
+| Ingestion PDF (Python) | ✅ | Parse + chunk + embed EN (traduction FR supprimée) |
+| Recherche hybride (FTS + vector + RRF) | ✅ | EN uniquement, paramètres dynamiques |
 | Garde-fou hors domaine | ✅ | Seuil similarity_threshold depuis rag_settings |
 | Génération réponse (streaming SSE) | ✅ | gpt-4o-mini, citations [1][2]... |
-| Bilingue FR/EN complet | ✅ | Détection langue, pipeline séparée, réponse dans la bonne langue |
 | Conversations + historique | ✅ | Pagination cursor, PATCH titre, DELETE |
 | Paramètres RAG dynamiques | ✅ | rag_settings en base, GET + PATCH avec validation |
 | Cron rétention 30 jours | ✅ | Nettoyage automatique conversations |
@@ -47,21 +46,44 @@ Mettre à jour ce fichier à chaque jalon atteint.
 
 ---
 
-## V1.6 — Ingestion corpus bulk (en cours / bloqué)
+## V1.6 — Ingestion corpus bulk ✅ (terminé — 2024-2025)
 
-**Objectif** : ingérer ~15 477 PDFs (2015-2026) depuis `data/pdfs/YEAR/` dans Supabase.
+**Objectif** : ingérer le corpus récent (2024-2025) avec index pgvector opérationnel.
 
 | Étape | État | Détail |
 |-------|------|--------|
-| Script Python `scripts/ingest.py` v2 | ✅ | Récursif, par année 2015-2026, retry 3x, batch=5, pause |
-| Migration `chunks.umap_x / umap_y` | ✅ | SQL appliqué, colonnes présentes |
-| UMAP calculé sur chunks existants (35 584) | ✅ | compute_umap.py exécuté avec succès |
-| Suppression traduction EN→FR | ✅ | content_fr = content EN, embedding_fr = embedding EN |
-| Passage Supabase Pro (25$/mois) | ✅ | Nécessaire pour espace stockage |
-| **Drop index HNSW avant ingestion bulk** | 🔴 BLOQUÉ | Supabase surchargé, SQL Editor timeout — à faire impérativement avant relance |
-| Ingestion 15 477 PDFs | ⏳ En attente | Dépend du drop index HNSW |
-| Recréation index HNSW après ingestion | ⏳ En attente | À faire après ingestion complète |
-| Recalcul UMAP sur nouveaux chunks | ⏳ En attente | Relancer compute_umap.py |
+| Script Python `scripts/ingest.py` v3 | ✅ | Récursif, YEAR_MIN/MAX configurable, IVFFlat auto via psycopg2 |
+| Suppression pipeline FR (embedding_fr, content_fr, detect-lang) | ✅ | Simplifié EN uniquement |
+| Suppression index HNSW → passage IVFFlat | ✅ | IVFFlat lists=100, créé par ingest.py après tous les inserts |
+| Ingestion 2024-2025 (2510 docs) | ✅ | 497 523 chunks, avg 198 chunks/doc |
+| Index IVFFlat opérationnel | ✅ | `idx_chunks_embedding` IVFFlat lists=100 |
+| Pipeline veille scoring fonctionnel | ✅ | 134 articles ≥ 30% sur corpus 2024-2025 |
+| Sélecteur seuil veille (20→70%) | ✅ | Défaut 30%, modifiable depuis l'UI |
+| Batch score updates veille (50 parallèle) | ✅ | Was séquentiel → bloquait pipeline 2-3min |
+| Nettoyage titres espacés (`fix_spaced_text`) | ✅ | 2656 titres corrigés en DB + fix dans ingest.py |
+| Réorganisation PDFs par année publication | ✅ | `reorganize_pdfs.py` → `data/pdfs2/YEAR/` |
+| Ingestion incrémentale 2025 (pdfs2/) | 🔄 En cours | ~1172 PDFs, dédup DOI automatique |
+| Ingestion 2026 (146 docs) | ✅ | Ajoutés au corpus |
+| Recalcul UMAP sur nouveaux chunks | ⏳ À faire | Relancer compute_umap.py après ingestion |
+| Extension corpus 2015-2023 | ⏳ Option | ~13 000 PDFs supplémentaires, dépend espace DB |
+
+---
+
+## V1.7 — Articles auteur + comparaison corpus ✅ (terminé — Mai 2026)
+
+**Objectif** : indexer les articles publiés du chercheur et visualiser leurs liens avec le corpus général.
+
+| Étape | État | Détail |
+|-------|------|--------|
+| Flag `is_author_article` sur `documents` | ✅ | Migration + index partiel |
+| Ingestion 521 articles auteur (`--author`) | ✅ | `scripts/ingest.py --author`, dossier `data/Articles auteur/` |
+| Correction 126 titres espacés | ✅ | `scripts/fix_author_titles.py` |
+| RPC `match_corpus_docs` | ✅ | SQL function IVFFlat, filtre corpus, agrège par doc |
+| Route `GET /api/corpus/author-articles` | ✅ | Liste paginée, filtre année |
+| Route `GET /api/corpus/author-articles/[id]/similar` | ✅ | Embedding moyen → top N corpus |
+| UI Database — section comparaison | ✅ | Accordion, SimilarityBadge, cache résultats |
+| Correction 797k chunks texte espacé | ✅ | `scripts/fix_spaced_chunks.py`, 0 erreur |
+| Rebuild IVFFlat sur embeddings propres | ✅ | 1.3 Go, valid=t |
 
 ---
 

@@ -128,19 +128,40 @@ python3 -m pip install -r requirements.txt
 ### [SUPABASE] Statement timeout 57014 — INSERT chunks avec index HNSW
 
 **Symptôme** : `ERROR: canceling statement due to statement timeout (57014)` lors de l'insertion de chunks avec embedding.
-**Cause** : l'index HNSW sur `chunks.embedding` (et `embedding_fr`) recalcule le graphe de voisinage à chaque INSERT. Ce surcoût dépasse le timeout Supabase (30s) lors d'insertions multiples.
-**Solution** : dropper les index HNSW **avant** toute ingestion bulk, les recréer après.
+**Cause** : l'index HNSW sur `chunks.embedding` recalcule le graphe de voisinage à chaque INSERT. Ce surcoût dépasse le timeout Supabase (30s) lors d'insertions multiples.
+**Solution** : l'index est maintenant **IVFFlat** (pas HNSW) — ingest.py le crée automatiquement après ingestion. Avec IVFFlat, les INSERTs ne causent pas de timeout.
+**Note** : si HNSW est toujours utilisé, dropper avant ingestion bulk :
 ```sql
--- Avant ingestion
 DROP INDEX IF EXISTS idx_chunks_embedding;
 DROP INDEX IF EXISTS idx_chunks_embedding_fr;
-
--- Après ingestion
-CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64);
-CREATE INDEX idx_chunks_embedding_fr ON chunks USING hnsw (embedding_fr vector_cosine_ops) WITH (m=16, ef_construction=64);
+-- puis recréer en IVFFlat après (voir D12 dans DECISIONS.md)
 ```
 **Fichier concerné** : `scripts/ingest.py`, `lib/db/chunks.ts`
 **Contournement temporaire** : batch=5 + retry 3x + pause 0.3s (lent mais fonctionnel).
+
+---
+
+### [SUPABASE] IVFFlat — dégradation des performances après ingestion bulk
+
+**Symptôme** : les requêtes RPC `match_chunks` / `match_corpus_docs` passent de ~50ms à 16-17 secondes. Timeouts sur la route `/api/corpus/author-articles/[id]/similar`.
+**Cause** : l'index IVFFlat `idx_chunks_embedding` utilise des clusters fixes calculés lors de sa création. Après l'insertion de nombreux nouveaux chunks (ex : 85k), les nouveaux vecteurs tombent dans les mauvais clusters → scan quasi-séquentiel.
+**Solution** : reconstruire l'index après chaque ingestion bulk (> 50k chunks) :
+```sql
+DROP INDEX CONCURRENTLY IF EXISTS idx_chunks_embedding;
+CREATE INDEX CONCURRENTLY idx_chunks_embedding
+  ON public.chunks
+  USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 100);
+```
+Durée de reconstruction : ~5-15 minutes sur 600k chunks. `CONCURRENTLY` permet à la DB de rester opérationnelle.
+**Suivi progression** :
+```sql
+SELECT phase, blocks_done, blocks_total,
+       round(blocks_done::numeric / nullif(blocks_total,0) * 100, 1) AS pct
+FROM pg_stat_progress_create_index
+WHERE relid = 'public.chunks'::regclass;
+```
+**Fichier concerné** : `scripts/ingest.py` (crée l'index automatiquement après ingestion)
 
 ---
 

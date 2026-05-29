@@ -14,7 +14,8 @@ export async function GET() {
       .from("documents")
       .select("published_at")
       .eq("status", "done")
-      .not("published_at", "is", null);
+      .not("published_at", "is", null)
+      .limit(10000);
 
     if (error) {
       console.error("[API] GET /api/corpus/timeline error:", error.message);

@@ -1,14 +1,12 @@
 // GET /api/cron/veille — runs the veille pipeline on a schedule
-// Called daily by Vercel cron (vercel.json). Protected by CRON_SECRET.
-// Runs pipeline synchronously (not fire-and-forget) so Vercel tracks completion.
-// maxDuration: 300s (Vercel Pro) — set via route segment config below.
+// Called daily by GitHub Actions cron. Protected by CRON_SECRET.
+// Uses waitUntil to respond immediately and run the pipeline in the background
+// (compatible with Vercel Hobby plan — no maxDuration needed).
 
 import { NextResponse } from 'next/server'
+import { waitUntil } from '@vercel/functions'
 import { runVeillePipeline } from '@/lib/veille/pipeline'
 import { createRun } from '@/lib/db/veille'
-
-// Tell Vercel to allow up to 300s for this function (Pro plan required)
-export const maxDuration = 300
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET
@@ -26,17 +24,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  try {
-    const runId = await createRun()
-    console.log(`[cron/veille] Starting pipeline run=${runId}`)
+  const runId = await createRun()
+  console.log(`[cron/veille] Pipeline scheduled run=${runId}`)
 
-    const stats = await runVeillePipeline(runId)
+  waitUntil(
+    runVeillePipeline(runId)
+      .then(stats => console.log(`[cron/veille] Done — inserted=${stats.inserted} skipped=${stats.skipped} errors=${stats.errors}`))
+      .catch(err => console.error('[cron/veille] Fatal error:', err.message))
+  )
 
-    console.log(`[cron/veille] Done — inserted=${stats.inserted} skipped=${stats.skipped} errors=${stats.errors}`)
-    return NextResponse.json({ ok: true, run_id: runId, stats })
-
-  } catch (err: any) {
-    console.error('[cron/veille] Fatal error:', err.message)
-    return NextResponse.json({ error: err.message }, { status: 500 })
-  }
+  return NextResponse.json({ ok: true, run_id: runId, status: 'running' })
 }
