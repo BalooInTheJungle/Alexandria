@@ -13,6 +13,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+type VeilleRun = {
+  id: string;
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  ai_summary?: string | null;
+  high_score_count?: number | null;
+  score_threshold?: number | null;
+};
+
 type VeilleItem = {
   id: string;
   run_id: string;
@@ -26,11 +38,131 @@ type VeilleItem = {
   document_id: string | null;
 };
 
+// ── Summary parsing + rendering (mirrors /bibliographie) ──────────────────────
+
+type SummaryTheme   = { title: string; description: string }
+type SummaryArticle = { item_id: string; contribution: string; relevance: string; corpus_link: string }
+type StructuredSummary = { themes: SummaryTheme[]; articles: SummaryArticle[] }
+
+function parseSummary(raw: string): StructuredSummary | null {
+  try {
+    const p = JSON.parse(raw)
+    if (p && Array.isArray(p.themes) && Array.isArray(p.articles)) return p as StructuredSummary
+    return null
+  } catch { return null }
+}
+
+const THEME_COLORS = [
+  "bg-blue-50 border-blue-200 text-blue-900",
+  "bg-violet-50 border-violet-200 text-violet-900",
+  "bg-teal-50 border-teal-200 text-teal-900",
+];
+
+function StructuredSummaryView({ summary, run, items }: { summary: StructuredSummary; run: VeilleRun; items: VeilleItem[] }) {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="text-lg font-semibold">Résumé de la veille</h2>
+        <span className="text-sm text-muted-foreground">
+          {run.high_score_count ?? 0} articles pertinents
+          {run.score_threshold != null && ` (score ≥ ${Math.round(run.score_threshold * 100)}%)`}
+        </span>
+      </div>
+
+      {summary.themes.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Thèmes émergents</p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {summary.themes.map((theme, i) => (
+              <div key={i} className={`rounded-lg border p-3 space-y-1 ${THEME_COLORS[i % THEME_COLORS.length]}`}>
+                <p className="text-sm font-semibold">{theme.title}</p>
+                <p className="text-xs leading-relaxed opacity-80">{theme.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {summary.articles.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Articles analysés ({summary.articles.length})
+          </p>
+          <div className="flex flex-col gap-3">
+            {summary.articles.map((article, i) => {
+              const item = items.find(it => it.id === article.item_id)
+              const href = item?.url ?? null
+              const title = item?.title ?? "(titre inconnu)"
+              const source = item?.source_name ?? "—"
+              return (
+                <Card key={i} className="p-4 space-y-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">{source}</p>
+                    {href
+                      ? <a href={href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold hover:underline line-clamp-2 block">{title}</a>
+                      : <p className="text-sm font-semibold line-clamp-2">{title}</p>
+                    }
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Contribution</p>
+                      <p className="leading-relaxed">{article.contribution}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pertinence</p>
+                      <p className="leading-relaxed">{article.relevance}</p>
+                    </div>
+                    <div className="bg-blue-50/60 rounded-md p-3 border border-blue-100">
+                      <p className="text-xs font-semibold text-blue-800 uppercase tracking-wide">Lien avec le corpus</p>
+                      <p className="text-sm leading-relaxed text-blue-900">{article.corpus_link}</p>
+                    </div>
+                  </div>
+                </Card>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LegacySummaryView({ raw, run }: { raw: string; run: VeilleRun }) {
+  return (
+    <Card className="border-primary/20 bg-primary/5">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center justify-between">
+          <span>Résumé de la veille</span>
+          <span className="text-sm font-normal text-muted-foreground">
+            {run.high_score_count ?? 0} articles pertinents
+            {run.score_threshold != null && ` (score ≥ ${Math.round(run.score_threshold * 100)}%)`}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-sm leading-relaxed space-y-2">
+          {raw.split('\n').map((line, i) => {
+            if (line.startsWith('## ')) return <h3 key={i} className="font-semibold text-base mt-3 mb-1">{line.slice(3)}</h3>
+            if (line.startsWith('**') && line.includes('**')) {
+              const [bold, ...rest] = line.replace(/^\*\*/, '').split('**')
+              return <p key={i}><strong>{bold}</strong>{rest.join('')}</p>
+            }
+            if (line.trim() === '') return null
+            return <p key={i}>{line}</p>
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
 export default function HistoriqueRunPage({ params }: { params: { runId: string } }) {
   const { runId } = params;
   const [items, setItems] = useState<VeilleItem[]>([]);
+  const [run, setRun] = useState<VeilleRun | null>(null);
   const [loading, setLoading] = useState(true);
-  const [runStatus, setRunStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,8 +178,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
           setItems(Array.isArray(data) ? data : []);
         }
         if (!cancelled && runRes.ok) {
-          const run = await runRes.json();
-          setRunStatus(run.status);
+          setRun(await runRes.json());
         }
       } catch {
         if (!cancelled) setItems([]);
@@ -67,11 +198,20 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
           <Link href="/bibliographie">← Bibliographie</Link>
         </Button>
       </div>
+
+      {/* Résumé IA */}
+      {run?.ai_summary && !loading && (() => {
+        const structured = parseSummary(run.ai_summary)
+        if (structured) return <StructuredSummaryView summary={structured} run={run} items={items} />
+        return <LegacySummaryView raw={run.ai_summary} run={run} />
+      })()}
+
+      {/* Tableau des articles */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Run {runId.slice(0, 8)}…</CardTitle>
-          {runStatus && (
-            <span className="text-sm font-medium text-muted-foreground">Statut : {runStatus}</span>
+          {run?.status && (
+            <span className="text-sm font-medium text-muted-foreground">Statut : {run.status}</span>
           )}
         </CardHeader>
         <CardContent>
