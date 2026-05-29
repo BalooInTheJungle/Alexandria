@@ -208,7 +208,7 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       corpus_refs:      bothScores.get(item.id)?.refs ?? [],
     }))
 
-    const THRESHOLD = 0.30
+    const THRESHOLD = 0.75
     const eligibleCount = scoredForSummary.filter(i => (i.similarity_score ?? 0) >= THRESHOLD).length
     plog('summary', `${eligibleCount} articles >= ${THRESHOLD} éligibles pour le résumé IA — +${elapsed()}s`)
 
