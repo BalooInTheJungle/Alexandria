@@ -7,7 +7,12 @@ Ingestion Alexandria : data/pdfs/**/*.pdf → documents + chunks (Supabase).
 - Dédup par DOI en priorité, puis par storage_path.
 - Chunking par section ou par taille.
 - Embeddings 384D (sentence-transformers). Pas de traduction EN→FR.
+
+Modes :
+  python3 ingest.py                   # corpus général (data/pdfs2/)
+  python3 ingest.py --author          # articles du chercheur (data/Articles auteur/)
 """
+import argparse
 import os
 import re
 import sys
@@ -23,21 +28,17 @@ if env_path.exists():
     from dotenv import load_dotenv
     load_dotenv(env_path)
 
-import psycopg2
 import fitz  # PyMuPDF
 from supabase import create_client
 
-# Connexion directe pour opérations longues (index, vacuum)
-SUPABASE_DB_URL = os.environ.get("SUPABASE_DB_URL", "")
-# Format : postgresql://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres
-
-PDF_DIR             = project_root / "data" / "pdfs"
+PDF_DIR              = project_root / "data" / "pdfs2"
+AUTHOR_ARTICLES_DIR  = project_root / "data" / "Articles auteur"
 EMBED_DIM           = 384
 CHUNK_SIZE          = 600
 CHUNK_OVERLAP       = 100
 MIN_TEXT_PER_PAGE   = 50    # chars en dessous desquels on tente l'OCR
-INSERT_BATCH        = 5     # chunks par requête Supabase (limite timeout 30s)
-INSERT_PAUSE        = 0.3  # secondes entre chaque batch (évite saturation)
+INSERT_BATCH        = 50    # chunks par requête Supabase (index HNSW droppé)
+INSERT_PAUSE        = 0.1  # secondes entre chaque batch
 
 # Journaux connus dans le domaine chimie/magnétisme moléculaire
 _KNOWN_JOURNALS = [
@@ -79,6 +80,21 @@ def get_supabase():
 
 def clean(text: str) -> str:
     return text.replace("\x00", " ").replace("", " ") if text else text
+
+
+def fix_spaced_text(s: str) -> str:
+    """Fix PDFs where each character is separated by a space: 'T h e   R o l e' → 'The Role'."""
+    if not s:
+        return s
+    s = s.strip()
+    tokens = [t for t in s.split(' ') if t]
+    if len(tokens) < 6:
+        return s
+    if sum(1 for t in tokens if len(t) == 1) / len(tokens) < 0.55:
+        return s
+    # Split on 2+ spaces (word boundaries), collapse single spaces within each word
+    words = re.split(r' {2,}', s)
+    return ' '.join(''.join(w.split()) for w in words if w.strip())
 
 
 def extract_text_with_ocr_fallback(pdf_path: Path) -> tuple[str, dict[int, str], int]:
@@ -149,10 +165,22 @@ def _extract_authors_heuristic(full_text: str, title: object) -> list[str]:
 
 
 def _extract_year_from_folder(pdf_path: Path) -> object:
-    """Extrait l'année depuis le nom du dossier parent si c'est un millésime (ex: '1996')."""
+    """Extrait l'année depuis le nom du dossier parent.
+
+    Supporte deux formats :
+    - corpus    : '2024'           (dossier = année seule)
+    - auteur    : '2024-8-537'     (dossier = année-nb_annee-cumul_total)
+    """
     parent = pdf_path.parent.name
+    # Format corpus : "2024"
     m = re.fullmatch(r"(19\d{2}|20\d{2})", parent)
-    return int(m.group(1)) if m else None
+    if m:
+        return int(m.group(1))
+    # Format articles auteur : "2024-8-537" — on prend les 4 premiers chiffres
+    m = re.match(r"^(19\d{2}|20\d{2})-", parent)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 def _extract_year_from_text(text: str) -> object:
@@ -211,7 +239,7 @@ def extract_metadata(doc: fitz.Document, full_text: str, pdf_path: Path) -> dict
     published_at = f"{year}-01-01" if year else None
 
     return {
-        "title":        clean(title).strip() or None,
+        "title":        fix_spaced_text(clean(title).strip()) or None,
         "authors":      authors or None,
         "doi":          clean(doi).strip() if doi else None,
         "journal":      clean(journal).strip() if journal else None,
@@ -292,47 +320,47 @@ def find_existing_by_path(sb, storage_path: str) -> object:
     return r.data[0] if r.data else None
 
 
-# ── Index pgvector ────────────────────────────────────────────────────────────
-
-def create_vector_index():
-    """Crée l'index IVFFlat sur chunks.embedding via connexion directe psycopg2."""
-    if not SUPABASE_DB_URL:
-        print("[index] SUPABASE_DB_URL not set — skipping index creation", flush=True)
-        return
-    print("[index] Connecting via psycopg2 for index creation...", flush=True)
-    conn = psycopg2.connect(SUPABASE_DB_URL)
-    conn.set_session(autocommit=True)
-    cur = conn.cursor()
-    cur.execute("SET statement_timeout = '0';")
-    print("[index] Creating IVFFlat index on chunks.embedding (lists=100)...", flush=True)
-    cur.execute("""
-        CREATE INDEX IF NOT EXISTS idx_chunks_embedding
-        ON chunks USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists=100)
-    """)
-    print("[index] Index created successfully.", flush=True)
-    cur.close()
-    conn.close()
-
-
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    parser = argparse.ArgumentParser(description="Ingestion Alexandria PDF → Supabase")
+    parser.add_argument(
+        "--author",
+        action="store_true",
+        help="Ingérer les articles du chercheur (data/Articles auteur/) avec is_author_article=True",
+    )
+    args = parser.parse_args()
+
     sb = get_supabase()
 
-    if not PDF_DIR.exists():
-        sys.exit(f"❌  Dossier {PDF_DIR} introuvable.")
+    # ── Sélection du dossier et du flag selon le mode ─────────────────────────
+    if args.author:
+        source_dir      = AUTHOR_ARTICLES_DIR
+        is_author_article = True
+        # Les sous-dossiers sont nommés YEAR-NB-CUMUL (ex: 2024-8-537)
+        # On récupère tous les PDFs récursivement sans filtre d'année strict
+        pdf_files = sorted(source_dir.rglob("*.pdf"))
+        label = "articles auteur (data/Articles auteur/)"
+    else:
+        source_dir      = PDF_DIR
+        is_author_article = False
+        YEAR_MIN, YEAR_MAX = 2025, 2025
+        pdf_files = sorted(
+            p for p in source_dir.rglob("*.pdf")
+            if re.fullmatch(r"20\d{2}", p.parent.name)
+            and YEAR_MIN <= int(p.parent.name) <= YEAR_MAX
+        )
+        label = f"corpus ({YEAR_MIN}–{YEAR_MAX}) dans {source_dir}"
 
-    YEAR_MIN, YEAR_MAX = 2015, 2026
-    pdf_files = sorted(
-        p for p in PDF_DIR.rglob("*.pdf")
-        if re.fullmatch(r"20\d{2}", p.parent.name)
-        and YEAR_MIN <= int(p.parent.name) <= YEAR_MAX
-    )
+    if not source_dir.exists():
+        sys.exit(f"❌  Dossier {source_dir} introuvable.")
+
     if not pdf_files:
-        sys.exit(f"❌  Aucun PDF dans {PDF_DIR} pour {YEAR_MIN}-{YEAR_MAX}")
+        sys.exit(f"❌  Aucun PDF trouvé pour {label}")
 
-    print(f"📂  {len(pdf_files)} PDF trouvés ({YEAR_MIN}–{YEAR_MAX}) dans {PDF_DIR}.")
+    mode_label = "🔬 MODE ARTICLES AUTEUR (is_author_article=True)" if is_author_article else "📚 MODE CORPUS GÉNÉRAL"
+    print(f"{mode_label}")
+    print(f"📂  {len(pdf_files)} PDF trouvés — {label}.")
 
     print("🤖  Chargement du modèle d'embeddings (all-MiniLM-L6-v2)...")
     from sentence_transformers import SentenceTransformer
@@ -343,7 +371,9 @@ def main():
 
     for idx, pdf_path in enumerate(pdf_files, 1):
         rel_path = str(pdf_path.relative_to(project_root))
-        print(f"[{idx}/{len(pdf_files)}] {pdf_path.relative_to(PDF_DIR)}")
+        # Normalise les espaces dans le chemin (ex: "Articles auteur") pour Supabase
+        rel_path = rel_path.replace("\\", "/")
+        print(f"[{idx}/{len(pdf_files)}] {pdf_path.relative_to(source_dir)}")
 
         try:
             # ── Extraction texte ──────────────────────────────────────────
@@ -385,14 +415,15 @@ def main():
 
             # ── Insert document ───────────────────────────────────────────
             doc_row = sb.table("documents").insert({
-                "title":        meta["title"],
-                "authors":      meta["authors"],
-                "doi":          meta["doi"],
-                "journal":      meta["journal"],
-                "published_at": meta["published_at"],
-                "storage_path": rel_path,
-                "status":       "processing",
-                "error_message": None,
+                "title":              meta["title"],
+                "authors":            meta["authors"],
+                "doi":                meta["doi"],
+                "journal":            meta["journal"],
+                "published_at":       meta["published_at"],
+                "storage_path":       rel_path,
+                "status":             "processing",
+                "error_message":      None,
+                "is_author_article":  is_author_article,
             }).execute()
             document_id = doc_row.data[0]["id"]
 
@@ -487,9 +518,6 @@ def main():
                     }).execute()
             except Exception as e2:
                 print(f"  ⚠️   Log erreur non enregistré: {str(e2)[:80]}", flush=True)
-
-    # ── Index pgvector (après tous les inserts) ───────────────────────────────
-    create_vector_index()
 
     # ── Récap final ───────────────────────────────────────────────────────────
     print(f"\n{'='*60}")
