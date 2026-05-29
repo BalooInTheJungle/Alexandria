@@ -228,13 +228,18 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }))
 
     console.log('[pipeline] Generating AI summary')
+    const THRESHOLD = 0.30
+    const eligibleCount = scoredForSummary.filter(i => (i.similarity_score ?? 0) >= THRESHOLD).length
+    console.log(`[pipeline] ${eligibleCount} articles >= ${THRESHOLD} eligible for summary`)
     try {
-      const THRESHOLD = 0.30
       const { summary, highScoreCount } = await generateVeilleSummary(scoredForSummary, THRESHOLD)
       await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: THRESHOLD })
       console.log(`[pipeline] AI summary saved — ${highScoreCount} articles >= ${THRESHOLD}`)
     } catch (err: any) {
-      console.error('[pipeline] AI summary failed (non-fatal):', err.message)
+      console.error('[pipeline] AI summary failed (non-fatal):', err.message, err.stack?.slice(0, 300))
+      // Save count even if OpenAI failed
+      await saveRunSummary(runId, { aiSummary: '', highScoreCount: eligibleCount, scoreThreshold: THRESHOLD })
+        .catch(() => {})
     }
 
     await updateRunPhase(runId, 'done')

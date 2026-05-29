@@ -152,16 +152,14 @@ export async function saveRunSummary(
   runId: string,
   opts: { aiSummary: string; highScoreCount: number; scoreThreshold: number }
 ): Promise<void> {
-  LOG('saveRunSummary', { runId, highScoreCount: opts.highScoreCount, scoreThreshold: opts.scoreThreshold })
+  LOG('saveRunSummary', { runId, highScoreCount: opts.highScoreCount, scoreThreshold: opts.scoreThreshold, hasContent: !!opts.aiSummary })
   const supabase = getAdminSupabase()
-  const { error } = await supabase
-    .from('veille_runs')
-    .update({
-      ai_summary:       opts.aiSummary,
-      high_score_count: opts.highScoreCount,
-      score_threshold:  opts.scoreThreshold,
-    })
-    .eq('id', runId)
+  const update: Record<string, unknown> = {
+    high_score_count: opts.highScoreCount,
+    score_threshold:  opts.scoreThreshold,
+  }
+  if (opts.aiSummary) update.ai_summary = opts.aiSummary
+  const { error } = await supabase.from('veille_runs').update(update).eq('id', runId)
   if (error) LOG('saveRunSummary error', error.message)
 }
 
