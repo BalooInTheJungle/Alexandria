@@ -202,8 +202,8 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     // Call the summarize route as a fresh Vercel function — avoids connection errors
     // that occur when OpenAI is called from a long-running background function.
     try {
-      const baseUrl = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
+      const baseUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
         : process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
       const res = await fetch(`${baseUrl}/api/veille/summarize/${runId}`, {
         method:  'POST',
