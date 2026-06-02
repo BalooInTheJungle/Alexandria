@@ -129,38 +129,34 @@ export async function generateVeilleSummary(
     }
   }
 
-  const openai = getOpenAI()
   const prompt = buildPrompt(toProcess)
-
-  console.log(`[summarize] Calling GPT — ${toProcess.length} articles, corpus_refs pre-computed`)
+  console.log(`[summarize] Calling GPT via fetch — ${toProcess.length} articles`)
   const gptStart = Date.now()
 
-  let response
-  const MAX_ATTEMPTS = 3
-  let lastErr: any
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      response = await openai.chat.completions.create({
-        model:           'gpt-4o-mini',
-        max_tokens:      4000,
-        temperature:     0.3,
-        response_format: { type: 'json_object' },
-        messages:        [{ role: 'user', content: prompt }],
-      })
-      break  // success
-    } catch (gptErr: any) {
-      lastErr = gptErr
-      const elapsed = Math.round((Date.now() - gptStart) / 1000)
-      console.error(`[summarize] GPT attempt ${attempt}/${MAX_ATTEMPTS} failed after ${elapsed}s — ${gptErr.message}`)
-      if (attempt < MAX_ATTEMPTS) {
-        await new Promise(r => setTimeout(r, 3000 * attempt))  // 3s, then 6s
-      }
-    }
-  }
-  if (!response) throw lastErr
+  const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    method:  'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model:           'gpt-4o-mini',
+      max_tokens:      4000,
+      temperature:     0.3,
+      response_format: { type: 'json_object' },
+      messages:        [{ role: 'user', content: prompt }],
+    }),
+    signal: AbortSignal.timeout(120_000),
+  })
 
+  if (!gptRes.ok) {
+    const errText = await gptRes.text()
+    throw new Error(`OpenAI HTTP ${gptRes.status}: ${errText.slice(0, 200)}`)
+  }
+
+  const gptData = await gptRes.json() as { choices: { message: { content: string } }[] }
   const elapsed = Math.round((Date.now() - gptStart) / 1000)
-  const summary = response.choices[0]?.message?.content
+  const summary = gptData.choices[0]?.message?.content
     ?? JSON.stringify({ themes: [], articles: [] })
 
   console.log(`[summarize] Done in ${elapsed}s — ${summary.length} chars`)
