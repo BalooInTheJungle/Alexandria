@@ -72,7 +72,7 @@ export type ListVeilleItemsOptions = { runId?: string; sourceId?: string; limit?
 
 export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Promise<VeilleItemWithMeta[]> {
   const { runId, sourceId, limit = 100, offset = 0, minScore } = options
-  const supabase = await createClient()
+  const supabase = getAdminSupabase()
 
   let query = supabase
     .from('veille_items')
