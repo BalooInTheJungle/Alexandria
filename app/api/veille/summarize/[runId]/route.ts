@@ -1,3 +1,5 @@
+export const maxDuration = 60
+
 import { NextResponse } from 'next/server'
 import { listVeilleItems, saveRunSummary, getRunById } from '@/lib/db/veille'
 import { generateVeilleSummary } from '@/lib/veille/summarize'
