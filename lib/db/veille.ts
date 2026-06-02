@@ -120,7 +120,7 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
 }
 
 export async function getRunById(id: string): Promise<VeilleRunRow | null> {
-  const supabase = await createClient()
+  const supabase = getAdminSupabase()
   const { data, error } = await supabase
     .from('veille_runs')
     .select('id, status, started_at, completed_at, error_message, created_at, phase, items_processed, items_total, ai_summary, high_score_count, score_threshold, pipeline_logs')
