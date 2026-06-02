@@ -208,6 +208,7 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       const res = await fetch(`${baseUrl}/api/veille/summarize/${runId}`, {
         method:  'POST',
         headers: { 'Authorization': `Bearer ${process.env.CRON_SECRET}` },
+        signal:  AbortSignal.timeout(55_000),
       })
       if (res.ok) {
         const data = await res.json()
