@@ -24,12 +24,18 @@ export async function POST(request: Request, { params }: Params) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 })
     }
 
-    // Fetch scored items for this run
+    // Fetch scored items for this run — already ordered by similarity_score DESC
     const items = await listVeilleItems({ runId, limit: 1000 })
     LOG('items loaded', { count: items.length })
 
     const THRESHOLD = 0.75
-    const forSummary = items.map(item => ({
+    const MAX_FOR_SUMMARY = 10
+
+    const eligible = items.filter(i => (i.similarity_score ?? 0) >= THRESHOLD)
+    const top = eligible.slice(0, MAX_FOR_SUMMARY)
+    LOG('eligible', { eligibleCount: eligible.length, sending: top.length, threshold: THRESHOLD })
+
+    const forSummary = top.map(item => ({
       id:               item.id,
       title:            item.title ?? '',
       abstract:         item.abstract ?? null,
@@ -37,9 +43,6 @@ export async function POST(request: Request, { params }: Params) {
       similarity_score: item.similarity_score ?? null,
       corpus_refs:      item.corpus_refs ?? [],
     }))
-
-    const eligibleCount = forSummary.filter(i => (i.similarity_score ?? 0) >= THRESHOLD).length
-    LOG('eligible', { eligibleCount, threshold: THRESHOLD })
 
     const { summary, highScoreCount } = await generateVeilleSummary(forSummary, THRESHOLD)
     await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: THRESHOLD })
