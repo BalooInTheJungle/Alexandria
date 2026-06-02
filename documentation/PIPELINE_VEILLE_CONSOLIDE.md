@@ -96,7 +96,41 @@
 
 ---
 
-## 7. Références
+---
+
+## 7. Règles critiques — background Vercel (`waitUntil`)
+
+Ces règles s'appliquent à tout code qui tourne dans un contexte `waitUntil` (pipeline veille, crons background).
+
+### ❌ Ne jamais faire
+
+| Interdit | Raison |
+|----------|--------|
+| `new OpenAI({ apiKey })` + `.chat.completions.create()` | Le SDK OpenAI utilise `undici` comme client HTTP interne. `undici` échoue à établir des connexions TCP dans un contexte `waitUntil` de longue durée (> ~150s). |
+| `await createClient()` (client RLS) pour lire `veille_runs` ou `veille_items` | Sans session utilisateur authentifiée, le RLS retourne 0 lignes silencieusement — pas d'erreur, juste des données vides. |
+| `fetch(url)` sans timeout | Si la cible ne répond pas, le pipeline se bloque indéfiniment. `waitUntil` est tué silencieusement par Vercel, le run reste en `status=running` pour toujours. |
+| `process.env.VERCEL_URL` pour construire des URLs internes | Retourne l'URL de déploiement spécifique (protégée par Vercel Auth → HTTP 401). |
+
+### ✅ Toujours faire
+
+| Règle | Détail |
+|-------|--------|
+| **`fetch` natif pour OpenAI** | `fetch('https://api.openai.com/v1/chat/completions', { ... })` fonctionne dans `waitUntil`. |
+| **Client admin pour les requêtes DB** dans les crons | `getAdminSupabase()` (service role) pour toutes les lectures/écritures dans le pipeline. |
+| **`AbortSignal.timeout(N)` sur tous les `fetch`** | Évite tout blocage silencieux. |
+| **`VERCEL_APP_URL`** pour les URLs internes | Variable définie manuellement dans Vercel Settings → `https://alexandria-dusky.vercel.app`. |
+
+### Clients Supabase — qui utilise quoi
+
+| Contexte | Client à utiliser | Fichier |
+|----------|-------------------|---------|
+| Pipeline veille, crons | `getAdminSupabase()` (service role) | `lib/db/veille.ts` |
+| Routes API utilisateur (RAG, etc.) | `createClient()` (RLS avec session) | `lib/supabase/server.ts` |
+| Composants React client | `createClient()` browser | `lib/supabase/client.ts` |
+
+---
+
+## 9. Références
 
 | Document | Contenu |
 |----------|---------|

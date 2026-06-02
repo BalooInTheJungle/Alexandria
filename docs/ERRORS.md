@@ -213,6 +213,92 @@ WHERE relid = 'public.chunks'::regclass;
 
 ---
 
+---
+
+### [VERCEL] Pipeline veille — résumé IA (HTTP 401 Authentication Required)
+
+**Symptôme** : `Échec route résumé (HTTP 401) : <!doctype html>...<title>Authentication Required</title>`
+**Cause** : `process.env.VERCEL_URL` retourne l'URL de déploiement spécifique (ex: `alexandria-git-main-abc.vercel.app`) qui est protégée par Vercel Deployment Protection. Ce n'est pas le 401 de l'API, c'est Vercel qui bloque avant même d'atteindre la route.
+**Solution** : utiliser `VERCEL_PROJECT_PRODUCTION_URL` (variable système Vercel auto-injectée) ou définir manuellement `VERCEL_APP_URL` dans Vercel Settings → Environment Variables (valeur : `https://alexandria-dusky.vercel.app`).
+```ts
+const baseUrl = process.env.VERCEL_APP_URL
+  ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null)
+  ?? 'http://localhost:3000'
+```
+**Fichier concerné** : `lib/veille/pipeline.ts`
+**Date** : juin 2026
+
+---
+
+### [SUPABASE] Pipeline veille — résumé IA (HTTP 404 Run not found)
+
+**Symptôme** : `Échec route résumé (HTTP 404) : {"error":"Run not found"}` — le run existe bien en base.
+**Cause** : `getRunById()` utilisait `createClient()` (client serveur avec RLS). La table `veille_runs` n'est pas accessible via RLS depuis une route sans session utilisateur authentifiée.
+**Solution** : utiliser `getAdminSupabase()` (service role) dans `getRunById()`.
+```ts
+// ❌ Avant
+const supabase = await createClient()
+// ✅ Après
+const supabase = getAdminSupabase()
+```
+**Fichier concerné** : `lib/db/veille.ts` — fonction `getRunById`
+**Règle générale** : toutes les fonctions DB appelées depuis des routes cron ou des pipelines background doivent utiliser le client admin, pas le client RLS.
+**Date** : juin 2026
+
+---
+
+### [SUPABASE] Pipeline veille — résumé IA vide `{"themes":[],"articles":[]}`
+
+**Symptôme** : résumé sauvegardé mais vide, `high_score_count = 0` alors que des articles éligibles existent.
+**Cause** : `listVeilleItems()` utilisait `createClient()` (RLS). Depuis la route summarize (pas de session utilisateur), la requête retournait 0 lignes silencieusement — pas d'erreur, juste un tableau vide.
+**Solution** : utiliser `getAdminSupabase()` dans `listVeilleItems()`.
+**Fichier concerné** : `lib/db/veille.ts` — fonction `listVeilleItems`
+**Date** : juin 2026
+
+---
+
+### [VERCEL] Pipeline veille — résumé IA bloqué indéfiniment (status=running)
+
+**Symptôme** : le run reste bloqué en `status=running`, phase `summary`, sans jamais se terminer.
+**Cause** : le `fetch` vers la route summarize n'avait pas de timeout. Si la route ne répondait pas, le pipeline attendait indéfiniment. `waitUntil` finissait par être tué silencieusement par Vercel sans marquer le run comme terminé.
+**Solution** : ajouter `signal: AbortSignal.timeout(55_000)` sur le fetch, et si le run reste bloqué, le corriger manuellement en DB :
+```sql
+UPDATE veille_runs
+SET status='failed', completed_at=now(), error_message='Pipeline bloqué phase summary'
+WHERE id='<run_id>';
+```
+**Fichier concerné** : `lib/veille/pipeline.ts`
+**Date** : juin 2026
+
+---
+
+### [VERCEL] Pipeline veille — résumé IA (Connection error. — OpenAI SDK dans waitUntil)
+
+**Symptôme** : `Échec résumé IA : Connection error.` — erreur systématique, 3 tentatives en ~15s.
+**Cause** : le SDK OpenAI utilise **`undici`** comme client HTTP interne. Dans le contexte `waitUntil` de Vercel (après ~150s d'exécution), `undici` échoue à établir de nouvelles connexions TCP vers `api.openai.com`. Ce n'est pas un problème de clé API ni de réseau — c'est une incompatibilité entre `undici` et le contexte background Vercel.
+**Solution** : remplacer l'appel SDK par un `fetch` natif Node.js qui, lui, fonctionne dans ce contexte (comme les appels OpenAlex).
+```ts
+// ❌ À ne jamais faire dans un contexte waitUntil
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const res = await openai.chat.completions.create({ ... })
+
+// ✅ Utiliser fetch natif
+const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+  },
+  body: JSON.stringify({ model: 'gpt-4o-mini', ... }),
+  signal: AbortSignal.timeout(120_000),
+})
+```
+**Fichier concerné** : `lib/veille/summarize.ts`
+**Règle générale** : dans un pipeline background Vercel (`waitUntil`), **toujours utiliser `fetch` natif** pour les appels HTTP externes. Ne jamais utiliser le SDK OpenAI directement.
+**Date** : juin 2026
+
+---
+
 ## Erreurs à investiguer
 
 Ajouter ici les erreurs rencontrées mais non encore résolues :
