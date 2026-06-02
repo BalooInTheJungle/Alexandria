@@ -8,9 +8,10 @@
 import { getRssSources, getOpenAlexSources }          from './sources'
 import { fetchRssFeed }                                from './fetch-rss'
 import { fetchAbstractsByDois, fetchDoiByTitle, fetchRecentByIssn, type AbstractResult } from './openalex'
-import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, savePipelineLogs } from '../db/veille'
+import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, savePipelineLogs, listVeilleItems, saveRunSummary } from '../db/veille'
 import type { RunLogEntry, RunLogLevel } from '../db/types'
 import { scoreVeilleItems, loadCorpusTerms, scoreHeuristic } from './score'
+import { generateVeilleSummary } from './summarize'
 import type { VeilleItemInsert }                       from '../db/veille'
 import type { RssSource, RssArticle }                  from './fetch-rss'
 
@@ -199,26 +200,31 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     const eligibleCount = Array.from(bothScores.values()).filter(s => (s.similarity ?? 0) >= THRESHOLD).length
     plog('summary', `${eligibleCount} articles >= ${THRESHOLD} éligibles — appel route dédiée — +${elapsed()}s`)
 
-    // Call the summarize route as a fresh Vercel function — avoids connection errors
-    // that occur when OpenAI is called from a long-running background function.
+    // Generate AI summary directly in the pipeline
     try {
-      const baseUrl = process.env.VERCEL_APP_URL
-        ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null)
-        ?? 'http://localhost:3000'
-      const res = await fetch(`${baseUrl}/api/veille/summarize/${runId}`, {
-        method:  'POST',
-        headers: { 'Authorization': `Bearer ${process.env.CRON_SECRET}` },
-        signal:  AbortSignal.timeout(55_000),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        plog('summary', `Résumé IA généré — top ${data.highScoreCount ?? '?'} articles — +${elapsed()}s`)
-      } else {
-        const text = await res.text()
-        plog('summary', `Échec route résumé (HTTP ${res.status}) : ${text.slice(0, 200)}`, 'error')
-      }
+      const SUMMARY_THRESHOLD = 0.75
+      const MAX_FOR_SUMMARY   = 10
+      const items = await listVeilleItems({ runId, limit: 1000 })
+      const eligible = items
+        .filter(i => (i.similarity_score ?? 0) >= SUMMARY_THRESHOLD)
+        .slice(0, MAX_FOR_SUMMARY)
+
+      plog('summary', `${eligible.length} articles éligibles envoyés à GPT — +${elapsed()}s`)
+
+      const forSummary = eligible.map(item => ({
+        id:               item.id,
+        title:            item.title ?? '',
+        abstract:         item.abstract ?? null,
+        source_name:      item.source_name,
+        similarity_score: item.similarity_score ?? null,
+        corpus_refs:      item.corpus_refs ?? [],
+      }))
+
+      const { summary, highScoreCount } = await generateVeilleSummary(forSummary, SUMMARY_THRESHOLD)
+      await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: SUMMARY_THRESHOLD })
+      plog('summary', `Résumé IA généré — top ${highScoreCount} articles — +${elapsed()}s`)
     } catch (err: any) {
-      plog('summary', `Échec appel route résumé : ${err.message}`, 'error')
+      plog('summary', `Échec résumé IA : ${err.message}`, 'error')
     }
 
     await updateRunPhase(runId, 'done')
