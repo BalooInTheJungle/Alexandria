@@ -493,6 +493,7 @@ function LegacySummaryView({ raw, run }: { raw: string; run: VeilleRun }) {
 function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle?: (id: string, read: boolean) => void }) {
   const [authorsOpen, setAuthorsOpen] = useState(false);
   const [refsOpen, setRefsOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [isRead, setIsRead] = useState(item.read_at != null);
   const [toggling, setToggling] = useState(false);
 
@@ -573,22 +574,30 @@ function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle
         )}
       </div>
       {item.ai_analysis && (
-        <div className="space-y-3 border-t pt-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Analyse IA</p>
-          <div className="space-y-2">
-            <div>
-              <p className="text-xs font-semibold text-foreground mb-0.5">Contribution scientifique</p>
-              <p className="text-xs text-muted-foreground leading-relaxed">{item.ai_analysis.contribution}</p>
+        <div className="border-t pt-3">
+          <button
+            onClick={() => setAnalysisOpen(o => !o)}
+            className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-violet-600 hover:text-violet-800 transition-colors"
+          >
+            <span>{analysisOpen ? "▲" : "▼"}</span>
+            <span>✦ Analyse IA</span>
+          </button>
+          {analysisOpen && (
+            <div className="mt-3 space-y-2 rounded-lg bg-violet-50 border border-violet-100 p-3">
+              <div>
+                <p className="text-xs font-semibold text-violet-700 mb-0.5">Contribution scientifique</p>
+                <p className="text-xs text-violet-900 leading-relaxed">{item.ai_analysis.contribution}</p>
+              </div>
+              <div className="border-t border-violet-100 pt-2">
+                <p className="text-xs font-semibold text-violet-700 mb-0.5">Pertinence pour le chercheur</p>
+                <p className="text-xs text-violet-900 leading-relaxed">{item.ai_analysis.relevance}</p>
+              </div>
+              <div className="border-t border-violet-100 pt-2">
+                <p className="text-xs font-semibold text-blue-700 mb-0.5">Lien avec le corpus</p>
+                <p className="text-xs text-blue-800 leading-relaxed">{item.ai_analysis.corpus_link}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold text-foreground mb-0.5">Pertinence pour le chercheur</p>
-              <p className="text-xs text-muted-foreground leading-relaxed">{item.ai_analysis.relevance}</p>
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-foreground mb-0.5">Lien avec le corpus</p>
-              <p className="text-xs text-blue-700 leading-relaxed">{item.ai_analysis.corpus_link}</p>
-            </div>
-          </div>
+          )}
         </div>
       )}
       {refs.length > 0 && (
