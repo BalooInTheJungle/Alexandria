@@ -4,6 +4,7 @@ import { listVeilleItems } from "@/lib/db/veille";
 import { filterItemsForArticleDisplay } from "@/lib/veille/filter-article-display";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const MIN_SCORE = 0.80;
 const PAGE_SIZE = 10;
@@ -44,7 +45,10 @@ export async function GET(request: Request) {
     const items = filterItemsForArticleDisplay(rawItems);
 
     LOG("ok", { total, page, returned: items.length });
-    return NextResponse.json({ items, total, page, pageSize: PAGE_SIZE, totalPages });
+    return NextResponse.json(
+      { items, total, page, pageSize: PAGE_SIZE, totalPages },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (e) {
     LOG("error", e);
     return NextResponse.json(
