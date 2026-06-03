@@ -227,8 +227,11 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       // Backfill ai_analysis on each analyzed item
       const parsed = parseSummary(summary)
       if (parsed && parsed.articles.length > 0) {
+        plog('summary', `Sauvegarde ai_analysis — ${parsed.articles.length} articles à mettre à jour — +${elapsed()}s`)
         await saveItemsAiAnalysis(parsed.articles)
         plog('summary', `ai_analysis sauvegardé pour ${parsed.articles.length} articles — +${elapsed()}s`)
+      } else {
+        plog('summary', `Pas d'articles parsés dans le résumé IA — ai_analysis ignoré — +${elapsed()}s`)
       }
     } catch (err: any) {
       plog('summary', `Échec résumé IA : ${err.message}`, 'error')

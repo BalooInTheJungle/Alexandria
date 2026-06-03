@@ -280,15 +280,23 @@ export async function saveItemsAiAnalysis(
   LOG('saveItemsAiAnalysis', { count: analyses.length })
   const supabase = getAdminSupabase()
 
+  let updated = 0
+  let errors = 0
   for (const a of analyses) {
     const { error } = await supabase
       .from('veille_items')
       .update({ ai_analysis: { contribution: a.contribution, relevance: a.relevance, corpus_link: a.corpus_link } })
       .eq('id', a.item_id)
-    if (error) LOG('saveItemsAiAnalysis error', { item_id: a.item_id, error: error.message })
+    if (error) {
+      errors++
+      LOG('saveItemsAiAnalysis error', { item_id: a.item_id, error: error.message })
+    } else {
+      updated++
+      LOG('saveItemsAiAnalysis updated', { item_id: a.item_id })
+    }
   }
 
-  LOG('saveItemsAiAnalysis done', { updated: analyses.length })
+  LOG('saveItemsAiAnalysis done', { updated, errors, total: analyses.length })
 }
 
 export async function insertVeilleItemsWithIds(
