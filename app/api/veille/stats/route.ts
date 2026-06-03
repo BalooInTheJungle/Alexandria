@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[API] GET /api/veille/stats", msg, ...args);
@@ -30,7 +31,7 @@ export async function GET() {
     };
 
     LOG("result", stats);
-    return NextResponse.json(stats);
+    return NextResponse.json(stats, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     LOG("error", e);
     return NextResponse.json({ error: "Stats failed" }, { status: 500 });
