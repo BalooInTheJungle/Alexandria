@@ -515,6 +515,8 @@ export default function BibliographiePage() {
   const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [pendingElapsed, setPendingElapsed] = useState<number>(0);
   const [threshold, setThreshold] = useState<number>(DEFAULT_THRESHOLD);
+  // true only when the user moves the slider manually — prevents programmatic setThreshold from re-fetching items
+  const isUserThresholdChange = React.useRef(false);
 
   const fetchSources = useCallback(async () => {
     setLoadingSources(true);
@@ -618,24 +620,23 @@ export default function BibliographiePage() {
   }, [tab]);
 
   // Load last completed run's items on mount
+  // runs list already includes score_threshold — no need for a separate fetchCurrentRun
   useEffect(() => {
     if (runs.length === 0) return;
     const lastCompleted = runs.find(r => r.status === "completed");
     if (lastCompleted && !runId) {
-      fetchCurrentRun(lastCompleted.id).then(run => {
-        if (run) {
-          setCurrentRun(run);
-          const thresh = run.score_threshold ?? DEFAULT_THRESHOLD;
-          setThreshold(thresh);
-          fetchItems(lastCompleted.id, thresh);
-        }
-      });
+      setCurrentRun(lastCompleted);
+      const thresh = lastCompleted.score_threshold ?? DEFAULT_THRESHOLD;
+      setThreshold(thresh);
+      fetchItems(lastCompleted.id, thresh);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runs]);
 
-  // Reload items when threshold changes (only if run is completed)
+  // Reload items when the user manually changes the threshold
   useEffect(() => {
+    if (!isUserThresholdChange.current) return;
+    isUserThresholdChange.current = false;
     if (currentRun?.status === "completed") {
       fetchItems(currentRun.id, threshold);
     }
@@ -860,7 +861,7 @@ export default function BibliographiePage() {
               <span>Seuil de pertinence :</span>
               <select
                 value={threshold}
-                onChange={e => setThreshold(parseFloat(e.target.value))}
+                onChange={e => { isUserThresholdChange.current = true; setThreshold(parseFloat(e.target.value)); }}
                 className="border border-border bg-background text-sm rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
               >
                 <option value={0.20}>≥ 20%</option>

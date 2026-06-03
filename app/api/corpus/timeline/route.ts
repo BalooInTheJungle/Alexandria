@@ -10,27 +10,17 @@ export async function GET() {
   try {
     const supabase = createAdminClient();
 
-    const { data, error } = await supabase
-      .from("documents")
-      .select("published_at")
-      .eq("status", "done")
-      .not("published_at", "is", null)
-      .limit(10000);
+    const { data, error } = await supabase.rpc("get_timeline_by_year", { year_min: 2000, year_max: 2030 });
 
     if (error) {
       console.error("[API] GET /api/corpus/timeline error:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const freq: Record<number, number> = {};
-    for (const row of data ?? []) {
-      const year = new Date(row.published_at as string).getFullYear();
-      if (year >= 2000 && year <= 2030) freq[year] = (freq[year] ?? 0) + 1;
-    }
-
-    const timeline: TimelinePoint[] = Object.entries(freq)
-      .map(([y, c]) => ({ year: Number(y), count: c }))
-      .sort((a, b) => a.year - b.year);
+    const timeline: TimelinePoint[] = (data ?? []).map((r: { year: number; count: number }) => ({
+      year: r.year,
+      count: r.count,
+    }));
 
     console.log("[API] GET /api/corpus/timeline result:", { years: timeline.length, total: data?.length });
     return NextResponse.json({ timeline });

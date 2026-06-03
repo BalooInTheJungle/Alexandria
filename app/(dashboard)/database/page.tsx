@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -674,41 +674,62 @@ export default function DatabasePage() {
   const [mapPoints, setMapPoints] = useState<MapPoint[]>([]);
   const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
   const [journals, setJournals] = useState<JournalStat[]>([]);
+  const [loadingMap, setLoadingMap] = useState(false);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [loadingJournals, setLoadingJournals] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadResults, setUploadResults] = useState<UploadResult[] | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
+  const mapRef = useRef<HTMLDivElement>(null);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const journalsRef = useRef<HTMLDivElement>(null);
+
+  // Load KPIs immediately (visible above the fold)
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const [resStats, resMap, resTimeline, resJournals] = await Promise.all([
-          fetch("/api/documents/stats"),
-          fetch("/api/corpus/map"),
-          fetch("/api/corpus/timeline"),
-          fetch("/api/corpus/journals"),
-        ]);
-        if (!cancelled) {
-          if (resStats.ok) setStats(await resStats.json());
-          if (resMap.ok) {
-            const mapData = await resMap.json();
-            setMapPoints(mapData.points ?? []);
-          }
-          if (resTimeline.ok) {
-            const tlData = await resTimeline.json();
-            setTimeline(tlData.timeline ?? []);
-          }
-          if (resJournals.ok) {
-            const jData = await resJournals.json();
-            setJournals(jData.journals ?? []);
-          }
-        }
-      } catch {
-        // ignore
-      }
-    })();
+    fetch("/api/documents/stats")
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (!cancelled && d) setStats(d); })
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [uploadResults]);
+
+  // Lazy-load each chart section when it enters the viewport
+  useEffect(() => {
+    const makeObserver = (
+      ref: React.RefObject<HTMLDivElement | null>,
+      setLoading: (v: boolean) => void,
+      onLoad: (data: unknown) => void,
+      url: string,
+    ) => {
+      const el = ref.current;
+      if (!el) return;
+      const obs = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) {
+            obs.disconnect();
+            setLoading(true);
+            fetch(url)
+              .then((r) => r.ok ? r.json() : null)
+              .then((d) => { if (d) onLoad(d); })
+              .catch(() => {})
+              .finally(() => setLoading(false));
+          }
+        },
+        { rootMargin: "200px" },
+      );
+      obs.observe(el);
+      return obs;
+    };
+
+    const o1 = makeObserver(journalsRef, setLoadingJournals, (d: unknown) => setJournals((d as { journals: JournalStat[] }).journals ?? []), "/api/corpus/journals");
+    const o2 = makeObserver(mapRef, setLoadingMap, (d: unknown) => setMapPoints((d as { points: MapPoint[] }).points ?? []), "/api/corpus/map");
+    const o3 = makeObserver(timelineRef, setLoadingTimeline, (d: unknown) => setTimeline((d as { timeline: TimelinePoint[] }).timeline ?? []), "/api/corpus/timeline");
+
+    return () => { o1?.disconnect(); o2?.disconnect(); o3?.disconnect(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onUploadFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -822,49 +843,70 @@ export default function DatabasePage() {
       </div>
 
       {/* Top journaux */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Top journaux du corpus</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <JournalsChart data={journals} />
-          {journals.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground text-center">
-              {journals.length} journaux distincts affichés · {journals.reduce((s, j) => s + j.count, 0).toLocaleString("fr-FR")} documents avec journal renseigné
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <div ref={journalsRef}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Top journaux du corpus</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loadingJournals
+              ? <div className="h-40 animate-pulse rounded bg-muted" />
+              : <>
+                  <JournalsChart data={journals} />
+                  {journals.length > 0 && (
+                    <p className="mt-3 text-xs text-muted-foreground text-center">
+                      {journals.length} journaux distincts affichés · {journals.reduce((s, j) => s + j.count, 0).toLocaleString("fr-FR")} documents avec journal renseigné
+                    </p>
+                  )}
+                </>
+            }
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Carte vectorielle UMAP */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Carte du corpus — espace vectoriel</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <CorpusMap points={mapPoints} />
-          {mapPoints.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground text-center">
-              {mapPoints.length.toLocaleString("fr-FR")} chunks affichés · {K_CLUSTERS} clusters thématiques détectés automatiquement
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <div ref={mapRef}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Carte du corpus — espace vectoriel</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loadingMap
+              ? <div className="h-64 animate-pulse rounded bg-muted" />
+              : <>
+                  <CorpusMap points={mapPoints} />
+                  {mapPoints.length > 0 && (
+                    <p className="mt-3 text-xs text-muted-foreground text-center">
+                      {mapPoints.length.toLocaleString("fr-FR")} chunks affichés · {K_CLUSTERS} clusters thématiques détectés automatiquement
+                    </p>
+                  )}
+                </>
+            }
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Couverture temporelle */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Couverture temporelle du corpus</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <TimelineChart data={timeline} />
-          {timeline.length > 0 && (
-            <p className="mt-3 text-xs text-muted-foreground text-center">
-              {timeline.reduce((s, d) => s + d.count, 0).toLocaleString("fr-FR")} documents avec année renseignée · {timeline[0]?.year}–{timeline[timeline.length - 1]?.year}
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <div ref={timelineRef}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Couverture temporelle du corpus</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loadingTimeline
+              ? <div className="h-40 animate-pulse rounded bg-muted" />
+              : <>
+                  <TimelineChart data={timeline} />
+                  {timeline.length > 0 && (
+                    <p className="mt-3 text-xs text-muted-foreground text-center">
+                      {timeline.reduce((s, d) => s + d.count, 0).toLocaleString("fr-FR")} documents avec année renseignée · {timeline[0]?.year}–{timeline[timeline.length - 1]?.year}
+                    </p>
+                  )}
+                </>
+            }
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Articles publiés du chercheur — comparaison corpus */}
       <Card>

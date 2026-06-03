@@ -12,27 +12,17 @@ export async function GET() {
   try {
     const supabase = createAdminClient();
 
-    const { data, error } = await supabase
-      .from("documents")
-      .select("journal")
-      .eq("status", "done")
-      .not("journal", "is", null);
+    const { data, error } = await supabase.rpc("get_journal_counts", { top_n: TOP_N });
 
     if (error) {
       console.error("[API] GET /api/corpus/journals error:", error.message);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const freq: Record<string, number> = {};
-    for (const row of data ?? []) {
-      const j = (row.journal as string).trim();
-      if (j) freq[j] = (freq[j] ?? 0) + 1;
-    }
-
-    const journals: JournalStat[] = Object.entries(freq)
-      .map(([journal, count]) => ({ journal, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, TOP_N);
+    const journals: JournalStat[] = (data ?? []).map((r: { journal: string; count: number }) => ({
+      journal: r.journal,
+      count: r.count,
+    }));
 
     console.log("[API] GET /api/corpus/journals result:", { journals: journals.length });
     return NextResponse.json({ journals });
