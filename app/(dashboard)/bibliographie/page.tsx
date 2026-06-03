@@ -633,6 +633,8 @@ export default function BibliographiePage() {
   const [topTotalPages, setTopTotalPages] = useState(1);
   const [loadingTop, setLoadingTop] = useState(false);
   const [veilleStats, setVeilleStats] = useState<{ total: number; scored: number; pertinent: number; read: number } | null>(null);
+  const [search, setSearch] = useState("");
+  const [showRead, setShowRead] = useState<"all" | "unread" | "read">("all");
 
   const fetchSources = useCallback(async () => {
     setLoadingSources(true);
@@ -692,6 +694,17 @@ export default function BibliographiePage() {
       setLoadingRuns(false);
     }
   }, []);
+
+  const filteredItems = useMemo(() => {
+    let items = topItems;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      items = items.filter(i => (i.title ?? "").toLowerCase().includes(q));
+    }
+    if (showRead === "unread") items = items.filter(i => !i.read_at);
+    if (showRead === "read")   items = items.filter(i => !!i.read_at);
+    return items;
+  }, [topItems, search, showRead]);
 
   const fetchTopItems = useCallback(async (page: number) => {
     setLoadingTop(true);
@@ -793,10 +806,32 @@ export default function BibliographiePage() {
             </Card>
           </div>
 
+          {/* Filtres */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <input
+              type="text"
+              placeholder="Rechercher par titre…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="flex-1 min-w-[200px] h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <div className="flex items-center rounded-md border border-input overflow-hidden text-sm">
+              {(["all", "unread", "read"] as const).map((v, i) => (
+                <button
+                  key={v}
+                  onClick={() => setShowRead(v)}
+                  className={`px-3 h-9 transition-colors ${showRead === v ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"} ${i > 0 ? "border-l border-input" : ""}`}
+                >
+                  {v === "all" ? "Tous" : v === "unread" ? "Non lus" : "Lus"}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
               {topTotal > 0
-                ? `${topTotal} articles pertinents (score ≥ 80%) · page ${topPage}/${topTotalPages}`
+                ? `${filteredItems.length} article${filteredItems.length > 1 ? "s" : ""} affiché${filteredItems.length > 1 ? "s" : ""} · ${topTotal} pertinents au total · page ${topPage}/${topTotalPages}`
                 : loadingTop ? "Chargement…" : "Aucun article pertinent trouvé."}
             </p>
           </div>
@@ -806,11 +841,11 @@ export default function BibliographiePage() {
             <div className="space-y-4">
               {[1, 2, 3].map(i => <div key={i} className="h-32 animate-pulse rounded-lg bg-muted" />)}
             </div>
-          ) : topItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">Aucun article pertinent pour l&apos;instant.</p>
+          ) : filteredItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">Aucun article ne correspond aux filtres.</p>
           ) : (
             <div className="space-y-4">
-              {topItems.map(item => (
+              {filteredItems.map(item => (
                 <VeilleItemCard
                   key={item.id}
                   item={item}
