@@ -77,7 +77,7 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
   let query = supabase
     .from('veille_items')
     .select(`id, run_id, source_id, url, title, authors, doi, abstract, published_at,
-      heuristic_score, similarity_score, corpus_refs, last_error, created_at, sources!inner(name)`)
+      heuristic_score, similarity_score, corpus_refs, last_error, created_at, read_at, ai_analysis, sources!inner(name)`)
     .order('similarity_score', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
