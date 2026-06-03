@@ -612,6 +612,7 @@ export default function BibliographiePage() {
   const [topTotal, setTopTotal] = useState(0);
   const [topTotalPages, setTopTotalPages] = useState(1);
   const [loadingTop, setLoadingTop] = useState(false);
+  const [veilleStats, setVeilleStats] = useState<{ total: number; pertinent: number; read: number } | null>(null);
 
   const fetchSources = useCallback(async () => {
     setLoadingSources(true);
@@ -693,6 +694,10 @@ export default function BibliographiePage() {
   useEffect(() => {
     fetchRuns();
     fetchTopItems(1);
+    fetch("/api/veille/stats")
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setVeilleStats(d); })
+      .catch(() => {});
   }, [fetchRuns, fetchTopItems]);
 
   // Load sources when tab is selected
@@ -731,6 +736,35 @@ export default function BibliographiePage() {
       {/* ── Tab : Veille ── */}
       {tab === "veille" && (
         <div className="space-y-4">
+
+          {/* KPIs globaux */}
+          <div className="grid grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="pt-5">
+                <p className="text-sm text-muted-foreground">Articles extraits</p>
+                <p className="text-3xl font-semibold tabular-nums mt-1">
+                  {veilleStats ? veilleStats.total.toLocaleString("fr-FR") : "—"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-5">
+                <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 80%)</span></p>
+                <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">
+                  {veilleStats ? veilleStats.pertinent.toLocaleString("fr-FR") : "—"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-5">
+                <p className="text-sm text-muted-foreground">Articles lus</p>
+                <p className="text-3xl font-semibold tabular-nums mt-1 text-blue-700">
+                  {veilleStats ? veilleStats.read.toLocaleString("fr-FR") : "—"}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
               {topTotal > 0
