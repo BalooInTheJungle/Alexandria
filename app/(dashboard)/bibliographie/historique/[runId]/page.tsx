@@ -4,14 +4,6 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -20,6 +12,14 @@ type RunLogEntry = {
   level: 'info' | 'warn' | 'error'
   phase: string
   msg:   string
+}
+
+type CorpusRef = {
+  doc_id:    string;
+  doc_title: string | null;
+  excerpt:   string | null;
+  page:      number | null;
+  similarity: number;
 }
 
 type VeilleRun = {
@@ -40,11 +40,160 @@ type VeilleItem = {
   url: string;
   title: string | null;
   authors: string[] | null;
+  doi: string | null;
   heuristic_score: number | null;
   similarity_score: number | null;
   source_name: string | null;
   document_id: string | null;
+  corpus_refs?: CorpusRef[] | null;
 };
+
+// ── Shared UI components ───────────────────────────────────────────────────────
+
+function ScoreStat({ score }: { score: number | null }) {
+  if (score == null) return (
+    <div className="flex flex-col items-center justify-center rounded-lg px-3 py-2 bg-muted min-w-[68px]">
+      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Similarité</span>
+      <span className="text-lg font-bold text-muted-foreground">—</span>
+    </div>
+  );
+  const pct = Math.round(score * 100);
+  const colors = pct >= 70 ? "bg-green-100 text-green-800" : pct >= 50 ? "bg-yellow-100 text-yellow-800" : "bg-muted text-muted-foreground";
+  return (
+    <div className={`flex flex-col items-center justify-center rounded-lg px-3 py-2 min-w-[68px] ${colors}`}>
+      <span className="text-[10px] font-semibold uppercase tracking-wide opacity-70">Similarité</span>
+      <span className="text-xl font-bold tabular-nums leading-tight">{pct}%</span>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 text-sm">
+      <span className="text-muted-foreground shrink-0 w-24">{label} :</span>
+      <span className="flex-1 min-w-0">{children}</span>
+    </div>
+  );
+}
+
+function CorpusRefBlock({ corpusRef }: { corpusRef: CorpusRef }) {
+  const pct = Math.round((corpusRef.similarity ?? 0) * 100);
+  const scoreColor = pct >= 70 ? "text-green-700" : pct >= 50 ? "text-yellow-700" : "text-muted-foreground";
+  return (
+    <div className="bg-muted/50 rounded-md p-3 space-y-2 border border-border">
+      <div className="space-y-1">
+        <Field label="Document"><span className="font-medium">{corpusRef.doc_title ?? "—"}</span></Field>
+        <Field label="Page">{corpusRef.page != null ? `p. ${corpusRef.page}` : "—"}</Field>
+        <Field label="Similarité"><span className={`font-semibold ${scoreColor}`}>{pct}%</span></Field>
+      </div>
+      <div className="h-px bg-border" />
+      <div>
+        <p className="text-xs text-muted-foreground font-medium mb-1">Extrait :</p>
+        <p className="text-xs text-muted-foreground italic leading-relaxed">{corpusRef.excerpt ?? "—"}</p>
+      </div>
+    </div>
+  );
+}
+
+function VeilleItemCard({ item, hideRefs }: { item: VeilleItem; hideRefs?: boolean }) {
+  const [authorsOpen, setAuthorsOpen] = useState(false);
+  const [refsOpen, setRefsOpen] = useState(false);
+
+  const href    = item.doi ? `https://doi.org/${item.doi}` : item.url;
+  const authors = item.authors ?? [];
+  const refs    = (item.corpus_refs ?? []).filter((r): r is CorpusRef => r != null && typeof r === "object");
+
+  return (
+    <Card className="p-5 space-y-4">
+      {/* Header : titre + score */}
+      <div className="flex items-start gap-4">
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{item.source_name ?? "Article"}</p>
+          {href
+            ? <a href={href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold hover:underline line-clamp-2 block">{item.title ?? "(titre inconnu)"}</a>
+            : <p className="text-sm font-semibold line-clamp-2">{item.title ?? "(titre inconnu)"}</p>
+          }
+        </div>
+        <div className="shrink-0"><ScoreStat score={item.similarity_score} /></div>
+      </div>
+
+      <div className="h-px bg-border" />
+
+      <div className="space-y-1.5">
+        {/* Auteurs */}
+        <div className="flex gap-2 text-sm">
+          <span className="text-muted-foreground shrink-0 w-24">Auteurs :</span>
+          <div className="flex-1 min-w-0">
+            {authors.length === 0 ? (
+              <span className="text-muted-foreground">—</span>
+            ) : authorsOpen ? (
+              <span>{authors.join(", ")}{" "}
+                <button onClick={() => setAuthorsOpen(false)} className="text-xs text-primary underline ml-1">Réduire</button>
+              </span>
+            ) : (
+              <span>{authors.slice(0, 3).join(", ")}{authors.length > 3 && (
+                <>{" "}<button onClick={() => setAuthorsOpen(true)} className="text-xs text-primary underline">+{authors.length - 3} auteurs</button></>
+              )}</span>
+            )}
+          </div>
+        </div>
+
+        {/* DOI */}
+        {item.doi && (
+          <Field label="DOI">
+            <a href={`https://doi.org/${item.doi}`} target="_blank" rel="noopener noreferrer" className="text-xs text-primary underline break-all">{item.doi}</a>
+          </Field>
+        )}
+
+        {/* Dans le corpus */}
+        {item.document_id && (
+          <Field label="Statut">
+            <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">Dans le corpus</span>
+          </Field>
+        )}
+      </div>
+
+      {/* Références corpus — masquées si hideRefs (elles seront rendues plus bas) */}
+      {!hideRefs && refs.length > 0 && (
+        <div className="space-y-2 border-t pt-3">
+          <button
+            onClick={() => setRefsOpen(o => !o)}
+            className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors"
+          >
+            <span>{refsOpen ? "▲" : "▼"}</span>
+            <span>{refs.length} référence{refs.length > 1 ? "s" : ""} corpus exacte{refs.length > 1 ? "s" : ""}</span>
+          </button>
+          {refsOpen && (
+            <div className="space-y-3">
+              {refs.map((ref, i) => <CorpusRefBlock key={i} corpusRef={ref} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function RefsBlock({ refs }: { refs: CorpusRef[] }) {
+  const [open, setOpen] = useState(false);
+  if (!refs.length) return null;
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors"
+      >
+        <span>{open ? "▲" : "▼"}</span>
+        <span>{refs.length} référence{refs.length > 1 ? "s" : ""} corpus exacte{refs.length > 1 ? "s" : ""}</span>
+      </button>
+      {open && (
+        <div className="space-y-3">
+          {refs.map((ref, i) => <CorpusRefBlock key={i} corpusRef={ref} />)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Summary parsing + rendering (mirrors /bibliographie) ──────────────────────
 
@@ -69,13 +218,6 @@ const THEME_COLORS = [
 function StructuredSummaryView({ summary, run, items }: { summary: StructuredSummary; run: VeilleRun; items: VeilleItem[] }) {
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-lg font-semibold">Résumé de la veille</h2>
-        <span className="text-sm text-muted-foreground">
-          {run.high_score_count ?? 0} articles pertinents
-          {run.score_threshold != null && ` (score ≥ ${Math.round(run.score_threshold * 100)}%)`}
-        </span>
-      </div>
 
       {summary.themes.length > 0 && (
         <div className="space-y-2">
@@ -96,36 +238,30 @@ function StructuredSummaryView({ summary, run, items }: { summary: StructuredSum
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
             Articles analysés ({summary.articles.length})
           </p>
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             {summary.articles.map((article, i) => {
               const item = items.find(it => it.id === article.item_id)
-              const href = item?.url ?? null
-              const title = item?.title ?? "(titre inconnu)"
-              const source = item?.source_name ?? "—"
+              const refs = (item?.corpus_refs ?? []).filter((r): r is CorpusRef => r != null && typeof r === "object")
               return (
-                <Card key={i} className="p-4 space-y-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground">{source}</p>
-                    {href
-                      ? <a href={href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold hover:underline line-clamp-2 block">{title}</a>
-                      : <p className="text-sm font-semibold line-clamp-2">{title}</p>
-                    }
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Contribution</p>
-                      <p className="leading-relaxed">{article.contribution}</p>
+                <div key={i}>
+                  {item && <VeilleItemCard item={item} hideRefs />}
+                  {/* GPT analysis + refs corpus tout en bas */}
+                  <div className="rounded-b-lg border border-t-0 px-5 py-4 space-y-3 bg-muted/20">
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Contribution scientifique</p>
+                      <p className="text-sm leading-relaxed">{article.contribution}</p>
                     </div>
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pertinence</p>
-                      <p className="leading-relaxed">{article.relevance}</p>
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Pertinence pour le chercheur</p>
+                      <p className="text-sm leading-relaxed">{article.relevance}</p>
                     </div>
-                    <div className="bg-blue-50/60 rounded-md p-3 border border-blue-100">
+                    <div className="space-y-1 bg-blue-50/60 rounded-md p-3 border border-blue-100">
                       <p className="text-xs font-semibold text-blue-800 uppercase tracking-wide">Lien avec le corpus</p>
                       <p className="text-sm leading-relaxed text-blue-900">{article.corpus_link}</p>
                     </div>
+                    <RefsBlock refs={refs} />
                   </div>
-                </Card>
+                </div>
               )
             })}
           </div>
@@ -225,13 +361,63 @@ function PipelineLogsView({ logs }: { logs: RunLogEntry[] }) {
   )
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatRunDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  const day = d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const hour = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return `${day.charAt(0).toUpperCase() + day.slice(1)} · ${hour}`;
+}
+
+// ── Pipeline logs modal ────────────────────────────────────────────────────────
+
+function LogsModal({ logs, onClose }: { logs: RunLogEntry[]; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <div className="bg-background rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b">
+          <h2 className="text-base font-semibold">Logs pipeline</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+        </div>
+        <div className="overflow-y-auto p-5">
+          {logs.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucun log disponible pour cette run.</p>
+          ) : (
+            <div className="font-mono text-xs space-y-1">
+              {logs.map((entry, i) => {
+                const time = new Date(entry.ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                const badge = PHASE_BADGE[entry.phase] ?? "bg-gray-100 text-gray-700";
+                const textStyle = LEVEL_STYLES[entry.level] ?? "text-foreground";
+                return (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="text-muted-foreground shrink-0 w-16">{time}</span>
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${badge}`}>
+                      {PHASE_LABELS[entry.phase] ?? entry.phase}
+                    </span>
+                    <span className={textStyle}>{entry.msg}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
+
+const HIGH_SCORE_THRESHOLD = 0.70;
 
 export default function HistoriqueRunPage({ params }: { params: { runId: string } }) {
   const { runId } = params;
   const [items, setItems] = useState<VeilleItem[]>([]);
   const [run, setRun] = useState<VeilleRun | null>(null);
   const [loading, setLoading] = useState(true);
+  const [logsOpen, setLogsOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -258,88 +444,117 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
     return () => { cancelled = true; };
   }, [runId]);
 
-  const scoreFinal = (item: VeilleItem) => item.similarity_score ?? 0;
+  const highScoreItems = items.filter(it => (it.similarity_score ?? 0) >= HIGH_SCORE_THRESHOLD);
 
   return (
     <div className="w-full max-w-6xl mx-auto px-4 space-y-6 py-8">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" asChild>
-          <Link href="/bibliographie">← Bibliographie</Link>
-        </Button>
+
+      {/* En-tête */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
+          <Button variant="ghost" size="sm" asChild className="-ml-3 mb-1">
+            <Link href="/bibliographie">← Bibliographie</Link>
+          </Button>
+          <h1 className="text-xl font-semibold">
+            Veille — {loading ? "…" : formatRunDate(run?.started_at)}
+          </h1>
+        </div>
+        {!loading && (run?.pipeline_logs?.length ?? 0) > 0 && (
+          <Button variant="outline" size="sm" onClick={() => setLogsOpen(true)}>
+            Logs pipeline
+          </Button>
+        )}
       </div>
+
+      {/* KPIs */}
+      {!loading && (
+        <div className="grid grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">Articles scorés</p>
+              <p className="text-3xl font-semibold tabular-nums mt-1">{items.length.toLocaleString("fr-FR")}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">Articles pertinents <span className="text-xs">(≥ 70%)</span></p>
+              <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">{highScoreItems.length.toLocaleString("fr-FR")}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">Analysés par IA</p>
+              <p className="text-3xl font-semibold tabular-nums mt-1">
+                {run?.ai_summary ? (() => {
+                  const s = parseSummary(run.ai_summary);
+                  return s ? s.articles.length : "—";
+                })() : "—"}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Résumé IA */}
       {run?.ai_summary && !loading && (() => {
-        const structured = parseSummary(run.ai_summary)
-        if (structured) return <StructuredSummaryView summary={structured} run={run} items={items} />
-        return <LegacySummaryView raw={run.ai_summary} run={run} />
+        const structured = parseSummary(run.ai_summary);
+        if (structured) return <StructuredSummaryView summary={structured} run={run} items={items} />;
+        return <LegacySummaryView raw={run.ai_summary} run={run} />;
       })()}
 
-      {/* Logs pipeline */}
-      {!loading && <PipelineLogsView logs={run?.pipeline_logs ?? []} />}
+      {/* Tableau condensé — articles ≥ 70% */}
+      {!loading && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Tous les articles pertinents{highScoreItems.length > 0 ? ` (${highScoreItems.length})` : ""}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {highScoreItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Aucun article au-dessus de 70% pour cette run.</p>
+            ) : (
+              <div className="rounded border overflow-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/40 text-left">
+                      <th className="px-4 py-2 font-medium text-muted-foreground w-[45%]">Titre</th>
+                      <th className="px-4 py-2 font-medium text-muted-foreground w-[35%]">Source</th>
+                      <th className="px-4 py-2 font-medium text-muted-foreground text-right w-[20%]">Similarité</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {highScoreItems
+                      .sort((a, b) => (b.similarity_score ?? 0) - (a.similarity_score ?? 0))
+                      .map((item) => {
+                        const pct = Math.round((item.similarity_score ?? 0) * 100);
+                        const href = item.doi ? `https://doi.org/${item.doi}` : item.url;
+                        return (
+                          <tr key={item.id} className="hover:bg-muted/20 transition-colors">
+                            <td className="px-4 py-2.5 max-w-0">
+                              <a href={href} target="_blank" rel="noopener noreferrer" className="line-clamp-2 hover:underline text-foreground">
+                                {item.title ?? "(titre inconnu)"}
+                              </a>
+                            </td>
+                            <td className="px-4 py-2.5 text-muted-foreground text-xs">{item.source_name ?? "—"}</td>
+                            <td className="px-4 py-2.5 text-right">
+                              <span className="font-semibold tabular-nums text-green-700">{pct}%</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Tableau des articles */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Run {runId.slice(0, 8)}…</CardTitle>
-          {run?.status && (
-            <span className="text-sm font-medium text-muted-foreground">Statut : {run.status}</span>
-          )}
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <p className="text-sm text-muted-foreground">Chargement…</p>
-          ) : items.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucun article pour cette run.</p>
-          ) : (
-            <div className="rounded border overflow-auto max-h-[70vh]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Titre</TableHead>
-                    <TableHead>Auteurs</TableHead>
-                    <TableHead className="text-right">Heur.</TableHead>
-                    <TableHead className="text-right">Vect.</TableHead>
-                    <TableHead className="text-right">Final</TableHead>
-                    <TableHead>En DB</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {items.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.source_name || "—"}</TableCell>
-                      <TableCell className="max-w-[200px] truncate">{item.title || "—"}</TableCell>
-                      <TableCell className="max-w-[120px] truncate text-xs">
-                        {item.authors?.length ? item.authors.join(", ") : "—"}
-                      </TableCell>
-                      <TableCell className="text-right text-xs">
-                        {item.heuristic_score != null ? item.heuristic_score.toFixed(2) : "—"}
-                      </TableCell>
-                      <TableCell className="text-right text-xs">
-                        {item.similarity_score != null ? item.similarity_score.toFixed(2) : "—"}
-                      </TableCell>
-                      <TableCell className="text-right text-xs">{scoreFinal(item).toFixed(2)}</TableCell>
-                      <TableCell>{item.document_id ? "Oui" : "Non"}</TableCell>
-                      <TableCell>
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary text-xs underline"
-                        >
-                          Lien
-                        </a>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Modal logs */}
+      {logsOpen && (
+        <LogsModal logs={run?.pipeline_logs ?? []} onClose={() => setLogsOpen(false)} />
+      )}
     </div>
   );
 }
