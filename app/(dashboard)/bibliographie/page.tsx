@@ -966,33 +966,40 @@ export default function BibliographiePage() {
                     <TableRow>
                       <TableHead>Date</TableHead>
                       <TableHead>Statut</TableHead>
-                      <TableHead className="text-right">Articles</TableHead>
-                      <TableHead className="text-right">Pertinents</TableHead>
-                      <TableHead>Erreur</TableHead>
-                      <TableHead></TableHead>
+                      <TableHead className="text-right">Extraits</TableHead>
+                      <TableHead className="text-right">Pertinents ≥80%</TableHead>
+                      <TableHead className="text-right">Analyses IA</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {runs.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="text-sm">{formatDateTime(r.started_at ?? r.created_at)}</TableCell>
-                        <TableCell className="font-medium">{r.status}</TableCell>
-                        <TableCell className="text-right tabular-nums">{r.items_count ?? "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {r.high_score_count != null
-                            ? `${r.high_score_count}${r.score_threshold != null ? ` (≥${Math.round(r.score_threshold * 100)}%)` : ""}`
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
-                          {r.error_message || "—"}
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="link" size="sm" className="h-auto p-0" asChild>
-                            <Link href={`/bibliographie/historique/${r.id}`}>Voir les articles</Link>
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {runs.map((r) => {
+                      const aiCount = (() => {
+                        try { const p = JSON.parse(r.ai_summary ?? ""); return Array.isArray(p?.articles) ? p.articles.length : 0; } catch { return 0; }
+                      })();
+                      return (
+                        <TableRow
+                          key={r.id}
+                          className="cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => window.location.href = `/bibliographie/historique/${r.id}`}
+                        >
+                          <TableCell className="text-sm">{formatDateTime(r.started_at ?? r.created_at)}</TableCell>
+                          <TableCell>
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.status === "completed" ? "bg-green-100 text-green-700" : r.status === "failed" ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
+                              {r.status}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">{r.items_count ?? "—"}</TableCell>
+                          <TableCell className="text-right tabular-nums font-medium text-green-700">
+                            {r.high_score_count != null ? r.high_score_count : "—"}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {aiCount > 0
+                              ? <span className="text-xs font-semibold text-violet-600">{aiCount} ✦</span>
+                              : <span className="text-xs text-muted-foreground">—</span>}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
