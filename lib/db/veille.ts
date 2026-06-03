@@ -116,6 +116,8 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
     created_at: r.created_at, source_name: sourceName(r),
     document_id: r.doi ? doiToDocumentId.get(r.doi) ?? null : null,
     corpus_refs: (r as any).corpus_refs ?? null,
+    read_at: (r as any).read_at ?? null,
+    ai_analysis: (r as any).ai_analysis ?? null,
   }))
 }
 
