@@ -155,6 +155,9 @@ app/
     veille/scrape/         # POST : déclencher une run
     veille/list/           # GET : items du dernier run, triés par score
     veille/status/[runId]/ # GET : statut run (polling)
+    veille/items/top/      # GET : articles pertinents ≥80% toutes runs, paginés (10/page) — Cache-Control: no-store
+    veille/items/[id]/     # PATCH : toggle read_at (lu/non lu)
+    veille/stats/          # GET : KPIs globaux (total, scorés, pertinents, lus) — Cache-Control: no-store
     documents/upload/      # Upload PDF → data/pdfs/ + insert documents
     ingestion/             # Parse → chunk → embed
     cron/retention/        # GET : suppression conversations > 30 jours
@@ -181,7 +184,7 @@ scripts/
   test-veille.ts           # Test pipeline veille
   compute_umap.py          # Calcul coordonnées UMAP 2D sur les chunks
 
-supabase/migrations/       # 16 migrations SQL (ordre chronologique)
+supabase/migrations/       # 20 migrations SQL (ordre chronologique)
 data/pdfs/                 # PDFs corpus (non versionnés)
 data/pdfs2/                # PDFs réorganisés par année de publication
 data/Articles auteur/      # PDFs articles publiés du chercheur (non versionnés)
@@ -201,18 +204,20 @@ data/Articles auteur/      # PDFs articles publiés du chercheur (non versionné
 
 ### Pipeline Veille
 
-Déclenchée par bouton UI (`/api/veille/scrape`) ou cron GitHub Actions (2h Paris → `/api/cron/veille`) :
+Déclenchée par cron GitHub Actions (2h Paris → `/api/cron/veille`) :
 1. `createRun()` → `veille_runs` avec `status=running`
 2. Sources RSS (43 journaux) → titre, DOI, abstract, auteurs — filtre 7 jours — dédup DOI
 3. Enrichissement OpenAlex en batch (abstracts manquants ACS)
 4. Sources OpenAlex directes (MDPI et similaires)
 5. Insert par batch de 50 → `scoreVeilleItems()` → embed abstract → `match_chunks` → `similarity_score`
 6. Cap `MAX_ITEMS = 1000` — scoring des 1000 articles les plus récents (~40 min sur Hobby)
-7. Résumé IA : top 8 articles (≥30%) → GPT-4o-mini → `saveRunSummary()` (timeout 120s)
-8. `completeRun(runId, 'completed'|'failed')`
+7. Résumé IA : top 10 articles (≥75%) → GPT-4o-mini → `saveRunSummary()` (timeout 120s)
+8. **Backfill `ai_analysis`** : parse du JSON résumé → `saveItemsAiAnalysis()` → update de chaque article analysé dans `veille_items.ai_analysis`
+9. `completeRun(runId, 'completed'|'failed')`
 
 > **`waitUntil`** (`@vercel/functions`) sur les deux routes — répond immédiatement, pipeline en background.
 > **Fallback** : si GPT échoue, `high_score_count` est sauvegardé sans `ai_summary`.
+> **`ai_analysis`** : structure `{ contribution, relevance, corpus_link }` — rempli uniquement pour les articles analysés par GPT.
 
 ### Base de données — points critiques
 
@@ -254,11 +259,15 @@ Déclenchée par bouton UI (`/api/veille/scrape`) ou cron GitHub Actions (2h Par
 | Cron veille automatique (GitHub Actions, 2h Paris) | ✅ Fonctionnel |
 | Résumé IA sur page détail run historique | ✅ Fonctionnel |
 | Cron rétention 30 jours | ✅ Fonctionnel |
-| Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
+| Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel — lazy-load IntersectionObserver, RPCs SQL |
 | Logs requêtes RAG (query_logs) | ✅ Fonctionnel |
 | Articles auteur indexés (521 docs, is_author_article) | ✅ Fonctionnel |
 | Comparaison articles auteur ↔ corpus | ✅ Fonctionnel |
 | Correction texte espacé (797k chunks re-embeddés) | ✅ Terminé |
+| Page Veille — liste paginée articles pertinents ≥80% | ✅ Fonctionnel (10/page, filtres titre + lu/non lu) |
+| Suivi lecture articles (read_at) | ✅ Fonctionnel — toggle lu/non lu, KPI global |
+| Analyse IA par article (ai_analysis jsonb) | ✅ Fonctionnel — dropdown violet sur chaque card |
+| Page Historique — tableau runs redesigné | ✅ Fonctionnel — lignes cliquables, badge statut, KPIs par run |
 | Upload PDF + ingestion | ⚠️ À vérifier |
 | UMAP sur nouveau corpus | ⏳ À relancer (compute_umap.py) |
 
@@ -268,6 +277,12 @@ Déclenchée par bouton UI (`/api/veille/scrape`) ou cron GitHub Actions (2h Par
 - **Index IVFFlat** `idx_chunks_embedding` (lists=100) — valid=t, 1.3 Go
 - UMAP non recalculé sur ce corpus (à faire — compute_umap.py)
 - **Titres nettoyés** : `fix_spaced_text()` à l'ingestion + `fix_author_titles.py` sur 521 articles auteur
+
+### Veille — état en base (juin 2026)
+- `veille_items` : colonnes `read_at timestamptz` (nullable) + `ai_analysis jsonb` (nullable) ajoutées
+- `ai_analysis` structure : `{ contribution: string, relevance: string, corpus_link: string }`
+- Rempli automatiquement à chaque run par `saveItemsAiAnalysis()` après la phase résumé GPT
+- **DB nettoyée le 03/06/2026** — repartie à zéro, première run propre = 1000 articles, 707 scorés, 6 pertinents ≥80%, 8 avec ai_analysis
 
 ### Structure PDFs
 - `data/pdfs/YEAR/` — organisation par année d'acquisition (original)
