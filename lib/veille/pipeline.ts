@@ -8,10 +8,10 @@
 import { getRssSources, getOpenAlexSources }          from './sources'
 import { fetchRssFeed }                                from './fetch-rss'
 import { fetchAbstractsByDois, fetchDoiByTitle, fetchRecentByIssn, type AbstractResult } from './openalex'
-import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, savePipelineLogs, listVeilleItems, saveRunSummary } from '../db/veille'
+import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, savePipelineLogs, listVeilleItems, saveRunSummary, saveItemsAiAnalysis } from '../db/veille'
 import type { RunLogEntry, RunLogLevel } from '../db/types'
 import { scoreVeilleItems, loadCorpusTerms, scoreHeuristic } from './score'
-import { generateVeilleSummary } from './summarize'
+import { generateVeilleSummary, parseSummary } from './summarize'
 import type { VeilleItemInsert }                       from '../db/veille'
 import type { RssSource, RssArticle }                  from './fetch-rss'
 
@@ -223,6 +223,13 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       const { summary, highScoreCount } = await generateVeilleSummary(forSummary, SUMMARY_THRESHOLD)
       await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: SUMMARY_THRESHOLD })
       plog('summary', `Résumé IA généré — top ${highScoreCount} articles — +${elapsed()}s`)
+
+      // Backfill ai_analysis on each analyzed item
+      const parsed = parseSummary(summary)
+      if (parsed && parsed.articles.length > 0) {
+        await saveItemsAiAnalysis(parsed.articles)
+        plog('summary', `ai_analysis sauvegardé pour ${parsed.articles.length} articles — +${elapsed()}s`)
+      }
     } catch (err: any) {
       plog('summary', `Échec résumé IA : ${err.message}`, 'error')
     }

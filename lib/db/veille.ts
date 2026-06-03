@@ -273,6 +273,24 @@ export async function insertVeilleItems(items: VeilleItemInsert[]): Promise<numb
   return inserted.length
 }
 
+export async function saveItemsAiAnalysis(
+  analyses: { item_id: string; contribution: string; relevance: string; corpus_link: string }[]
+): Promise<void> {
+  if (analyses.length === 0) return
+  LOG('saveItemsAiAnalysis', { count: analyses.length })
+  const supabase = getAdminSupabase()
+
+  for (const a of analyses) {
+    const { error } = await supabase
+      .from('veille_items')
+      .update({ ai_analysis: { contribution: a.contribution, relevance: a.relevance, corpus_link: a.corpus_link } })
+      .eq('id', a.item_id)
+    if (error) LOG('saveItemsAiAnalysis error', { item_id: a.item_id, error: error.message })
+  }
+
+  LOG('saveItemsAiAnalysis done', { updated: analyses.length })
+}
+
 export async function insertVeilleItemsWithIds(
   items: VeilleItemInsert[]
 ): Promise<{ id: string; abstract: string | null }[]> {

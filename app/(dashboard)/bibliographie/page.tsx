@@ -70,6 +70,7 @@ type VeilleItem = {
   published_at?: string | null;
   corpus_refs?: CorpusRef[] | null;
   read_at?: string | null;
+  ai_analysis?: { contribution: string; relevance: string; corpus_link: string } | null;
 };
 
 // ── Source types & components ─────────────────────────────────────────────────
@@ -571,6 +572,25 @@ function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle
           </Field>
         )}
       </div>
+      {item.ai_analysis && (
+        <div className="space-y-3 border-t pt-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Analyse IA</p>
+          <div className="space-y-2">
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-0.5">Contribution scientifique</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">{item.ai_analysis.contribution}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-0.5">Pertinence pour le chercheur</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">{item.ai_analysis.relevance}</p>
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-foreground mb-0.5">Lien avec le corpus</p>
+              <p className="text-xs text-blue-700 leading-relaxed">{item.ai_analysis.corpus_link}</p>
+            </div>
+          </div>
+        </div>
+      )}
       {refs.length > 0 && (
         <div className="space-y-2 border-t pt-3">
           <button
