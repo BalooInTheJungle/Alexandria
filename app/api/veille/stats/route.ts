@@ -15,14 +15,16 @@ export async function GET() {
   try {
     const supabase = createAdminClient();
 
-    const [totalRes, pertinentRes, readRes] = await Promise.all([
+    const [totalRes, scoredRes, pertinentRes, readRes] = await Promise.all([
       supabase.from("veille_items").select("id", { count: "exact", head: true }),
+      supabase.from("veille_items").select("id", { count: "exact", head: true }).not("similarity_score", "is", null),
       supabase.from("veille_items").select("id", { count: "exact", head: true }).gte("similarity_score", 0.80),
       supabase.from("veille_items").select("id", { count: "exact", head: true }).not("read_at", "is", null),
     ]);
 
     const stats = {
       total:     totalRes.count     ?? 0,
+      scored:    scoredRes.count    ?? 0,
       pertinent: pertinentRes.count ?? 0,
       read:      readRes.count      ?? 0,
     };

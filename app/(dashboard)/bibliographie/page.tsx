@@ -612,7 +612,7 @@ export default function BibliographiePage() {
   const [topTotal, setTopTotal] = useState(0);
   const [topTotalPages, setTopTotalPages] = useState(1);
   const [loadingTop, setLoadingTop] = useState(false);
-  const [veilleStats, setVeilleStats] = useState<{ total: number; pertinent: number; read: number } | null>(null);
+  const [veilleStats, setVeilleStats] = useState<{ total: number; scored: number; pertinent: number; read: number } | null>(null);
 
   const fetchSources = useCallback(async () => {
     setLoadingSources(true);
@@ -738,12 +738,20 @@ export default function BibliographiePage() {
         <div className="space-y-4">
 
           {/* KPIs globaux */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             <Card>
               <CardContent className="pt-5">
                 <p className="text-sm text-muted-foreground">Articles extraits</p>
                 <p className="text-3xl font-semibold tabular-nums mt-1">
                   {veilleStats ? veilleStats.total.toLocaleString("fr-FR") : "—"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-5">
+                <p className="text-sm text-muted-foreground">Articles scorés</p>
+                <p className="text-3xl font-semibold tabular-nums mt-1">
+                  {veilleStats ? veilleStats.scored.toLocaleString("fr-FR") : "—"}
                 </p>
               </CardContent>
             </Card>
