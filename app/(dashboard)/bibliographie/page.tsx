@@ -810,7 +810,18 @@ export default function BibliographiePage() {
             <p className="text-sm text-muted-foreground py-8 text-center">Aucun article pertinent pour l&apos;instant.</p>
           ) : (
             <div className="space-y-4">
-              {topItems.map(item => <VeilleItemCard key={item.id} item={item} />)}
+              {topItems.map(item => (
+                <VeilleItemCard
+                  key={item.id}
+                  item={item}
+                  onReadToggle={(id, read) => {
+                    // Update topItems so read_at persists across re-renders
+                    setTopItems(prev => prev.map(i => i.id === id ? { ...i, read_at: read ? new Date().toISOString() : null } : i));
+                    // Update KPI counter
+                    setVeilleStats(prev => prev ? { ...prev, read: prev.read + (read ? 1 : -1) } : prev);
+                  }}
+                />
+              ))}
             </div>
           )}
 
