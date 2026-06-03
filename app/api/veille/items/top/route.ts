@@ -6,7 +6,7 @@ import { filterItemsForArticleDisplay } from "@/lib/veille/filter-article-displa
 export const dynamic = "force-dynamic";
 
 const MIN_SCORE = 0.80;
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[API] GET /api/veille/items/top", msg, ...args);

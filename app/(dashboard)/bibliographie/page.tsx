@@ -69,6 +69,7 @@ type VeilleItem = {
   document_id: string | null;
   published_at?: string | null;
   corpus_refs?: CorpusRef[] | null;
+  read_at?: string | null;
 };
 
 // ── Source types & components ─────────────────────────────────────────────────
@@ -488,25 +489,59 @@ function LegacySummaryView({ raw, run }: { raw: string; run: VeilleRun }) {
   )
 }
 
-function VeilleItemCard({ item }: { item: VeilleItem }) {
+function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle?: (id: string, read: boolean) => void }) {
   const [authorsOpen, setAuthorsOpen] = useState(false);
   const [refsOpen, setRefsOpen] = useState(false);
+  const [isRead, setIsRead] = useState(item.read_at != null);
+  const [toggling, setToggling] = useState(false);
 
   const href    = item.doi ? `https://doi.org/${item.doi}` : item.url;
   const authors = item.authors ?? [];
   const refs    = (item.corpus_refs ?? []).filter((r): r is CorpusRef => r != null && typeof r === "object");
 
+  const handleReadToggle = async () => {
+    setToggling(true);
+    const newRead = !isRead;
+    try {
+      const res = await fetch(`/api/veille/items/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ read: newRead }),
+      });
+      if (res.ok) {
+        setIsRead(newRead);
+        onReadToggle?.(item.id, newRead);
+      }
+    } finally {
+      setToggling(false);
+    }
+  };
+
   return (
-    <Card className="p-5 space-y-4">
+    <Card className={`p-5 space-y-4 transition-opacity ${isRead ? "opacity-50" : ""}`}>
       <div className="flex items-start gap-4">
         <div className="flex-1 min-w-0 space-y-0.5">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{item.source_name ?? "Article"}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{item.source_name ?? "Article"}</p>
+            {isRead && (
+              <span className="text-[10px] font-semibold bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full uppercase tracking-wide">Lu</span>
+            )}
+          </div>
           {href
             ? <a href={href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold hover:underline line-clamp-2 block">{item.title ?? "(titre inconnu)"}</a>
             : <p className="text-sm font-semibold line-clamp-2">{item.title ?? "(titre inconnu)"}</p>
           }
         </div>
-        <div className="shrink-0"><ScoreStat score={item.similarity_score} /></div>
+        <div className="shrink-0 flex flex-col items-end gap-2">
+          <ScoreStat score={item.similarity_score} />
+          <button
+            onClick={handleReadToggle}
+            disabled={toggling}
+            className="text-xs text-muted-foreground hover:text-foreground underline transition-colors disabled:opacity-40"
+          >
+            {isRead ? "Marquer non lu" : "Marquer comme lu"}
+          </button>
+        </div>
       </div>
       <div className="h-px bg-border" />
       <div className="space-y-1.5">
