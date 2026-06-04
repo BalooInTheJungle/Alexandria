@@ -964,42 +964,59 @@ export default function BibliographiePage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Statut</TableHead>
+                      <TableHead>Journée</TableHead>
+                      <TableHead>Runs</TableHead>
                       <TableHead className="text-right">Extraits</TableHead>
-                      <TableHead className="text-right">Pertinents ≥80%</TableHead>
-                      <TableHead className="text-right">Analyses IA</TableHead>
+                      <TableHead className="text-right">Pertinents ≥75%</TableHead>
+                      <TableHead className="text-right">Résumé IA</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {runs.map((r) => {
-                      const aiCount = (() => {
-                        try { const p = JSON.parse(r.ai_summary ?? ""); return Array.isArray(p?.articles) ? p.articles.length : 0; } catch { return 0; }
-                      })();
-                      return (
-                        <TableRow
-                          key={r.id}
-                          className="cursor-pointer hover:bg-muted/50 transition-colors"
-                          onClick={() => window.location.href = `/bibliographie/historique/${r.id}`}
-                        >
-                          <TableCell className="text-sm">{formatDateTime(r.started_at ?? r.created_at)}</TableCell>
-                          <TableCell>
-                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.status === "completed" ? "bg-green-100 text-green-700" : r.status === "failed" ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
-                              {r.status}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{r.items_count ?? "—"}</TableCell>
-                          <TableCell className="text-right tabular-nums font-medium text-green-700">
-                            {r.high_score_count != null ? r.high_score_count : "—"}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">
-                            {aiCount > 0
-                              ? <span className="text-xs font-semibold text-violet-600">{aiCount} ✦</span>
-                              : <span className="text-xs text-muted-foreground">—</span>}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    {(() => {
+                      // Group runs by UTC date
+                      const groups = new Map<string, typeof runs>();
+                      for (const r of runs) {
+                        const d = (r.started_at ?? r.created_at ?? "").slice(0, 10);
+                        if (!groups.has(d)) groups.set(d, []);
+                        groups.get(d)!.push(r);
+                      }
+                      return Array.from(groups.entries()).map(([date, dayRuns]) => {
+                        const totalItems   = dayRuns.reduce((s, r) => s + (r.items_count ?? 0), 0);
+                        const totalHigh    = dayRuns.reduce((s, r) => s + (r.high_score_count ?? 0), 0);
+                        const hasAi        = dayRuns.some(r => r.ai_summary);
+                        const aiCount      = (() => { try { const r = dayRuns.find(r => r.ai_summary); return r ? JSON.parse(r.ai_summary!).articles?.length ?? 0 : 0; } catch { return 0; } })();
+                        const allCompleted = dayRuns.every(r => r.status === "completed");
+                        const hasFailed    = dayRuns.some(r => r.status === "failed");
+                        const hasRunning   = dayRuns.some(r => r.status === "running");
+                        const statusLabel  = hasRunning ? "running" : hasFailed ? "partial" : allCompleted ? "completed" : "partial";
+                        const statusStyle  = statusLabel === "completed" ? "bg-green-100 text-green-700" : statusLabel === "running" ? "bg-yellow-100 text-yellow-700" : "bg-orange-100 text-orange-700";
+                        const label = new Date(date + "T12:00:00Z").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+                        return (
+                          <TableRow
+                            key={date}
+                            className="cursor-pointer hover:bg-muted/50 transition-colors"
+                            onClick={() => window.location.href = `/bibliographie/historique/day/${date}`}
+                          >
+                            <TableCell className="text-sm font-medium capitalize">{label}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusStyle}`}>{statusLabel}</span>
+                                <span className="text-xs text-muted-foreground">{dayRuns.length} run{dayRuns.length > 1 ? "s" : ""}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{totalItems > 0 ? totalItems : "—"}</TableCell>
+                            <TableCell className="text-right tabular-nums font-medium text-green-700">
+                              {totalHigh > 0 ? totalHigh : "—"}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {hasAi && aiCount > 0
+                                ? <span className="text-xs font-semibold text-violet-600">{aiCount} ✦</span>
+                                : <span className="text-xs text-muted-foreground">—</span>}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      });
+                    })()}
                   </TableBody>
                 </Table>
               </div>
