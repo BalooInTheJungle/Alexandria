@@ -215,10 +215,12 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     plog('urls', `TOTAL — ${grandTotalExtracted} articles extraits, ${grandTotalFinalized} rattachés à une publication (${grandTotalExtracted - grandTotalFinalized} ignorés ASAP/non indexés)`)
 
     // ── Phase 7: Insert ────────────────────────────────────────────────────
-    const MAX_ITEMS = 1000
+    // 300 articles per run × 3 runs/day = ~900 articles/day covered
+    // Dedup by DOI ensures no duplicates across runs
+    const MAX_ITEMS = 300
     const cappedItems = itemsToInsert.slice(0, MAX_ITEMS)
     if (itemsToInsert.length > MAX_ITEMS) {
-      plog('insert', `Cap appliqué : ${itemsToInsert.length} → ${MAX_ITEMS} articles`, 'warn')
+      plog('insert', `Cap appliqué : ${itemsToInsert.length} → ${MAX_ITEMS} articles (3 runs/jour couvrent le reste)`, 'warn')
     }
     await updateRunPhase(runId, 'items', 0, cappedItems.length)
     plog('insert', `Insertion de ${cappedItems.length} articles (${stats.skipped} déjà connus)`)
@@ -231,16 +233,7 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
     if (insertedIds.length > 0) {
       const corpusTerms = await loadCorpusTerms(80)
-
-      // Cap scoring to MAX_SCORE items — prioritise articles with abstract (others get similarity=null anyway)
-      const MAX_SCORE = 300
-      const withAbstract    = insertedIds.filter(i => i.abstract && i.abstract.length > 50)
-      const withoutAbstract = insertedIds.filter(i => !i.abstract || i.abstract.length <= 50)
-      const toScoreRaw      = [...withAbstract, ...withoutAbstract].slice(0, MAX_SCORE)
-      if (insertedIds.length > MAX_SCORE) {
-        plog('scoring', `Cap scoring : ${insertedIds.length} → ${MAX_SCORE} articles (${withAbstract.length} avec abstract)`, 'warn')
-      }
-      const toScore = toScoreRaw.map(item => ({ id: item.id, abstract: item.abstract }))
+      const toScore = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
 
       plog('scoring', `Scoring de ${toScore.length} articles (similarité corpus + heuristique) — +${elapsed()}s`)
       const simScores = await scoreVeilleItems(toScore, async (done, total) => {
