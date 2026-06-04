@@ -6,9 +6,16 @@ on:
     - cron: '0 4 * * *'
     # 14h Paris (UTC+2 en été) — publications européennes
     - cron: '0 12 * * *'
-    # 22h Paris (UTC+2 en été) — publications américaines
+    # 22h Paris (UTC+2 en été) — résumé IA consolidé du jour
     - cron: '0 20 * * *'
-  workflow_dispatch: # permet de lancer manuellement depuis GitHub
+  workflow_dispatch:
+    inputs:
+      daily_summary:
+        description: 'Générer le résumé IA consolidé du jour'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 jobs:
   run-veille:
@@ -16,9 +23,22 @@ jobs:
     steps:
       - name: Déclencher le pipeline veille
         run: |
+          # Run de 22h (20h UTC) → résumé IA consolidé sur tous les articles du jour
+          HOUR=$(date -u +%H)
+          DAILY_SUMMARY="false"
+          if [ "$HOUR" = "20" ]; then
+            DAILY_SUMMARY="true"
+          fi
+          # workflow_dispatch override
+          if [ "${{ github.event.inputs.daily_summary }}" = "true" ]; then
+            DAILY_SUMMARY="true"
+          fi
+
+          echo "daily_summary=${DAILY_SUMMARY}"
+
           response=$(curl -s -L -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.VERCEL_APP_URL }}/api/cron/veille")
+            "${{ secrets.VERCEL_APP_URL }}/api/cron/veille?daily_summary=${DAILY_SUMMARY}")
 
           echo "HTTP status: $response"
 
@@ -27,4 +47,4 @@ jobs:
             exit 1
           fi
 
-          echo "Pipeline veille démarré avec succès"
+          echo "Pipeline veille démarré avec succès (daily_summary=${DAILY_SUMMARY})"

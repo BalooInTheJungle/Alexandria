@@ -165,6 +165,42 @@ export async function saveRunSummary(
   if (error) LOG('saveRunSummary error', error.message)
 }
 
+// Fetch top articles created today (UTC) across all runs, above a similarity threshold.
+// Used by the 22h consolidated AI summary.
+export async function listTodayTopArticles(threshold: number, limit = 10): Promise<VeilleItemWithMeta[]> {
+  const todayStart = new Date()
+  todayStart.setUTCHours(0, 0, 0, 0)
+  LOG('listTodayTopArticles', { threshold, limit, since: todayStart.toISOString() })
+  const supabase = getAdminSupabase()
+  const { data, error } = await supabase
+    .from('veille_items')
+    .select(`id, run_id, source_id, url, title, authors, doi, abstract, published_at,
+      heuristic_score, similarity_score, corpus_refs, last_error, created_at, read_at, ai_analysis, sources!inner(name)`)
+    .gte('similarity_score', threshold)
+    .gte('created_at', todayStart.toISOString())
+    .order('similarity_score', { ascending: false, nullsFirst: false })
+    .limit(limit)
+  if (error) { LOG('listTodayTopArticles error', error.message); return [] }
+  type Row = VeilleItem & { sources: { name: string | null }[] | { name: string | null } }
+  const rows = (data ?? []) as Row[]
+  const sourceName = (r: Row): string | null => {
+    const s = r.sources
+    if (!s) return null
+    const obj = Array.isArray(s) ? s[0] : s
+    return obj?.name ?? null
+  }
+  return rows.map(r => ({
+    id: r.id, run_id: r.run_id, source_id: r.source_id, url: r.url,
+    title: r.title ?? undefined, authors: r.authors ?? undefined, doi: r.doi ?? undefined,
+    abstract: r.abstract ?? undefined, published_at: (r as any).published_at ?? undefined,
+    heuristic_score: (r as any).heuristic_score ?? undefined,
+    similarity_score: r.similarity_score ?? undefined, last_error: r.last_error ?? undefined,
+    created_at: r.created_at, source_name: sourceName(r),
+    document_id: null, corpus_refs: (r as any).corpus_refs ?? null,
+    read_at: (r as any).read_at ?? null, ai_analysis: (r as any).ai_analysis ?? null,
+  }))
+}
+
 export async function completeRun(runId: string, status: 'completed' | 'failed', errorMessage?: string) {
   LOG(`completeRun ${runId} → ${status}`)
   const supabase = getAdminSupabase()

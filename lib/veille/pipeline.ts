@@ -9,7 +9,7 @@ import { getRssSources, getOpenAlexSources }          from './sources'
 import { fetchRssFeed }                                from './fetch-rss'
 import { fetchAbstractsByDois, fetchDoiByTitle, fetchRecentByIssn, type AbstractResult } from './openalex'
 import { checkFinalizationByDois }                     from './crossref'
-import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, savePipelineLogs, listVeilleItems, saveRunSummary, saveItemsAiAnalysis } from '../db/veille'
+import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, savePipelineLogs, listVeilleItems, listTodayTopArticles, saveRunSummary, saveItemsAiAnalysis } from '../db/veille'
 import type { RunLogEntry, RunLogLevel } from '../db/types'
 import { scoreVeilleItems, loadCorpusTerms, scoreHeuristic } from './score'
 import { generateVeilleSummary, parseSummary } from './summarize'
@@ -42,7 +42,10 @@ async function fetchRssInParallel(sources: RssSource[]): Promise<Map<string, Rss
   return results
 }
 
-export async function runVeillePipeline(existingRunId?: string): Promise<{ inserted: number; skipped: number; errors: number }> {
+export async function runVeillePipeline(
+  existingRunId?: string,
+  opts: { dailySummary?: boolean } = {}
+): Promise<{ inserted: number; skipped: number; errors: number }> {
   const pipelineStart = Date.now()
   console.log(`[pipeline] Starting (lookback=${LOOKBACK_DAYS}d, rss_concurrency=${PARALLEL_RSS_CONCURRENCY})`)
   const runId = existingRunId ?? await createRun()
@@ -261,48 +264,48 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       plog('scoring', `Scoring terminé — ${scored} scorés, +${elapsed()}s`)
     }
 
-    // ── Phase 9: AI summary of top articles ───────────────────────────────
+    // ── Phase 9: AI summary ───────────────────────────────────────────────
     await updateRunPhase(runId, 'summary')
 
-    const THRESHOLD = 0.75
-    const eligibleCount = Array.from(bothScores.values()).filter(s => (s.similarity ?? 0) >= THRESHOLD).length
-    plog('summary', `${eligibleCount} articles >= ${THRESHOLD} éligibles — appel route dédiée — +${elapsed()}s`)
+    const SUMMARY_THRESHOLD = 0.75
+    const MAX_FOR_SUMMARY   = 10
 
-    // Generate AI summary directly in the pipeline
-    try {
-      const SUMMARY_THRESHOLD = 0.75
-      const MAX_FOR_SUMMARY   = 10
-      const items = await listVeilleItems({ runId, limit: 1000 })
-      const eligible = items
-        .filter(i => (i.similarity_score ?? 0) >= SUMMARY_THRESHOLD)
-        .slice(0, MAX_FOR_SUMMARY)
+    if (opts.dailySummary) {
+      // Run 22h — résumé consolidé sur tous les articles du jour (tous runs confondus)
+      plog('summary', `Mode résumé quotidien — chargement des articles du jour >= ${SUMMARY_THRESHOLD} — +${elapsed()}s`)
+      try {
+        const todayItems = await listTodayTopArticles(SUMMARY_THRESHOLD, MAX_FOR_SUMMARY)
+        plog('summary', `${todayItems.length} articles du jour éligibles envoyés à GPT — +${elapsed()}s`)
 
-      plog('summary', `${eligible.length} articles éligibles envoyés à GPT — +${elapsed()}s`)
+        if (todayItems.length === 0) {
+          plog('summary', `Aucun article pertinent aujourd'hui — résumé ignoré — +${elapsed()}s`)
+        } else {
+          const forSummary = todayItems.map(item => ({
+            id:               item.id,
+            title:            item.title ?? '',
+            abstract:         item.abstract ?? null,
+            source_name:      item.source_name,
+            similarity_score: item.similarity_score ?? null,
+            corpus_refs:      item.corpus_refs ?? [],
+          }))
+          const { summary, highScoreCount } = await generateVeilleSummary(forSummary, SUMMARY_THRESHOLD)
+          await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: SUMMARY_THRESHOLD })
+          plog('summary', `Résumé IA quotidien généré — top ${highScoreCount} articles du jour — +${elapsed()}s`)
 
-      const forSummary = eligible.map(item => ({
-        id:               item.id,
-        title:            item.title ?? '',
-        abstract:         item.abstract ?? null,
-        source_name:      item.source_name,
-        similarity_score: item.similarity_score ?? null,
-        corpus_refs:      item.corpus_refs ?? [],
-      }))
-
-      const { summary, highScoreCount } = await generateVeilleSummary(forSummary, SUMMARY_THRESHOLD)
-      await saveRunSummary(runId, { aiSummary: summary, highScoreCount, scoreThreshold: SUMMARY_THRESHOLD })
-      plog('summary', `Résumé IA généré — top ${highScoreCount} articles — +${elapsed()}s`)
-
-      // Backfill ai_analysis on each analyzed item
-      const parsed = parseSummary(summary)
-      if (parsed && parsed.articles.length > 0) {
-        plog('summary', `Sauvegarde ai_analysis — ${parsed.articles.length} articles à mettre à jour — +${elapsed()}s`)
-        await saveItemsAiAnalysis(parsed.articles)
-        plog('summary', `ai_analysis sauvegardé pour ${parsed.articles.length} articles — +${elapsed()}s`)
-      } else {
-        plog('summary', `Pas d'articles parsés dans le résumé IA — ai_analysis ignoré — +${elapsed()}s`)
+          const parsed = parseSummary(summary)
+          if (parsed && parsed.articles.length > 0) {
+            plog('summary', `Sauvegarde ai_analysis — ${parsed.articles.length} articles — +${elapsed()}s`)
+            await saveItemsAiAnalysis(parsed.articles)
+            plog('summary', `ai_analysis sauvegardé pour ${parsed.articles.length} articles — +${elapsed()}s`)
+          }
+        }
+      } catch (err: any) {
+        plog('summary', `Échec résumé IA quotidien : ${err.message}`, 'error')
       }
-    } catch (err: any) {
-      plog('summary', `Échec résumé IA : ${err.message}`, 'error')
+    } else {
+      // Run 6h / 14h — pas de résumé IA, on laisse le run 22h consolider
+      const eligibleCount = Array.from(bothScores.values()).filter(s => (s.similarity ?? 0) >= SUMMARY_THRESHOLD).length
+      plog('summary', `Run intermédiaire — ${eligibleCount} articles >= ${SUMMARY_THRESHOLD} (résumé IA réservé au run 22h) — +${elapsed()}s`)
     }
 
     await updateRunPhase(runId, 'done')
