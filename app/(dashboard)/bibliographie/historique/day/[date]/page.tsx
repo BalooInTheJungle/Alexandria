@@ -89,12 +89,28 @@ export default function DayDetailPage() {
 
   useEffect(() => {
     if (!date) return;
-    setLoading(true);
-    fetch(`/api/veille/days/${date}`)
-      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(setData)
-      .catch(e => setError(String(e)))
-      .finally(() => setLoading(false));
+
+    const load = (initial = false) => {
+      if (initial) setLoading(true);
+      fetch(`/api/veille/days/${date}`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
+        .then(setData)
+        .catch(e => setError(String(e)))
+        .finally(() => { if (initial) setLoading(false); });
+    };
+
+    load(true);
+
+    // Poll every 10s while at least one run is running
+    const interval = setInterval(() => {
+      setData(prev => {
+        const hasRunning = prev?.runs.some(r => r.status === 'running');
+        if (hasRunning) load(false);
+        return prev;
+      });
+    }, 10000);
+
+    return () => clearInterval(interval);
   }, [date]);
 
   if (loading) return <div className="p-8 text-muted-foreground">Chargement…</div>;
