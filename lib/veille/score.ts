@@ -22,7 +22,7 @@ type ScoreResult = {
   refs: CorpusRef[]
 }
 
-const MATCH_TIMEOUT_MS = 4000  // abort match_chunks if no response in 4s (no HNSW index = slow scan)
+const MATCH_TIMEOUT_MS = 8000  // abort match_chunks if no response in 8s
 
 // Score a single abstract against the corpus.
 // Returns top-1 similarity score and up to 3 corpus refs (similarity >= CORPUS_REF_THRESHOLD).
@@ -108,7 +108,7 @@ export function scoreHeuristic(abstract: string, corpusTerms: string[]): number 
   return Math.round((matched / corpusTerms.length) * 1000) / 1000
 }
 
-const SCORE_CONCURRENCY = 10  // parallel scoring workers
+const SCORE_CONCURRENCY = 5   // parallel scoring workers — reduced to avoid Supabase overload
 
 // Score all items that have an abstract, using parallel batches.
 // onProgress is called every 10 items with (processed, total) for live reporting.
