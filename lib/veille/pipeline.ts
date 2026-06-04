@@ -108,11 +108,12 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }
 
     // ── Phase 5a: Identify DOIs needing CrossRef fallback ─────────────────
-    // DOIs rejected by OpenAlex (not found OR is_final=false) → ask CrossRef
+    // Only DOIs that OpenAlex FOUND but marked not final (biblio lag) → CrossRef
+    // DOIs not found in OpenAlex at all → skip (not indexed = too new or preprint)
     const needsCrossRef = new Set<string>()
     for (const doi of uniqueDois) {
       const enriched = abstractMap.get(doi)
-      if (!enriched || !enriched.is_final) needsCrossRef.add(doi)
+      if (enriched && !enriched.is_final) needsCrossRef.add(doi)
     }
 
     const crossRefMap = needsCrossRef.size > 0
