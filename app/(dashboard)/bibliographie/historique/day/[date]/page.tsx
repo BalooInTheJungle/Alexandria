@@ -84,11 +84,14 @@ export default function DayDetailPage() {
   const [data, setData]       = useState<DayData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
+  const [refreshing, setRefreshing]       = useState(false);
   const [logsOpen, setLogsOpen]           = useState<string | null>(null);  // run id with open logs
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!date) return;
+
+    const isToday = date === new Date().toISOString().slice(0, 10);
 
     const load = (initial = false) => {
       if (initial) setLoading(true);
@@ -101,14 +104,15 @@ export default function DayDetailPage() {
 
     load(true);
 
-    // Poll every 10s while at least one run is running
+    // Today: poll every 15s (new runs can arrive any time)
+    // Past days: poll every 10s only while a run is still running
     const interval = setInterval(() => {
       setData(prev => {
         const hasRunning = prev?.runs.some(r => r.status === 'running');
-        if (hasRunning) load(false);
+        if (isToday || hasRunning) load(false);
         return prev;
       });
-    }, 10000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [date]);
@@ -123,16 +127,32 @@ export default function DayDetailPage() {
     <div className="w-full max-w-6xl mx-auto px-4 space-y-6 py-8">
 
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link href="/bibliographie?tab=historique">
-          <Button variant="ghost" size="sm">← Historique</Button>
-        </Link>
-        <div>
-          <h1 className="text-2xl font-semibold capitalize">{formatDate(date)}</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {data.stats.runsCount} run{data.stats.runsCount > 1 ? "s" : ""} · {data.stats.total} articles extraits · {data.stats.pertinent} pertinents ≥75%
-          </p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <Link href="/bibliographie?tab=historique">
+            <Button variant="ghost" size="sm">← Historique</Button>
+          </Link>
+          <div>
+            <h1 className="text-2xl font-semibold capitalize">{formatDate(date)}</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {data.stats.runsCount} run{data.stats.runsCount > 1 ? "s" : ""} · {data.stats.total} articles extraits · {data.stats.pertinent} pertinents ≥75%
+            </p>
+          </div>
         </div>
+        <Button
+          variant="outline" size="sm"
+          disabled={refreshing}
+          onClick={() => {
+            setRefreshing(true);
+            fetch(`/api/veille/days/${date}`)
+              .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
+              .then(setData)
+              .catch(() => {})
+              .finally(() => setRefreshing(false));
+          }}
+        >
+          {refreshing ? "…" : "↻ Rafraîchir"}
+        </Button>
       </div>
 
       {/* KPIs */}
