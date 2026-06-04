@@ -8,6 +8,7 @@
 import { getRssSources, getOpenAlexSources }          from './sources'
 import { fetchRssFeed }                                from './fetch-rss'
 import { fetchAbstractsByDois, fetchDoiByTitle, fetchRecentByIssn, type AbstractResult } from './openalex'
+import { checkFinalizationByDois }                     from './crossref'
 import { createRun, completeRun, getKnownDois, insertVeilleItemsWithIds, updateRunPhase, updateVeilleItemBothScores, savePipelineLogs, listVeilleItems, saveRunSummary, saveItemsAiAnalysis } from '../db/veille'
 import type { RunLogEntry, RunLogLevel } from '../db/types'
 import { scoreVeilleItems, loadCorpusTerms, scoreHeuristic } from './score'
@@ -106,7 +107,21 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       await sleep(OPENALEX_DELAY_MS)
     }
 
-    // ── Phase 5: Assemble final items ──────────────────────────────────────
+    // ── Phase 5a: Identify DOIs needing CrossRef fallback ─────────────────
+    // DOIs rejected by OpenAlex (not found OR is_final=false) → ask CrossRef
+    const needsCrossRef = new Set<string>()
+    for (const doi of uniqueDois) {
+      const enriched = abstractMap.get(doi)
+      if (!enriched || !enriched.is_final) needsCrossRef.add(doi)
+    }
+
+    const crossRefMap = needsCrossRef.size > 0
+      ? await checkFinalizationByDois(Array.from(needsCrossRef))
+      : new Map<string, import('./crossref').CrossRefResult>()
+
+    plog('urls', `CrossRef fallback — ${needsCrossRef.size} DOIs vérifiés, ${Array.from(crossRefMap.values()).filter(r => r.is_final).length} finalisés`)
+
+    // ── Phase 5b: Assemble final items ────────────────────────────────────
     let rssFinalized = 0
     let rssSkippedNotFinal = 0
 
@@ -119,26 +134,23 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
         let abstract = article.abstract
 
         if (doi) {
-          const enriched = abstractMap.get(doi)
-          if (enriched) {
-            // Use enriched abstract if article had none
-            if (!abstract) abstract = enriched.abstract
-            // Skip ASAP/early-access — not attached to a final journal issue
-            if (!enriched.is_final) {
-              stats.skipped++
-              rssSkippedNotFinal++
-              continue
-            }
-            rssFinalized++
-          }
-          // OpenAlex didn't return this DOI (not indexed yet) — skip to be safe
-          else {
+          const openAlex  = abstractMap.get(doi)
+          const crossRef  = crossRefMap.get(doi)
+
+          // Enrich abstract from OpenAlex if missing in RSS
+          if (openAlex?.abstract && !abstract) abstract = openAlex.abstract
+
+          // Finalization: OpenAlex is_final OR CrossRef confirms it
+          const isFinal = openAlex?.is_final || crossRef?.is_final || false
+
+          if (!isFinal) {
             stats.skipped++
             rssSkippedNotFinal++
             continue
           }
+          rssFinalized++
         } else {
-          // No DOI: resolve via title lookup
+          // No DOI: resolve via title lookup (Elsevier pattern)
           if (abstract) doi = doiByKey.get(`${source.id}::${article.title}`) ?? null
           else { stats.skipped++; continue }
         }
@@ -154,7 +166,7 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       }
     }
 
-    plog('urls', `RSS — ${rssFinalized} articles finalisés (volume/pages assignés), ${rssSkippedNotFinal} ignorés (ASAP ou non indexés OpenAlex)`)
+    plog('urls', `RSS — ${rssFinalized} articles finalisés (volume/pages assignés), ${rssSkippedNotFinal} ignorés (ASAP confirmé OpenAlex + CrossRef)`)
 
     // ── Phase 6: OpenAlex-only sources (MDPI — no RSS) ────────────────────
     const openAlexSources = await getOpenAlexSources()
@@ -165,8 +177,24 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     for (const source of openAlexSources) {
       const articles = await fetchRecentByIssn(source.issn, LOOKBACK_DAYS)
       openAlexExtracted += articles.length
+
+      // CrossRef fallback for MDPI articles OpenAlex marks as not final
+      const notFinalDois = articles
+        .filter(a => !a.is_final && a.doi)
+        .map(a => a.doi!)
+      const mdpiCrossRef = notFinalDois.length > 0
+        ? await checkFinalizationByDois(notFinalDois)
+        : new Map<string, import('./crossref').CrossRefResult>()
+
+      if (notFinalDois.length > 0) {
+        const rescued = Array.from(mdpiCrossRef.values()).filter(r => r.is_final).length
+        plog('urls', `CrossRef fallback MDPI ${source.name} — ${notFinalDois.length} vérifiés, ${rescued} récupérés`)
+      }
+
       for (const article of articles) {
-        if (!article.is_final) { stats.skipped++; openAlexSkippedNotFinal++; continue }
+        const crossRef = article.doi ? mdpiCrossRef.get(article.doi) : undefined
+        const isFinal  = article.is_final || crossRef?.is_final || false
+        if (!isFinal) { stats.skipped++; openAlexSkippedNotFinal++; continue }
         if (article.doi && knownDois.has(article.doi)) { stats.skipped++; continue }
         if (article.doi) knownDois.add(article.doi)
         openAlexFinalized++
