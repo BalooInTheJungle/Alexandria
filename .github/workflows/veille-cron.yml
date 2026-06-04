@@ -2,12 +2,12 @@ name: Veille quotidienne
 
 on:
   schedule:
-    # 6h Paris (UTC+2 en été) — publications asiatiques
+    # 2h Paris (UTC+2 en été) — publications asiatiques
+    - cron: '0 0 * * *'
+    # 4h Paris (UTC+2 en été) — publications européennes
+    - cron: '0 2 * * *'
+    # 6h Paris (UTC+2 en été) — résumé IA consolidé du jour
     - cron: '0 4 * * *'
-    # 14h Paris (UTC+2 en été) — publications européennes
-    - cron: '0 12 * * *'
-    # 22h Paris (UTC+2 en été) — résumé IA consolidé du jour
-    - cron: '0 20 * * *'
   workflow_dispatch:
     inputs:
       daily_summary:
@@ -26,7 +26,7 @@ jobs:
           # Run de 22h (20h UTC) → résumé IA consolidé sur tous les articles du jour
           HOUR=$(date -u +%H)
           DAILY_SUMMARY="false"
-          if [ "$HOUR" = "20" ]; then
+          if [ "$HOUR" = "4" ]; then
             DAILY_SUMMARY="true"
           fi
           # workflow_dispatch override
