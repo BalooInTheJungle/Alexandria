@@ -2,9 +2,10 @@ name: Veille quotidienne
 
 on:
   schedule:
-    # 2h du matin heure Paris (UTC+2 en été, UTC+1 en hiver)
-    # 0h UTC = 2h Paris (heure d'été)
+    # 2h du matin heure Paris (UTC+2 en été)
     - cron: '0 0 * * *'
+    # 14h heure Paris (UTC+2 en été) — deuxième run de la journée
+    - cron: '0 12 * * *'
   workflow_dispatch: # permet de lancer manuellement depuis GitHub
 
 jobs:
