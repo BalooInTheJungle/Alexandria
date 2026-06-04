@@ -69,7 +69,7 @@ export async function GET(_req: Request, { params }: { params: { date: string } 
   const stats = {
     total:     allItems.length,
     scored:    allItems.filter((i: any) => i.similarity_score != null).length,
-    pertinent: allItems.filter((i: any) => (i.similarity_score ?? 0) >= 0.75).length,
+    pertinent: allItems.filter((i: any) => (i.similarity_score ?? 0) >= 0.80).length,
     runsCount: runs.length,
   }
 

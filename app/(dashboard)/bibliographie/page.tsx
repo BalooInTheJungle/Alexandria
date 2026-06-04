@@ -967,7 +967,7 @@ export default function BibliographiePage() {
                       <TableHead>Journée</TableHead>
                       <TableHead>Runs</TableHead>
                       <TableHead className="text-right">Extraits</TableHead>
-                      <TableHead className="text-right">Pertinents ≥75%</TableHead>
+                      <TableHead className="text-right">Pertinents ≥80%</TableHead>
                       <TableHead className="text-right">Résumé IA</TableHead>
                     </TableRow>
                   </TableHeader>

@@ -121,7 +121,14 @@ export default function DayDetailPage() {
   if (error)   return <div className="p-8 text-red-500">Erreur : {error}</div>;
   if (!data)   return null;
 
-  const pertinentItems = data.items.filter(i => (i.similarity_score ?? 0) >= 0.75);
+  const pertinentItems = data.items
+    .filter(i => (i.similarity_score ?? 0) >= 0.80)
+    .sort((a, b) => {
+      // Articles with IA analysis first, then by score descending
+      if (a.ai_analysis && !b.ai_analysis) return -1;
+      if (!a.ai_analysis && b.ai_analysis) return 1;
+      return (b.similarity_score ?? 0) - (a.similarity_score ?? 0);
+    });
 
   return (
     <div className="w-full max-w-6xl mx-auto px-4 space-y-6 py-8">
@@ -135,7 +142,7 @@ export default function DayDetailPage() {
           <div>
             <h1 className="text-2xl font-semibold capitalize">{formatDate(date)}</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {data.stats.runsCount} run{data.stats.runsCount > 1 ? "s" : ""} · {data.stats.total} articles extraits · {data.stats.pertinent} pertinents ≥75%
+              {data.stats.runsCount} run{data.stats.runsCount > 1 ? "s" : ""} · {data.stats.total} articles extraits · {data.stats.pertinent} pertinents ≥80%
             </p>
           </div>
         </div>
@@ -160,7 +167,7 @@ export default function DayDetailPage() {
         {[
           { label: "Articles extraits", value: data.stats.total },
           { label: "Articles scorés", value: data.stats.scored },
-          { label: "Pertinents ≥75%", value: data.stats.pertinent, green: true },
+          { label: "Pertinents ≥80%", value: data.stats.pertinent, green: true },
         ].map(k => (
           <Card key={k.label}>
             <CardContent className="pt-4">
@@ -234,15 +241,18 @@ export default function DayDetailPage() {
       {data.dailySummary && (() => {
         try {
           const s = JSON.parse(data.dailySummary);
+          const itemMap = new Map(data.items.map((i: DayItem) => [i.id, i]));
           return (
             <Card className="border-violet-200">
               <CardHeader>
                 <CardTitle className="text-base text-violet-700">✦ Résumé IA du jour</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-6">
+
+                {/* Thèmes émergents */}
                 {s.themes?.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium text-muted-foreground">Thèmes émergents</p>
+                    <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide text-xs">Thèmes émergents</p>
                     {s.themes.map((t: any, i: number) => (
                       <div key={i} className="border-l-2 border-violet-300 pl-3">
                         <p className="text-sm font-semibold">{t.title}</p>
@@ -251,6 +261,51 @@ export default function DayDetailPage() {
                     ))}
                   </div>
                 )}
+
+                {/* Articles analysés */}
+                {s.articles?.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide text-xs">Articles analysés ({s.articles.length})</p>
+                    {s.articles.map((a: any, i: number) => {
+                      const item = itemMap.get(a.item_id);
+                      return (
+                        <div key={i} className="rounded-lg border border-violet-100 bg-violet-50/50 p-3 space-y-2">
+                          {item && (
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium leading-snug">{item.title ?? "Sans titre"}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  {item.source_name ?? "—"}
+                                  {item.authors?.length ? ` · ${item.authors.slice(0, 2).join(", ")}${item.authors.length > 2 ? " et al." : ""}` : ""}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="text-sm font-semibold text-green-700 tabular-nums">
+                                  {item.similarity_score != null ? `${Math.round(item.similarity_score * 100)}%` : "—"}
+                                </span>
+                                {(item.url || item.doi) && (
+                                  <a
+                                    href={item.url || `https://doi.org/${item.doi}`}
+                                    target="_blank" rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:underline"
+                                  >
+                                    DOI →
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          <div className="space-y-1 text-xs text-violet-900">
+                            <p><span className="font-medium">Contribution :</span> {a.contribution}</p>
+                            <p><span className="font-medium">Pertinence :</span> {a.relevance}</p>
+                            <p className="text-blue-800"><span className="font-medium">Lien corpus :</span> {a.corpus_link}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
               </CardContent>
             </Card>
           );
