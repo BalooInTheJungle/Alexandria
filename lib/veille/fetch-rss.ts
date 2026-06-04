@@ -7,7 +7,10 @@ const USER_AGENT = 'Alexandria/1.0 (mailto:carel.clogenson@epitech.digital)'
 
 const parser = new Parser({
   timeout: 5000,
-  headers: { 'User-Agent': USER_AGENT },
+  headers: {
+    'User-Agent': USER_AGENT,
+    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+  },
   customFields: {
     item: [
       ['dc:identifier',         'dcIdentifier'],
