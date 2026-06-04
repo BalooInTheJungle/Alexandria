@@ -37,6 +37,15 @@ function reconstructAbstract(invertedIndex: Record<string, number[]> | null | un
   return result.length > 20 ? result.slice(0, 2000) : null
 }
 
+// An article is "final" (assigned to a real journal issue) when:
+// - OpenAlex type is 'article' AND
+// - biblio has a volume OR a first_page assigned (ASAP articles lack both)
+function isFinalPublication(work: any): boolean {
+  if (work.type !== 'article') return false
+  const biblio = work.biblio ?? {}
+  return !!(biblio.volume || biblio.first_page)
+}
+
 function parseWork(work: any): OpenAlexArticle {
   const doi = work.doi ? work.doi.replace('https://doi.org/', '') : null
   const title = work.title ?? ''
@@ -46,7 +55,7 @@ function parseWork(work: any): OpenAlexArticle {
   const journal = work.primary_location?.source?.display_name ?? null
   const published_at = work.publication_date ?? null
   const abstract = reconstructAbstract(work.abstract_inverted_index)
-  const is_final = work.type === 'article' && !!work.primary_location?.source
+  const is_final = isFinalPublication(work)
 
   return { doi, title, authors, journal, published_at, abstract, is_final }
 }
@@ -107,7 +116,7 @@ export async function fetchAbstractsByDois(dois: string[]): Promise<Map<string, 
     const batch = dois.slice(i, i + BATCH_SIZE)
     // OpenAlex pipe = OR operator; DOIs stay unencoded (only contain safe chars)
     const filterValue = batch.join('|')
-    const url = `${OPENALEX_BASE}?filter=doi:${filterValue},type:article&select=doi,abstract_inverted_index,type,primary_location&per-page=${BATCH_SIZE}&mailto=${MAILTO}`
+    const url = `${OPENALEX_BASE}?filter=doi:${filterValue},type:article&select=doi,abstract_inverted_index,type,biblio&per-page=${BATCH_SIZE}&mailto=${MAILTO}`
     console.log(`[openalex] Batch abstract fetch: ${batch.length} DOIs (offset ${i})`)
 
     const data = await fetchOpenAlex(url)
@@ -117,7 +126,7 @@ export async function fetchAbstractsByDois(dois: string[]): Promise<Map<string, 
         const doi = work.doi.replace('https://doi.org/', '')
         result.set(doi, {
           abstract: reconstructAbstract(work.abstract_inverted_index),
-          is_final: work.type === 'article' && !!work.primary_location?.source,
+          is_final: isFinalPublication(work),
         })
       }
     }
@@ -136,7 +145,7 @@ export async function fetchRecentByIssn(issn: string, daysBack = 7): Promise<Ope
   const fromDate = new Date(Date.now() - daysBack * 86400000).toISOString().split('T')[0]
   console.log(`[openalex] Fetching recent articles for ISSN ${issn} since ${fromDate}`)
 
-  const url = `${OPENALEX_BASE}?filter=locations.source.issn:${issn},from_publication_date:${fromDate},type:article&select=doi,title,authorships,primary_location,publication_date,abstract_inverted_index&per-page=50&mailto=${MAILTO}`
+  const url = `${OPENALEX_BASE}?filter=locations.source.issn:${issn},from_publication_date:${fromDate},type:article&select=doi,title,authorships,primary_location,publication_date,abstract_inverted_index,biblio&per-page=50&mailto=${MAILTO}`
   const data = await fetchOpenAlex(url)
   if (!data?.results) return []
 

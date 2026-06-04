@@ -66,26 +66,31 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
     // ── Phase 2: Filter + dedup + collect enrichment needs ────────────────
     await updateRunPhase(runId, 'urls')
-    const needsAbstract: { doi: string }[] = []
     const needsDoi: { article: RssArticle; source: RssSource }[] = []
     const freshBySource = new Map<string, RssArticle[]>()
     const rssErrors: string[] = []
+    let totalRssExtracted = 0
 
     for (const source of rssSources) {
       const all = rssResults.get(source.id) ?? []
       const recent = all.filter(a => isRecent(a.published_at))
       const fresh = recent.filter(a => !a.doi || !knownDois.has(a.doi))
       stats.skipped += recent.length - fresh.length
+      totalRssExtracted += recent.length
       if (fresh.length === 0) continue
       freshBySource.set(source.id, fresh)
       for (const article of fresh) {
-        if (article.doi && !article.abstract)  needsAbstract.push({ doi: article.doi })
-        if (!article.doi && article.abstract)  needsDoi.push({ article, source })
+        if (!article.doi && article.abstract) needsDoi.push({ article, source })
       }
     }
 
-    const uniqueDois = Array.from(new Set(needsAbstract.map(x => x.doi)))
-    plog('urls', `${uniqueDois.length} DOIs à enrichir via OpenAlex, ${needsDoi.length} titres à résoudre`)
+    // Collect ALL dois from fresh articles (with or without abstract) for finalization check
+    const allFreshDois = new Set<string>()
+    Array.from(freshBySource.values()).forEach(articles => {
+      articles.forEach(a => { if (a.doi) allFreshDois.add(a.doi) })
+    })
+    const uniqueDois = Array.from(allFreshDois)
+    plog('urls', `${totalRssExtracted} articles RSS extraits — ${uniqueDois.length} DOIs à vérifier via OpenAlex (finalisé + abstract), ${needsDoi.length} titres à résoudre`)
     if (rssErrors.length > 0) plog('sources', `Erreurs RSS : ${rssErrors.join(', ')}`, 'warn')
 
     // ── Phase 3: Cross-source batch abstract fetch ─────────────────────────
@@ -102,6 +107,9 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
     }
 
     // ── Phase 5: Assemble final items ──────────────────────────────────────
+    let rssFinalized = 0
+    let rssSkippedNotFinal = 0
+
     for (const source of rssSources) {
       const fresh = freshBySource.get(source.id)
       if (!fresh) continue
@@ -110,14 +118,30 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
         let doi      = article.doi
         let abstract = article.abstract
 
-        if (doi && !abstract) {
+        if (doi) {
           const enriched = abstractMap.get(doi)
           if (enriched) {
-            abstract = enriched.abstract
-            if (!enriched.is_final) { stats.skipped++; continue }
+            // Use enriched abstract if article had none
+            if (!abstract) abstract = enriched.abstract
+            // Skip ASAP/early-access — not attached to a final journal issue
+            if (!enriched.is_final) {
+              stats.skipped++
+              rssSkippedNotFinal++
+              continue
+            }
+            rssFinalized++
           }
+          // OpenAlex didn't return this DOI (not indexed yet) — skip to be safe
+          else {
+            stats.skipped++
+            rssSkippedNotFinal++
+            continue
+          }
+        } else {
+          // No DOI: resolve via title lookup
+          if (abstract) doi = doiByKey.get(`${source.id}::${article.title}`) ?? null
+          else { stats.skipped++; continue }
         }
-        if (!doi && abstract)  doi = doiByKey.get(`${source.id}::${article.title}`) ?? null
 
         if (doi && knownDois.has(doi)) { stats.skipped++; continue }
         if (doi) knownDois.add(doi)
@@ -130,14 +154,22 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       }
     }
 
+    plog('urls', `RSS — ${rssFinalized} articles finalisés (volume/pages assignés), ${rssSkippedNotFinal} ignorés (ASAP ou non indexés OpenAlex)`)
+
     // ── Phase 6: OpenAlex-only sources (MDPI — no RSS) ────────────────────
     const openAlexSources = await getOpenAlexSources()
+    let openAlexExtracted = 0
+    let openAlexFinalized = 0
+    let openAlexSkippedNotFinal = 0
+
     for (const source of openAlexSources) {
       const articles = await fetchRecentByIssn(source.issn, LOOKBACK_DAYS)
+      openAlexExtracted += articles.length
       for (const article of articles) {
-        if (!article.is_final) { stats.skipped++; continue }
+        if (!article.is_final) { stats.skipped++; openAlexSkippedNotFinal++; continue }
         if (article.doi && knownDois.has(article.doi)) { stats.skipped++; continue }
         if (article.doi) knownDois.add(article.doi)
+        openAlexFinalized++
         itemsToInsert.push({
           run_id: runId, source_id: source.id,
           url: article.doi ? `https://doi.org/${article.doi}` : '',
@@ -147,6 +179,11 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
       }
       await sleep(OPENALEX_DELAY_MS)
     }
+
+    const grandTotalExtracted = totalRssExtracted + openAlexExtracted
+    const grandTotalFinalized = rssFinalized + openAlexFinalized
+    plog('urls', `OpenAlex sources — ${openAlexExtracted} extraits, ${openAlexFinalized} finalisés, ${openAlexSkippedNotFinal} ignorés (ASAP)`)
+    plog('urls', `TOTAL — ${grandTotalExtracted} articles extraits, ${grandTotalFinalized} rattachés à une publication (${grandTotalExtracted - grandTotalFinalized} ignorés ASAP/non indexés)`)
 
     // ── Phase 7: Insert ────────────────────────────────────────────────────
     const MAX_ITEMS = 1000
