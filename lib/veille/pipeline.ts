@@ -231,7 +231,16 @@ export async function runVeillePipeline(existingRunId?: string): Promise<{ inser
 
     if (insertedIds.length > 0) {
       const corpusTerms = await loadCorpusTerms(80)
-      const toScore = insertedIds.map(item => ({ id: item.id, abstract: item.abstract }))
+
+      // Cap scoring to MAX_SCORE items — prioritise articles with abstract (others get similarity=null anyway)
+      const MAX_SCORE = 300
+      const withAbstract    = insertedIds.filter(i => i.abstract && i.abstract.length > 50)
+      const withoutAbstract = insertedIds.filter(i => !i.abstract || i.abstract.length <= 50)
+      const toScoreRaw      = [...withAbstract, ...withoutAbstract].slice(0, MAX_SCORE)
+      if (insertedIds.length > MAX_SCORE) {
+        plog('scoring', `Cap scoring : ${insertedIds.length} → ${MAX_SCORE} articles (${withAbstract.length} avec abstract)`, 'warn')
+      }
+      const toScore = toScoreRaw.map(item => ({ id: item.id, abstract: item.abstract }))
 
       plog('scoring', `Scoring de ${toScore.length} articles (similarité corpus + heuristique) — +${elapsed()}s`)
       const simScores = await scoreVeilleItems(toScore, async (done, total) => {
