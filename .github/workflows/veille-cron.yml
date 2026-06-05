@@ -2,12 +2,12 @@ name: Veille quotidienne
 
 on:
   schedule:
-    # 2h Paris (UTC+2 en été) — publications asiatiques
-    - cron: '0 0 * * *'
-    # 4h Paris (UTC+2 en été) — publications européennes
-    - cron: '0 2 * * *'
-    # 6h Paris (UTC+2 en été) — résumé IA consolidé du jour
-    - cron: '0 4 * * *'
+    # 13h Paris (UTC+2 en été) — 1er run
+    - cron: '0 11 * * *'
+    # 14h Paris (UTC+2 en été) — 2ème run
+    - cron: '0 12 * * *'
+    # 15h Paris (UTC+2 en été) — résumé IA consolidé du jour
+    - cron: '0 13 * * *'
   workflow_dispatch:
     inputs:
       daily_summary:
@@ -23,10 +23,11 @@ jobs:
     steps:
       - name: Déclencher le pipeline veille
         run: |
-          # Run de 22h (20h UTC) → résumé IA consolidé sur tous les articles du jour
-          HOUR=$(date -u +%H)
+          # 3ème run (13h UTC = 15h Paris) → résumé IA consolidé sur tous les articles du jour
+          # date -u +%H retourne "13" avec zéro — utiliser %-H pour enlever le zéro
+          HOUR=$(date -u +%-H)
           DAILY_SUMMARY="false"
-          if [ "$HOUR" = "4" ]; then
+          if [ "$HOUR" = "13" ]; then
             DAILY_SUMMARY="true"
           fi
           # workflow_dispatch override
