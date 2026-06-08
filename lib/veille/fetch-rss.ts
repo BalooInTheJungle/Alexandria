@@ -72,7 +72,7 @@ function extractAuthors(item: Record<string, any>): string[] {
 }
 
 // Titles that identify non-research content to skip entirely
-const EDITORIAL_TITLE_PREFIXES = /^(correction|erratum|corrigendum|retraction|publisher correction|addendum|withdrawal|editor.s note|in this issue|this week in|this month in|issue highlights|editors. choice|news and views|research highlight)[\s:]/i
+const EDITORIAL_TITLE_PREFIXES = /^(\[ASAP\]\s*)?(correction|erratum|corrigendum|retraction|publisher correction|addendum|withdrawal|editor.s note|in this issue|this week in|this month in|issue highlights|editors. choice|news and views|research highlight)[\s:]/i
 
 // Strip citation metadata prefix injected by some publishers (RSC, Wiley, ACS) in RSS abstracts.
 // Pattern: "Journal, Year, Vol/Accepted Manuscript, DOI: xxx, [Article Type,] Authors Abstract..."

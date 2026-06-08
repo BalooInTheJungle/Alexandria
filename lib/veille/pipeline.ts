@@ -159,6 +159,7 @@ export async function runVeillePipeline(
           else { stats.skipped++; continue }
         }
 
+        if (!abstract) { stats.skipped++; continue }
         if (doi && knownDois.has(doi)) { stats.skipped++; continue }
         if (doi) knownDois.add(doi)
 
@@ -199,6 +200,7 @@ export async function runVeillePipeline(
         const crossRef = article.doi ? mdpiCrossRef.get(article.doi) : undefined
         const isFinal  = article.is_final || crossRef?.is_final || false
         if (!isFinal) { stats.skipped++; openAlexSkippedNotFinal++; continue }
+        if (!article.abstract) { stats.skipped++; continue }
         if (article.doi && knownDois.has(article.doi)) { stats.skipped++; continue }
         if (article.doi) knownDois.add(article.doi)
         openAlexFinalized++
