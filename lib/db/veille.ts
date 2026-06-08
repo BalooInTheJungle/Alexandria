@@ -217,7 +217,7 @@ export async function getKnownDois(): Promise<Set<string>> {
   const supabase = getAdminSupabase()
 
   const timeout = new Promise<null>((_, reject) =>
-    setTimeout(() => reject(new Error('getKnownDois timeout after 8s')), 8000)
+    setTimeout(() => reject(new Error('getKnownDois timeout after 20s')), 20000)
   )
   const query = supabase
     .from('veille_items')
@@ -236,7 +236,9 @@ export async function getKnownDois(): Promise<Set<string>> {
     LOG('getKnownDois ok', { count: dois.size })
     return dois
   } catch (err: any) {
-    LOG('getKnownDois failed (returning empty set):', err.message)
+    // CRITICAL: returning empty set means all articles will be treated as new → duplicates
+    // The DB unique index is the last line of defense when this happens.
+    LOG('getKnownDois FAILED — dedup disabled for this run:', err.message)
     return new Set()
   }
 }
@@ -347,7 +349,7 @@ export async function insertVeilleItemsWithIds(
 
   for (let i = 0; i < items.length; i += 50) {
     const batch = items.slice(i, i + 50)
-    const { data, error } = await supabase.from('veille_items').insert(batch).select('id, abstract')
+    const { data, error } = await supabase.from('veille_items').upsert(batch, { onConflict: 'doi', ignoreDuplicates: true }).select('id, abstract')
     if (error) LOG('insertVeilleItemsWithIds batch error', error.message)
     else inserted.push(...(data ?? []))
   }
