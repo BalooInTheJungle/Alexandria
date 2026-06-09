@@ -83,9 +83,9 @@ Les scripts importent directement les modules `lib/veille/` et `lib/db/` — pas
 | `tsconfig.scripts.json`                          | Créer    | ✅ Fait  |
 | `.github/workflows/veille-cron.yml`              | Modifier | ✅ Fait  |
 | `scripts/veille/extract.ts`                      | Créer    | ✅ Fait  |
-| `scripts/veille/score.ts`                        | Créer    | ⬜ À faire |
-| `scripts/veille/recap-articles.ts`               | Créer    | ⬜ À faire |
-| `scripts/veille/recap-global.ts`                 | Créer    | ⬜ À faire |
+| `scripts/veille/score.ts`                        | Créer    | ✅ Fait  |
+| `scripts/veille/recap-articles.ts`               | Créer    | ✅ Fait  |
+| `scripts/veille/recap-global.ts`                 | Créer    | ✅ Fait  |
 | `lib/veille/pipeline.ts`                         | Garder   | ⚠️ Conservé pour déclenchement manuel UI |
 | `app/api/cron/veille/route.ts`                   | Garder   | ⚠️ Conservé pour déclenchement manuel UI |
 
