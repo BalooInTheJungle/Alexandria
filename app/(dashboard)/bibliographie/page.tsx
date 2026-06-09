@@ -830,7 +830,7 @@ export default function BibliographiePage() {
             </Card>
             <Card>
               <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 75%)</span></p>
+                <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 80%)</span></p>
                 <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">
                   {veilleStats ? veilleStats.pertinent.toLocaleString("fr-FR") : "—"}
                 </p>
@@ -998,7 +998,7 @@ export default function BibliographiePage() {
                       <TableHead>Date · Heure</TableHead>
                       <TableHead>Statut</TableHead>
                       <TableHead className="text-right">Extraits</TableHead>
-                      <TableHead className="text-right">Pertinents ≥75%</TableHead>
+                      <TableHead className="text-right">Pertinents ≥80%</TableHead>
                       <TableHead className="text-right">Analyses IA</TableHead>
                     </TableRow>
                   </TableHeader>

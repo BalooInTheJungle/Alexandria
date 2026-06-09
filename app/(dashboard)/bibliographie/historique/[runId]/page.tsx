@@ -238,7 +238,20 @@ function ArticleCard({
             : <p className="text-sm font-semibold line-clamp-2">{item.title ?? "(titre inconnu)"}</p>
           }
         </div>
-        <ScoreBadge score={item.similarity_score} />
+        <div className="flex flex-col items-center gap-2 shrink-0">
+          <ScoreBadge score={item.similarity_score} />
+          <button
+            onClick={handleReadToggle}
+            disabled={toggling}
+            className={`text-xs px-3 py-1 rounded-full border transition-colors disabled:opacity-40 ${
+              isRead
+                ? "border-muted-foreground/30 text-muted-foreground hover:border-foreground hover:text-foreground"
+                : "border-primary/30 text-primary hover:bg-primary/5"
+            }`}
+          >
+            {isRead ? "✓ Lu" : "Marquer comme lu"}
+          </button>
+        </div>
       </div>
 
       <div className="h-px bg-border" />
@@ -273,21 +286,6 @@ function ArticleCard({
             <span className="text-xs text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">Dans le corpus</span>
           </div>
         )}
-      </div>
-
-      {/* Actions */}
-      <div className="flex items-center gap-3 pt-1">
-        <button
-          onClick={handleReadToggle}
-          disabled={toggling}
-          className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-            isRead
-              ? "border-muted-foreground/30 text-muted-foreground hover:border-foreground hover:text-foreground"
-              : "border-primary/30 text-primary hover:bg-primary/5"
-          }`}
-        >
-          {isRead ? "✓ Lu" : "Marquer comme lu"}
-        </button>
       </div>
 
       {/* AI analysis */}
@@ -351,7 +349,7 @@ const THEME_COLORS = [
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-const SCORE_THRESHOLD = 0.75;
+const SCORE_THRESHOLD = 0.80;
 
 export default function HistoriqueRunPage({ params }: { params: { runId: string } }) {
   const { runId } = params;
@@ -445,7 +443,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
           </Card>
           <Card>
             <CardContent className="pt-5">
-              <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 75%)</span></p>
+              <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 80%)</span></p>
               <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">
                 {pertinentItems.length > 0 ? pertinentItems.length : "—"}
               </p>
@@ -489,10 +487,10 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
       {!loading && (
         <div className="space-y-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Articles pertinents ≥ 75%{pertinentItems.length > 0 ? ` (${pertinentItems.length})` : ""}
+            Articles pertinents ≥ 80%{pertinentItems.length > 0 ? ` (${pertinentItems.length})` : ""}
           </p>
           {pertinentItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucun article au-dessus de 75% pour cette run.</p>
+            <p className="text-sm text-muted-foreground">Aucun article au-dessus de 80% pour cette run.</p>
           ) : (
             <div className="flex flex-col gap-4">
               {pertinentItems.map(item => (

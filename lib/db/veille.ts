@@ -69,7 +69,7 @@ export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWit
 
   const [aiRes, pertinentRes] = await Promise.all([
     admin.from('veille_items').select('run_id').in('run_id', runIds).not('ai_analysis', 'is', null),
-    admin.from('veille_items').select('run_id').in('run_id', runIds).gte('similarity_score', 0.75),
+    admin.from('veille_items').select('run_id').in('run_id', runIds).gte('similarity_score', 0.80),
   ])
 
   const aiCountByRun = new Map<string, number>()

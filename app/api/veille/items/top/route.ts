@@ -6,7 +6,7 @@ import { filterItemsForArticleDisplay } from "@/lib/veille/filter-article-displa
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const MIN_SCORE = 0.75;
+const MIN_SCORE = 0.80;
 const PAGE_SIZE = 10;
 
 const LOG = (msg: string, ...args: unknown[]) =>
