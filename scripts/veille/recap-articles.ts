@@ -21,8 +21,8 @@ import type { RunLogEntry, RunLogLevel, CorpusRef } from '../../lib/db/types'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const SCORE_THRESHOLD = 0.75  // seuil minimum pour être analysé par GPT
-const MAX_ARTICLES    = 10    // top N articles envoyés à GPT
+const SCORE_THRESHOLD = 0.80  // seuil minimum pour être analysé par GPT
+const MAX_ARTICLES    = 50   // cap de sécurité (normalement ~5 articles ≥80%)
 
 // ── DB admin client ───────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ async function runRecapArticles() {
 
   // ── Charge les articles éligibles ────────────────────────────────────────
   const items = await loadTopScoredItems(runId)
-  log('load', `${items.length} articles >= ${SCORE_THRESHOLD} chargés (top ${MAX_ARTICLES})`)
+  log('load', `${items.length} articles >= ${SCORE_THRESHOLD} chargés`)
 
   if (items.length === 0) {
     log('load', `Aucun article >= ${SCORE_THRESHOLD} — récap articles ignoré`)

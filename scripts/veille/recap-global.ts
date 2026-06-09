@@ -21,7 +21,7 @@ import type { RunLogEntry, RunLogLevel, CorpusRef } from '../../lib/db/types'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const SCORE_THRESHOLD    = 0.75
+const SCORE_THRESHOLD    = 0.80
 const MAX_ABSTRACT_CHARS = 300
 const MAX_EXCERPT_CHARS  = 150
 
