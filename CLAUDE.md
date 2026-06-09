@@ -152,23 +152,25 @@ app/
     rag/conversations/     # GET liste, PATCH titre, DELETE
     rag/conversations/[id]/messages/   # GET messages (cursor pagination)
     rag/settings/          # GET + PATCH rag_settings
-    veille/scrape/         # POST : déclencher une run
-    veille/list/           # GET : items du dernier run, triés par score
+    veille/scrape/         # POST : déclencher une run (legacy)
+    veille/list/           # GET : items du dernier run complété, triés par score
     veille/status/[runId]/ # GET : statut run (polling)
-    veille/items/top/      # GET : articles pertinents ≥80% toutes runs, paginés (10/page) — Cache-Control: no-store
+    veille/runs/           # GET : liste des runs avec counts (items, pertinents, ai_analysis)
+    veille/runs/[id]/      # GET : détail run (pipeline_logs, ai_summary…)
+    veille/items/top/      # GET : articles pertinents ≥75% toutes runs, paginés (10/page) — Cache-Control: no-store
     veille/items/[id]/     # PATCH : toggle read_at (lu/non lu)
-    veille/stats/          # GET : KPIs globaux (total, scorés, pertinents, lus) — Cache-Control: no-store
+    veille/stats/          # GET : KPIs globaux (total, scorés, pertinents ≥75%, lus) — Cache-Control: no-store
     documents/upload/      # Upload PDF → data/pdfs/ + insert documents
     ingestion/             # Parse → chunk → embed
     cron/retention/        # GET : suppression conversations > 30 jours
-    cron/veille/           # GET : pipeline veille quotidien (6h UTC)
+    cron/veille/           # GET : pipeline veille legacy (Vercel, obsolète)
 
 lib/
   supabase/                # client.ts (browser), server.ts, admin.ts
   db/                      # Requêtes DB + types TypeScript
   rag/                     # detect-lang, search, embed, openai, citations,
                            # conversation-persistence, settings, rerank
-  veille/                  # sources, fetch, extract, guardrails, score, pipeline
+  veille/                  # sources, fetch-rss, openalex, crossref, score, summarize, filter-article-display
   ingestion/               # parse-pdf, chunk, index
 
 components/
@@ -180,9 +182,13 @@ scripts/
   ingest.py                # Ingestion PDF (Python, manuel) — flag --author pour articles auteur
   fix_author_titles.py     # Correction titres espacés des articles auteur (--dry-run / --apply)
   fix_spaced_chunks.py     # Correction texte espacé dans chunks + re-embed (--dry-run / --apply)
-  import-sources.ts        # Upsert des 43 sources en DB
-  test-veille.ts           # Test pipeline veille
+  import-sources.ts        # Upsert des 44 sources en DB
   compute_umap.py          # Calcul coordonnées UMAP 2D sur les chunks
+  veille/
+    extract.ts             # Job 1 — fetch RSS + OpenAlex, filtre finalisation, insert veille_items
+    score.ts               # Job 2 — embed abstracts → match_chunks → similarity_score
+    recap-articles.ts      # Job 3 — GPT analyse individuelle des articles ≥80%
+    recap-global.ts        # Job 4 — GPT synthèse globale + thèmes, marque run completed
 
 supabase/migrations/       # 20 migrations SQL (ordre chronologique)
 data/pdfs/                 # PDFs corpus (non versionnés)
@@ -204,20 +210,59 @@ data/Articles auteur/      # PDFs articles publiés du chercheur (non versionné
 
 ### Pipeline Veille
 
-Déclenchée par cron GitHub Actions (2h Paris → `/api/cron/veille`) :
-1. `createRun()` → `veille_runs` avec `status=running`
-2. Sources RSS (43 journaux) → titre, DOI, abstract, auteurs — filtre 7 jours — dédup DOI
-3. Enrichissement OpenAlex en batch (abstracts manquants ACS)
-4. Sources OpenAlex directes (MDPI et similaires)
-5. Insert par batch de 50 → `scoreVeilleItems()` → embed abstract → `match_chunks` → `similarity_score`
-6. Cap `MAX_ITEMS = 1000` — scoring des 1000 articles les plus récents (~40 min sur Hobby)
-7. Résumé IA : top 10 articles (≥75%) → GPT-4o-mini → `saveRunSummary()` (timeout 120s)
-8. **Backfill `ai_analysis`** : parse du JSON résumé → `saveItemsAiAnalysis()` → update de chaque article analysé dans `veille_items.ai_analysis`
-9. `completeRun(runId, 'completed'|'failed')`
+Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentiels sur `main` :
 
-> **`waitUntil`** (`@vercel/functions`) sur les deux routes — répond immédiatement, pipeline en background.
-> **Fallback** : si GPT échoue, `high_score_count` est sauvegardé sans `ai_summary`.
-> **`ai_analysis`** : structure `{ contribution, relevance, corpus_link }` — rempli uniquement pour les articles analysés par GPT.
+#### Job 1 — `scripts/veille/extract.ts`
+1. `createRun()` → `veille_runs` avec `status=running`
+2. **44 sources RSS** → fetch parallèle (concurrence=5) — fenêtre **7 jours**
+3. **Filtre de finalisation** : seuls les articles publiés définitivement sont gardés
+   - DOI requis → vérification `is_final` via **OpenAlex batch** (1 requête pour tous les DOIs)
+   - CrossRef fallback si OpenAlex ne confirme pas
+   - Rejet : articles ASAP, preprints, corrections, sans abstract
+4. **Sources OpenAlex directes** (MDPI : Magnetochemistry, Inorganics…) — même filtre CrossRef
+5. Dédup DOI en mémoire (+ 0 DOI connu en DB au premier run après nettoyage)
+6. Insert par batch de 50 → `veille_items` (~638 articles/jour typique)
+7. Écrit `run_id` dans `$GITHUB_OUTPUT` pour les jobs suivants
+
+#### Job 2 — `scripts/veille/score.ts`
+1. Charge tous les articles avec `similarity_score IS NULL` (auto-reprise si restart)
+2. Pour chaque article avec abstract > 50 chars :
+   - `embedQuery(abstract)` → vecteur 384D via `@xenova/transformers` (all-MiniLM-L6-v2)
+   - `match_chunks RPC` → top-3 chunks les plus proches du corpus → `similarity_score` (top-1)
+   - `corpus_refs` : chunks avec similarité ≥ 75% sauvegardés pour affichage
+3. Timeout `match_chunks` : 30s — si timeout → `similarity_score = 0` (jamais NULL après scoring)
+4. Sauvegarde en batch de 50
+5. Résultat typique : ~637 scorés | ~20 ≥75% | ~3-8 ≥80%
+
+#### Job 3 — `scripts/veille/recap-articles.ts`
+1. Charge les articles avec `similarity_score ≥ 80%` (tous, pas de cap)
+2. GPT-4o-mini → `ai_analysis` par article : `{ contribution, relevance, corpus_link }`
+3. Sauvegarde dans `veille_items.ai_analysis` pour chaque article
+
+#### Job 4 — `scripts/veille/recap-global.ts`
+1. Charge les articles avec `ai_analysis IS NOT NULL` et `similarity_score ≥ 80%`
+2. GPT-4o-mini → `{ themes[], synthesis }` — synthèse en vouvoiement, ton direct
+3. Fusionne avec les `ai_analysis` déjà en base → `ai_summary` complet dans `veille_runs`
+4. Marque le run `status=completed`, `phase=done`
+
+#### Seuils importants
+| Seuil | Valeur | Usage |
+|-------|--------|-------|
+| Lookback RSS | 7 jours | Fenêtre de recherche articles récents |
+| Finalisation | `is_final=true` | Filtre ASAP/preprints (OpenAlex + CrossRef) |
+| Scoring corpus | ≥ 0% | Tous les articles avec abstract sont scorés |
+| `corpus_refs` | ≥ 75% | Passages corpus affichés dans les cards |
+| Affichage "top" | ≥ 75% | Page `/bibliographie` tab Veille |
+| Analyse IA | **≥ 80%** | Articles envoyés à GPT pour ai_analysis |
+| Stats "pertinents" | ≥ 75% | KPI global de la page |
+
+#### Stratégie active / rollback
+Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
+- `actions` (défaut) — les 4 jobs Node.js décrits ci-dessus
+- `legacy` — appel HTTP vers `/api/cron/veille` sur Vercel (obsolète, Hobby 10s timeout)
+
+> **Secrets GitHub requis** : `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`
+> **Durée typique** : ~6-8 min (extract 1min + score 3min + recap-articles 1.5min + recap-global 30s)
 
 ### Base de données — points critiques
 
@@ -238,36 +283,34 @@ Déclenchée par cron GitHub Actions (2h Paris → `/api/cron/veille`) :
 
 ### Déploiement Vercel + GitHub Actions
 
-- `vercel.json` : cron `GET /api/cron/retention` à 4h UTC (rétention)
-- **Cron veille** : GitHub Actions (`.github/workflows/veille-cron.yml`) — 0h UTC (2h Paris) → appelle `/api/cron/veille`
-  - Secrets GitHub requis : `CRON_SECRET`, `VERCEL_APP_URL` (= `https://alexandria-dusky.vercel.app`)
+- `vercel.json` : cron `GET /api/cron/retention` à 4h UTC (rétention conversations)
+- **Cron veille** : GitHub Actions `.github/workflows/veille-cron.yml` — **7h UTC (9h Paris)**, stratégie `actions`
+  - Secrets GitHub requis : `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`
+  - Secret optionnel : `VEILLE_STRATEGY` (override `actions`/`legacy`), `CRON_SECRET`, `VERCEL_APP_URL`
 - `OPENAI_API_KEY` : uniquement des caractères ASCII imprimables (sanitisation déjà en place)
-- Plan Hobby : pas de `maxDuration` — pipeline tourne via `waitUntil` (~40 min, Vercel le supporte)
+- Le pipeline veille tourne entièrement dans GitHub Actions — Vercel n'est plus impliqué dans le scoring
 
 ---
 
-## État actuel (mai 2026)
+## État actuel (juin 2026)
 
 | Fonctionnalité | État |
 |---------------|------|
 | RAG chat (EN, streaming, garde-fou) | ✅ Fonctionnel |
 | Conversations + historique | ✅ Fonctionnel |
 | Paramètres RAG (rag_settings) | ✅ Fonctionnel |
-| Pipeline veille (RSS + OpenAlex + scoring) | ✅ Fonctionnel |
-| Sélecteur seuil veille (20→70%, défaut 30%) | ✅ Fonctionnel |
-| Résumé IA veille (GPT-4o-mini, top 8 articles ≥30%) | ✅ Fonctionnel |
-| Cron veille automatique (GitHub Actions, 2h Paris) | ✅ Fonctionnel |
-| Résumé IA sur page détail run historique | ✅ Fonctionnel |
+| Pipeline veille GitHub Actions (4 jobs séquentiels) | ✅ Fonctionnel — ~7min/run, 638 articles/jour |
+| Filtre finalisation articles (OpenAlex + CrossRef) | ✅ Fonctionnel — exclut ASAP/preprints |
+| Scoring sémantique corpus (Xenova 384D) | ✅ Fonctionnel — ~637 scorés, ~3-8 ≥80%/jour |
+| Analyse IA par article ≥80% (ai_analysis jsonb) | ✅ Fonctionnel — tous les articles ≥80% analysés |
+| Synthèse globale du jour (ai_summary, vouvoiement) | ✅ Fonctionnel — thèmes + synthèse directe |
+| Cron veille automatique (GitHub Actions, 9h Paris) | ✅ Fonctionnel — 7h UTC |
+| Page Veille — articles ≥75%, paginés, lu/non lu | ✅ Fonctionnel — tag pill lu/non lu sous score |
+| Page Historique — 1 ligne/run, date+heure, KPIs | ✅ Fonctionnel — extraits, pertinents, analyses IA |
+| Page détail run — thèmes, articles, logs modal | ✅ Fonctionnel — ai_analysis + corpus_refs + read toggle |
 | Cron rétention 30 jours | ✅ Fonctionnel |
-| Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel — lazy-load IntersectionObserver, RPCs SQL |
-| Logs requêtes RAG (query_logs) | ✅ Fonctionnel |
+| Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
 | Articles auteur indexés (521 docs, is_author_article) | ✅ Fonctionnel |
-| Comparaison articles auteur ↔ corpus | ✅ Fonctionnel |
-| Correction texte espacé (797k chunks re-embeddés) | ✅ Terminé |
-| Page Veille — liste paginée articles pertinents ≥80% | ✅ Fonctionnel (10/page, filtres titre + lu/non lu) |
-| Suivi lecture articles (read_at) | ✅ Fonctionnel — toggle lu/non lu, KPI global |
-| Analyse IA par article (ai_analysis jsonb) | ✅ Fonctionnel — dropdown violet sur chaque card |
-| Page Historique — tableau runs redesigné | ✅ Fonctionnel — lignes cliquables, badge statut, KPIs par run |
 | Upload PDF + ingestion | ⚠️ À vérifier |
 | UMAP sur nouveau corpus | ⏳ À relancer (compute_umap.py) |
 
@@ -279,10 +322,12 @@ Déclenchée par cron GitHub Actions (2h Paris → `/api/cron/veille`) :
 - **Titres nettoyés** : `fix_spaced_text()` à l'ingestion + `fix_author_titles.py` sur 521 articles auteur
 
 ### Veille — état en base (juin 2026)
-- `veille_items` : colonnes `read_at timestamptz` (nullable) + `ai_analysis jsonb` (nullable) ajoutées
+- `veille_items` : colonnes `read_at timestamptz` + `ai_analysis jsonb` + `similarity_score float` + `corpus_refs jsonb`
 - `ai_analysis` structure : `{ contribution: string, relevance: string, corpus_link: string }`
-- Rempli automatiquement à chaque run par `saveItemsAiAnalysis()` après la phase résumé GPT
-- **DB nettoyée le 03/06/2026** — repartie à zéro, première run propre = 1000 articles, 707 scorés, 6 pertinents ≥80%, 8 avec ai_analysis
+- `corpus_refs` structure : `[{ doc_title, excerpt, page, similarity }]` — passages corpus ≥75% ayant déclenché le score
+- `similarity_score = 0` si scoring tenté mais aucun match (jamais NULL après scoring, NULL = pas encore scoré)
+- `ai_analysis` rempli uniquement pour les articles ≥80% par `recap-articles.ts`
+- **DB nettoyée le 09/06/2026** — runs propres avec nouvelle pipeline : ~638 extraits, ~637 scorés, ~3-8 ≥80%, tous analysés IA
 
 ### Structure PDFs
 - `data/pdfs/YEAR/` — organisation par année d'acquisition (original)
