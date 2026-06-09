@@ -169,7 +169,7 @@ function ScoreBadge({ score }: { score: number | null }) {
   );
 }
 
-function CorpusRefBlock({ ref: r }: { ref: CorpusRef }) {
+function CorpusRefBlock({ corpusRef: r }: { corpusRef: CorpusRef }) {
   const pct = Math.round((r.similarity ?? 0) * 100);
   const cls = pct >= 70 ? "text-green-700" : pct >= 50 ? "text-yellow-700" : "text-muted-foreground";
   return (
@@ -331,7 +331,7 @@ function ArticleCard({
           </button>
           {refsOpen && (
             <div className="space-y-3">
-              {refs.map((r, i) => <CorpusRefBlock key={i} ref={r} />)}
+              {refs.map((r, i) => <CorpusRefBlock key={i} corpusRef={r} />)}
             </div>
           )}
         </div>
