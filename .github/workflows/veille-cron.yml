@@ -6,21 +6,63 @@ on:
     - cron: '0 10 * * *'
   workflow_dispatch:
     inputs:
+      strategy:
+        description: 'Stratégie pipeline (legacy=appel Vercel, actions=scripts GitHub Actions)'
+        required: false
+        default: 'actions'
+        type: choice
+        options: ['actions', 'legacy']
       run_id:
-        description: 'Reprendre un run existant (laisser vide pour nouveau run)'
+        description: '[actions] Reprendre un run existant (laisser vide pour nouveau run)'
         required: false
         default: ''
-      skip_to:
-        description: 'Sauter directement à une phase (extract|score|recap-articles|recap-global)'
+      daily_summary:
+        description: '[legacy] Générer le résumé IA consolidé du jour'
         required: false
-        default: 'extract'
+        default: 'false'
         type: choice
-        options: ['extract', 'score', 'recap-articles', 'recap-global']
+        options: ['false', 'true']
+
+# Stratégie active par défaut (peut être surchargée par workflow_dispatch)
+# Valeurs possibles : "actions" (scripts GitHub Actions) | "legacy" (appel HTTP Vercel)
+# Changer VEILLE_STRATEGY dans les secrets GitHub pour modifier le défaut sans toucher ce fichier.
+env:
+  DEFAULT_STRATEGY: 'actions'
 
 jobs:
+  # ── Détection de la stratégie ─────────────────────────────────────────────
+  # Ce job lit la stratégie (dispatch > secret > défaut) et l'expose aux autres jobs.
+  setup:
+    name: '0 · Setup'
+    runs-on: ubuntu-latest
+    outputs:
+      strategy: ${{ steps.detect.outputs.strategy }}
+
+    steps:
+      - name: Detect strategy
+        id: detect
+        run: |
+          # Priorité : workflow_dispatch > secret VEILLE_STRATEGY > défaut "actions"
+          STRATEGY="${{ github.event.inputs.strategy }}"
+          if [ -z "$STRATEGY" ]; then
+            STRATEGY="${{ secrets.VEILLE_STRATEGY }}"
+          fi
+          if [ -z "$STRATEGY" ]; then
+            STRATEGY="${{ env.DEFAULT_STRATEGY }}"
+          fi
+          echo "strategy=${STRATEGY}" >> "$GITHUB_OUTPUT"
+          echo "Stratégie sélectionnée : ${STRATEGY}"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # STRATÉGIE "actions" — scripts Node.js directs (recommandée)
+  # Pas de timeout Vercel, retry possible, 1500 articles scorés sans problème
+  # ══════════════════════════════════════════════════════════════════════════
+
   # ── Job 1 : Extraction + filtre garde-fou ─────────────────────────────────
   extract:
-    name: '1 · Extract'
+    name: '1 · Extract [actions]'
+    needs: setup
+    if: needs.setup.outputs.strategy == 'actions'
     runs-on: ubuntu-latest
     outputs:
       run_id: ${{ steps.extract.outputs.run_id }}
@@ -42,7 +84,6 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EXISTING_RUN_ID: ${{ github.event.inputs.run_id }}
-          SKIP_TO: ${{ github.event.inputs.skip_to }}
         run: |
           RUN_ID=$(npx ts-node --project tsconfig.scripts.json scripts/veille/extract.ts)
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
@@ -50,8 +91,9 @@ jobs:
 
   # ── Job 2 : Scoring sémantique ────────────────────────────────────────────
   score:
-    name: '2 · Score'
-    needs: extract
+    name: '2 · Score [actions]'
+    needs: [setup, extract]
+    if: needs.setup.outputs.strategy == 'actions'
     runs-on: ubuntu-latest
 
     steps:
@@ -76,8 +118,9 @@ jobs:
 
   # ── Job 3 : Récap IA par article ──────────────────────────────────────────
   recap-articles:
-    name: '3 · Récap articles'
-    needs: [extract, score]
+    name: '3 · Récap articles [actions]'
+    needs: [setup, extract, score]
+    if: needs.setup.outputs.strategy == 'actions'
     runs-on: ubuntu-latest
 
     steps:
@@ -103,8 +146,9 @@ jobs:
 
   # ── Job 4 : Récap IA global ───────────────────────────────────────────────
   recap-global:
-    name: '4 · Récap global'
-    needs: [extract, recap-articles]
+    name: '4 · Récap global [actions]'
+    needs: [setup, extract, recap-articles]
+    if: needs.setup.outputs.strategy == 'actions'
     runs-on: ubuntu-latest
 
     steps:
@@ -127,3 +171,38 @@ jobs:
         run: |
           echo "Récap global run_id=${RUN_ID}"
           npx ts-node --project tsconfig.scripts.json scripts/veille/recap-global.ts
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # STRATÉGIE "legacy" — appel HTTP vers Vercel (ancienne méthode)
+  # Conservée pour rollback rapide. Limitée par Vercel Hobby (10s timeout).
+  # ══════════════════════════════════════════════════════════════════════════
+
+  legacy-pipeline:
+    name: '· Pipeline legacy [Vercel]'
+    needs: setup
+    if: needs.setup.outputs.strategy == 'legacy'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Vercel pipeline
+        run: |
+          HOUR=$(date -u +%-H)
+          DAILY_SUMMARY="${{ github.event.inputs.daily_summary }}"
+          if [ -z "$DAILY_SUMMARY" ]; then
+            DAILY_SUMMARY="false"
+          fi
+
+          echo "daily_summary=${DAILY_SUMMARY}"
+
+          response=$(curl -s -L -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_APP_URL }}/api/cron/veille?daily_summary=${DAILY_SUMMARY}")
+
+          echo "HTTP status: $response"
+
+          if [ "$response" != "200" ]; then
+            echo "Erreur : le pipeline veille a retourné HTTP $response"
+            exit 1
+          fi
+
+          echo "Pipeline legacy démarré (daily_summary=${DAILY_SUMMARY})"

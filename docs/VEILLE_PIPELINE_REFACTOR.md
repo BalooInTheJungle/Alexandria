@@ -146,13 +146,33 @@ Actuellement 300 articles max/run. Avec GitHub Actions, pas de raison de cap :
 Passer de 5 → 10 maintenant qu'on n'est plus limité par Vercel.
 Supabase Pro supporte ~100 connexions simultanées, 10 est safe.
 
-### Secrets GitHub requis
+### Switch stratégie (sans toucher au code)
+
+Le workflow lit la stratégie dans cet ordre de priorité :
+1. `workflow_dispatch` input `strategy` (pour tests manuels)
+2. Secret GitHub `VEILLE_STRATEGY` (pour basculer sans push)
+3. Défaut hardcodé `actions` dans le workflow
+
+| Valeur | Comportement |
+|--------|-------------|
+| `actions` | Scripts Node.js directs — recommandé, pas de timeout |
+| `legacy` | Appel HTTP vers Vercel — rollback rapide si problème |
+
+**Pour revenir à l'ancienne méthode en urgence :** dans GitHub → Settings → Secrets, ajouter `VEILLE_STRATEGY = legacy`. Pas besoin de toucher au code.
+
+### Secrets GitHub requis (stratégie `actions`)
 ```
-SUPABASE_URL         = $NEXT_PUBLIC_SUPABASE_URL
-SUPABASE_SERVICE_KEY = $SUPABASE_SERVICE_ROLE_KEY
-OPENAI_API_KEY       = $OPENAI_API_KEY
+NEXT_PUBLIC_SUPABASE_URL   = URL Supabase
+SUPABASE_SERVICE_ROLE_KEY  = clé service role
+OPENAI_API_KEY             = clé OpenAI
+VEILLE_STRATEGY            = "actions" (optionnel, c'est le défaut)
 ```
-(CRON_SECRET devient inutile pour le pipeline — plus d'appel HTTP vers Vercel)
+
+### Secrets conservés pour la stratégie `legacy`
+```
+CRON_SECRET      = secret pour l'endpoint Vercel
+VERCEL_APP_URL   = https://alexandria-dusky.vercel.app
+```
 
 ---
 
