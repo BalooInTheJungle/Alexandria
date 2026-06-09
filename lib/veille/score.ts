@@ -22,13 +22,20 @@ type ScoreResult = {
   refs: CorpusRef[]
 }
 
-const MATCH_TIMEOUT_MS = 8000  // abort match_chunks if no response in 8s
+const MATCH_TIMEOUT_MS = 30_000  // abort match_chunks if no response in 30s
 
 // Score a single abstract against the corpus.
 // Returns top-1 similarity score and up to 3 corpus refs (similarity >= CORPUS_REF_THRESHOLD).
 async function scoreAbstract(abstract: string): Promise<ScoreResult> {
   try {
-    const embedding = await embedQuery(abstract)
+    let embedding: number[]
+    try {
+      embedding = await embedQuery(abstract)
+    } catch (embedErr: any) {
+      console.error('[score] embedQuery failed:', embedErr.message)
+      return { similarity: null, refs: [] }
+    }
+
     const supabase  = getSupabase()
 
     const rpcPromise = supabase.rpc('match_chunks', {
@@ -55,7 +62,7 @@ async function scoreAbstract(abstract: string): Promise<ScoreResult> {
       return { similarity: null, refs: [] }
     }
 
-    if (!data || (data as unknown[]).length === 0) return { similarity: null, refs: [] }
+    if (!data || (data as unknown[]).length === 0) return { similarity: 0, refs: [] }
 
     const rows = data as { doc_title: string; content: string; page: number | null; similarity: number }[]
     const similarity = typeof rows[0].similarity === 'number'

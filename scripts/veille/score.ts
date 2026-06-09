@@ -87,14 +87,22 @@ async function saveScores(
   const entries = Array.from(scores)
   const BATCH = 50
 
+  // Count nulls for diagnostic
+  const nullCount = entries.filter(([, s]) => s.similarity === null).length
+  if (nullCount > 0) {
+    log('save', `⚠️  ${nullCount}/${entries.length} items ont similarity=null (embed ou match_chunks échoué)`, 'warn')
+  }
+
   for (let i = 0; i < entries.length; i += BATCH) {
     const batch = entries.slice(i, i + BATCH)
     await Promise.all(batch.map(async ([id, { similarity, heuristic, refs }]) => {
-      const patch: Record<string, unknown> = {}
-      if (similarity !== null)  patch.similarity_score = similarity
-      if (heuristic !== null)   patch.heuristic_score  = heuristic
-      if (refs.length > 0)      patch.corpus_refs      = refs
-      if (Object.keys(patch).length === 0) return
+      const patch: Record<string, unknown> = {
+        // Toujours écrire similarity_score (0 si null) pour marquer l'item comme "tenté"
+        // → distingue "pas encore scoré" (NULL) de "scoré, pas de match" (0)
+        similarity_score: similarity ?? 0,
+      }
+      if (heuristic !== null) patch.heuristic_score = heuristic
+      if (refs.length > 0)    patch.corpus_refs     = refs
       const { error } = await sb.from('veille_items').update(patch).eq('id', id)
       if (error) log('save', `Erreur update id=${id.slice(0, 8)}: ${error.message}`, 'error')
     }))
