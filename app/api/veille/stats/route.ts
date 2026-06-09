@@ -19,7 +19,7 @@ export async function GET() {
     const [totalRes, scoredRes, pertinentRes, readRes] = await Promise.all([
       supabase.from("veille_items").select("id", { count: "exact", head: true }),
       supabase.from("veille_items").select("id", { count: "exact", head: true }).not("similarity_score", "is", null),
-      supabase.from("veille_items").select("id", { count: "exact", head: true }).gte("similarity_score", 0.80),
+      supabase.from("veille_items").select("id", { count: "exact", head: true }).gte("similarity_score", 0.75),
       supabase.from("veille_items").select("id", { count: "exact", head: true }).not("read_at", "is", null),
     ]);
 
