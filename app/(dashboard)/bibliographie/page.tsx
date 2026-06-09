@@ -23,12 +23,13 @@ type TabId = "veille" | "historique" | "sources";
 
 type SummaryTheme   = { title: string; description: string }
 type SummaryArticle = { item_id: string; contribution: string; relevance: string; corpus_link: string }
-type StructuredSummary = { themes: SummaryTheme[]; articles: SummaryArticle[] }
+type StructuredSummary = { themes: SummaryTheme[]; articles: SummaryArticle[]; synthesis?: string }
 
 function parseSummary(raw: string): StructuredSummary | null {
   try {
     const p = JSON.parse(raw)
-    if (p && Array.isArray(p.themes) && Array.isArray(p.articles)) return p as StructuredSummary
+    if (p && Array.isArray(p.themes) && (Array.isArray(p.articles) || typeof p.synthesis === 'string'))
+      return { themes: p.themes ?? [], articles: p.articles ?? [], synthesis: p.synthesis } as StructuredSummary
     return null
   } catch { return null }
 }
@@ -201,10 +202,22 @@ function SourceRow({ source, onToggle }: { source: Source; onToggle: (id: string
 }
 
 const PHASE_LABELS: Record<string, string> = {
+  // Ancienne pipeline (legacy)
   sources: "Récupération RSS",
   urls:    "Enrichissement OpenAlex",
   items:   "Scoring des articles",
   summary: "Résumé IA",
+  // Nouvelle pipeline (scripts GitHub Actions)
+  filter:               "Filtre articles",
+  openalex:             "OpenAlex batch",
+  crossref:             "CrossRef fallback",
+  insert:               "Insertion DB",
+  extracted:            "Articles extraits",
+  scoring:              "Scoring corpus",
+  scored:               "Scoring terminé",
+  recap_articles:       "Analyse IA articles",
+  recap_articles_done:  "Analyses sauvegardées",
+  recap_global:         "Résumé global",
   done:    "Terminé",
 };
 
@@ -212,12 +225,24 @@ const PHASES = ["sources", "urls", "items", "summary"] as const;
 
 // Plages de progression globale par phase (0-100)
 const PHASE_PROGRESS: Record<string, [number, number]> = {
-  pending:  [0,   0],
-  sources:  [0,  15],
-  urls:     [15, 35],
-  items:    [35, 85],
-  summary:  [85, 95],
-  done:     [100, 100],
+  pending:              [0,   0],
+  // Ancienne pipeline
+  sources:              [0,  15],
+  urls:                 [15, 35],
+  items:                [35, 85],
+  summary:              [85, 95],
+  // Nouvelle pipeline
+  filter:               [5,  15],
+  openalex:             [15, 25],
+  crossref:             [25, 30],
+  insert:               [30, 35],
+  extracted:            [35, 40],
+  scoring:              [40, 80],
+  scored:               [80, 82],
+  recap_articles:       [82, 90],
+  recap_articles_done:  [90, 92],
+  recap_global:         [92, 98],
+  done:                 [100, 100],
 };
 
 function globalProgress(
@@ -230,11 +255,11 @@ function globalProgress(
   const range = PHASE_PROGRESS[phase];
   if (!range) return 0;
   const [start, end] = range;
-  if (phase === "items" && itemsTotal && itemsTotal > 0) {
+  // Phases avec sous-progression item par item
+  if ((phase === "items" || phase === "scoring") && itemsTotal && itemsTotal > 0) {
     const ratio = Math.min(1, (itemsProcessed ?? 0) / itemsTotal);
     return Math.round(start + ratio * (end - start));
   }
-  // Pour les autres phases, on affiche le milieu de la plage
   return Math.round((start + end) / 2);
 }
 

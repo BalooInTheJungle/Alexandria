@@ -199,12 +199,14 @@ function RefsBlock({ refs }: { refs: CorpusRef[] }) {
 
 type SummaryTheme   = { title: string; description: string }
 type SummaryArticle = { item_id: string; contribution: string; relevance: string; corpus_link: string }
-type StructuredSummary = { themes: SummaryTheme[]; articles: SummaryArticle[] }
+type StructuredSummary = { themes: SummaryTheme[]; articles: SummaryArticle[]; synthesis?: string }
 
 function parseSummary(raw: string): StructuredSummary | null {
   try {
     const p = JSON.parse(raw)
-    if (p && Array.isArray(p.themes) && Array.isArray(p.articles)) return p as StructuredSummary
+    // Accepte { themes, articles } (ancienne pipeline) et { themes, articles, synthesis } (nouvelle)
+    if (p && Array.isArray(p.themes) && (Array.isArray(p.articles) || typeof p.synthesis === 'string'))
+      return { themes: p.themes ?? [], articles: p.articles ?? [], synthesis: p.synthesis } as StructuredSummary
     return null
   } catch { return null }
 }
@@ -218,6 +220,14 @@ const THEME_COLORS = [
 function StructuredSummaryView({ summary, run, items }: { summary: StructuredSummary; run: VeilleRun; items: VeilleItem[] }) {
   return (
     <div className="space-y-6">
+
+      {/* Synthèse globale (nouvelle pipeline uniquement) */}
+      {summary.synthesis && (
+        <div className="rounded-lg border border-violet-200 bg-violet-50 px-5 py-4 space-y-1">
+          <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide">Synthèse du jour</p>
+          <p className="text-sm leading-relaxed text-violet-900">{summary.synthesis}</p>
+        </div>
+      )}
 
       {summary.themes.length > 0 && (
         <div className="space-y-2">
@@ -303,11 +313,21 @@ function LegacySummaryView({ raw, run }: { raw: string; run: VeilleRun }) {
 // ── Pipeline logs ─────────────────────────────────────────────────────────────
 
 const PHASE_LABELS: Record<string, string> = {
+  // Ancienne pipeline
   sources: 'Sources RSS',
   urls:    'Enrichissement',
   insert:  'Insertion',
   scoring: 'Scoring',
   summary: 'Résumé IA',
+  // Nouvelle pipeline
+  filter:               'Filtre articles',
+  openalex:             'OpenAlex batch',
+  crossref:             'CrossRef',
+  extracted:            'Extraits',
+  scored:               'Scoring terminé',
+  recap_articles:       'Analyse IA',
+  recap_articles_done:  'Analyses OK',
+  recap_global:         'Résumé global',
   done:    'Terminé',
   fatal:   'Erreur fatale',
 }
@@ -319,11 +339,21 @@ const LEVEL_STYLES: Record<string, string> = {
 }
 
 const PHASE_BADGE: Record<string, string> = {
+  // Ancienne pipeline
   sources: 'bg-blue-100 text-blue-700',
   urls:    'bg-indigo-100 text-indigo-700',
   insert:  'bg-teal-100 text-teal-700',
   scoring: 'bg-purple-100 text-purple-700',
   summary: 'bg-orange-100 text-orange-700',
+  // Nouvelle pipeline
+  filter:               'bg-sky-100 text-sky-700',
+  openalex:             'bg-indigo-100 text-indigo-700',
+  crossref:             'bg-cyan-100 text-cyan-700',
+  extracted:            'bg-teal-100 text-teal-700',
+  scored:               'bg-purple-100 text-purple-700',
+  recap_articles:       'bg-amber-100 text-amber-700',
+  recap_articles_done:  'bg-amber-100 text-amber-700',
+  recap_global:         'bg-orange-100 text-orange-700',
   done:    'bg-green-100 text-green-700',
   fatal:   'bg-red-100 text-red-700',
 }
@@ -487,7 +517,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
               <p className="text-3xl font-semibold tabular-nums mt-1">
                 {run?.ai_summary ? (() => {
                   const s = parseSummary(run.ai_summary);
-                  return s ? s.articles.length : "—";
+                  return s ? (s.articles.length || run.high_score_count || "—") : "—";
                 })() : "—"}
               </p>
             </CardContent>

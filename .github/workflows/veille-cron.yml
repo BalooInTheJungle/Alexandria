@@ -2,38 +2,194 @@ name: Veille quotidienne
 
 on:
   schedule:
-    # 13h Paris (UTC+2 en été) — 1er run d'extraction
-    - cron: '0 11 * * *'
-    # 14h Paris (UTC+2 en été) — 2ème run d'extraction
-    - cron: '0 12 * * *'
-    # 15h Paris (UTC+2 en été) — 3ème run d'extraction
-    - cron: '0 13 * * *'
-    # 16h Paris (UTC+2 en été) — résumé IA consolidé (après les 3 runs d'extraction)
-    - cron: '0 14 * * *'
+    # 10h UTC (12h Paris été / 11h Paris hiver) — après les publications asiatiques et européennes du matin
+    - cron: '0 10 * * *'
   workflow_dispatch:
     inputs:
+      strategy:
+        description: 'Stratégie pipeline (legacy=appel Vercel, actions=scripts GitHub Actions)'
+        required: false
+        default: 'actions'
+        type: choice
+        options: ['actions', 'legacy']
+      run_id:
+        description: '[actions] Reprendre un run existant (laisser vide pour nouveau run)'
+        required: false
+        default: ''
       daily_summary:
-        description: 'Générer le résumé IA consolidé du jour'
+        description: '[legacy] Générer le résumé IA consolidé du jour'
         required: false
         default: 'false'
         type: choice
         options: ['false', 'true']
 
+# Stratégie active par défaut (peut être surchargée par workflow_dispatch)
+# Valeurs possibles : "actions" (scripts GitHub Actions) | "legacy" (appel HTTP Vercel)
+# Changer VEILLE_STRATEGY dans les secrets GitHub pour modifier le défaut sans toucher ce fichier.
+env:
+  DEFAULT_STRATEGY: 'actions'
+
 jobs:
-  run-veille:
+  # ── Détection de la stratégie ─────────────────────────────────────────────
+  # Ce job lit la stratégie (dispatch > secret > défaut) et l'expose aux autres jobs.
+  setup:
+    name: '0 · Setup'
     runs-on: ubuntu-latest
+    outputs:
+      strategy: ${{ steps.detect.outputs.strategy }}
+
     steps:
-      - name: Déclencher le pipeline veille
+      - name: Detect strategy
+        id: detect
         run: |
-          # 4ème run (14h UTC = 16h Paris) → résumé IA consolidé sur tous les articles du jour
-          HOUR=$(date -u +%-H)
-          DAILY_SUMMARY="false"
-          if [ "$HOUR" = "14" ]; then
-            DAILY_SUMMARY="true"
+          # Priorité : workflow_dispatch > secret VEILLE_STRATEGY > défaut "actions"
+          STRATEGY="${{ github.event.inputs.strategy }}"
+          if [ -z "$STRATEGY" ]; then
+            STRATEGY="${{ secrets.VEILLE_STRATEGY }}"
           fi
-          # workflow_dispatch override
-          if [ "${{ github.event.inputs.daily_summary }}" = "true" ]; then
-            DAILY_SUMMARY="true"
+          if [ -z "$STRATEGY" ]; then
+            STRATEGY="${{ env.DEFAULT_STRATEGY }}"
+          fi
+          echo "strategy=${STRATEGY}" >> "$GITHUB_OUTPUT"
+          echo "Stratégie sélectionnée : ${STRATEGY}"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # STRATÉGIE "actions" — scripts Node.js directs (recommandée)
+  # Pas de timeout Vercel, retry possible, 1500 articles scorés sans problème
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ── Job 1 : Extraction + filtre garde-fou ─────────────────────────────────
+  extract:
+    name: '1 · Extract [actions]'
+    needs: setup
+    if: needs.setup.outputs.strategy == 'actions'
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.extract.outputs.run_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run extraction
+        id: extract
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          EXISTING_RUN_ID: ${{ github.event.inputs.run_id }}
+        run: |
+          RUN_ID=$(npx ts-node --project tsconfig.scripts.json scripts/veille/extract.ts)
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Extraction terminée — run_id=${RUN_ID}"
+
+  # ── Job 2 : Scoring sémantique ────────────────────────────────────────────
+  score:
+    name: '2 · Score [actions]'
+    needs: [setup, extract]
+    if: needs.setup.outputs.strategy == 'actions'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run scoring
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUN_ID: ${{ needs.extract.outputs.run_id }}
+        run: |
+          echo "Scoring run_id=${RUN_ID}"
+          npx ts-node --project tsconfig.scripts.json scripts/veille/score.ts
+
+  # ── Job 3 : Récap IA par article ──────────────────────────────────────────
+  recap-articles:
+    name: '3 · Récap articles [actions]'
+    needs: [setup, extract, score]
+    if: needs.setup.outputs.strategy == 'actions'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run article recaps
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RUN_ID: ${{ needs.extract.outputs.run_id }}
+        run: |
+          echo "Récap articles run_id=${RUN_ID}"
+          npx ts-node --project tsconfig.scripts.json scripts/veille/recap-articles.ts
+
+  # ── Job 4 : Récap IA global ───────────────────────────────────────────────
+  recap-global:
+    name: '4 · Récap global [actions]'
+    needs: [setup, extract, recap-articles]
+    if: needs.setup.outputs.strategy == 'actions'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run global recap
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RUN_ID: ${{ needs.extract.outputs.run_id }}
+        run: |
+          echo "Récap global run_id=${RUN_ID}"
+          npx ts-node --project tsconfig.scripts.json scripts/veille/recap-global.ts
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # STRATÉGIE "legacy" — appel HTTP vers Vercel (ancienne méthode)
+  # Conservée pour rollback rapide. Limitée par Vercel Hobby (10s timeout).
+  # ══════════════════════════════════════════════════════════════════════════
+
+  legacy-pipeline:
+    name: '· Pipeline legacy [Vercel]'
+    needs: setup
+    if: needs.setup.outputs.strategy == 'legacy'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Vercel pipeline
+        run: |
+          HOUR=$(date -u +%-H)
+          DAILY_SUMMARY="${{ github.event.inputs.daily_summary }}"
+          if [ -z "$DAILY_SUMMARY" ]; then
+            DAILY_SUMMARY="false"
           fi
 
           echo "daily_summary=${DAILY_SUMMARY}"
@@ -49,4 +205,4 @@ jobs:
             exit 1
           fi
 
-          echo "Pipeline veille démarré avec succès (daily_summary=${DAILY_SUMMARY})"
+          echo "Pipeline legacy démarré (daily_summary=${DAILY_SUMMARY})"
