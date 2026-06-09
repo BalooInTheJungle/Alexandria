@@ -23,12 +23,13 @@ type TabId = "veille" | "historique" | "sources";
 
 type SummaryTheme   = { title: string; description: string }
 type SummaryArticle = { item_id: string; contribution: string; relevance: string; corpus_link: string }
-type StructuredSummary = { themes: SummaryTheme[]; articles: SummaryArticle[] }
+type StructuredSummary = { themes: SummaryTheme[]; articles: SummaryArticle[]; synthesis?: string }
 
 function parseSummary(raw: string): StructuredSummary | null {
   try {
     const p = JSON.parse(raw)
-    if (p && Array.isArray(p.themes) && Array.isArray(p.articles)) return p as StructuredSummary
+    if (p && Array.isArray(p.themes) && (Array.isArray(p.articles) || typeof p.synthesis === 'string'))
+      return { themes: p.themes ?? [], articles: p.articles ?? [], synthesis: p.synthesis } as StructuredSummary
     return null
   } catch { return null }
 }
