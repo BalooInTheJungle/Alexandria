@@ -86,6 +86,9 @@ Les scripts importent directement les modules `lib/veille/` et `lib/db/` — pas
 | `scripts/veille/score.ts`                        | Créer    | ✅ Fait  |
 | `scripts/veille/recap-articles.ts`               | Créer    | ✅ Fait  |
 | `scripts/veille/recap-global.ts`                 | Créer    | ✅ Fait  |
+| `lib/veille/summarize.ts`                        | Modifier | ✅ Fait — `synthesis?` ajouté à `StructuredSummary` |
+| `app/(dashboard)/bibliographie/page.tsx`         | Modifier | ✅ Fait — nouvelles phases + progress bar |
+| `app/(dashboard)/bibliographie/historique/[runId]/page.tsx` | Modifier | ✅ Fait — phases, parseSummary, synthesis display |
 | `lib/veille/pipeline.ts`                         | Garder   | ⚠️ Conservé pour déclenchement manuel UI |
 | `app/api/cron/veille/route.ts`                   | Garder   | ⚠️ Conservé pour déclenchement manuel UI |
 

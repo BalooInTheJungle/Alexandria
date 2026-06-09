@@ -91,8 +91,9 @@ export type SummaryArticle = {
 }
 
 export type StructuredSummary = {
-  themes:   SummaryTheme[]
-  articles: SummaryArticle[]
+  themes:    SummaryTheme[]
+  articles:  SummaryArticle[]
+  synthesis?: string  // synthèse globale du run (recap-global.ts)
 }
 
 export function parseSummary(raw: string): StructuredSummary | null {

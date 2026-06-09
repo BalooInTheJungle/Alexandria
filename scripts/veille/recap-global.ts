@@ -225,8 +225,31 @@ async function runRecapGlobal() {
     const summary = await callGpt(prompt)
     log('gpt', `GPT terminé en ${Math.round((Date.now() - gptStart) / 1000)}s — ${summary.length} chars`)
 
-    // ── Sauvegarde ───────────────────────────────────────────────────────────
-    await saveRunSummary(runId, summary, items.length)
+    // ── Combine GPT output + ai_analysis existants → format compat front ─────
+    // Le front attend { themes, articles, synthesis? }
+    // On fusionne la réponse GPT ({ themes, synthesis }) avec les ai_analysis
+    // déjà sauvegardés par recap-articles pour produire un ai_summary complet.
+    let finalSummary = summary
+    try {
+      const gptParsed = JSON.parse(summary)
+      const articlesFromDb = items
+        .filter(i => i.ai_analysis)
+        .map(i => ({
+          item_id:      i.id,
+          contribution: i.ai_analysis!.contribution,
+          relevance:    i.ai_analysis!.relevance,
+          corpus_link:  i.ai_analysis!.corpus_link,
+        }))
+      finalSummary = JSON.stringify({
+        themes:    gptParsed.themes    ?? [],
+        articles:  articlesFromDb,
+        synthesis: gptParsed.synthesis ?? '',
+      })
+    } catch {
+      log('parse', 'Impossible de fusionner GPT + ai_analysis — ai_summary brut conservé', 'warn')
+    }
+
+    await saveRunSummary(runId, finalSummary, items.length)
     log('save', `ai_summary sauvegardé — ${items.length} articles, seuil=${SCORE_THRESHOLD}`)
 
     // ── Marquer le run comme terminé ─────────────────────────────────────────
