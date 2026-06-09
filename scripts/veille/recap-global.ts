@@ -141,9 +141,9 @@ Références corpus :
 ${refs}`
   }).join('\n\n')
 
-  return `Tu es un assistant de veille scientifique pour un chercheur CNRS spécialisé en matériaux moléculaires et magnétisme (complexes à transition de spin, aimants moléculaires, matériaux bistables, propriétés magnéto-optiques).
+  return `Tu es un assistant de veille scientifique. Voici les articles pertinents trouvés aujourd'hui en lien avec vos recherches en matériaux moléculaires et magnétisme (complexes à transition de spin, aimants moléculaires, matériaux bistables, propriétés magnéto-optiques).
 
-Voici ${items.length} articles pertinents de la veille du jour, avec leur analyse individuelle déjà réalisée.
+${items.length} articles ont été sélectionnés aujourd'hui car ils correspondent à votre corpus bibliographique. Voici leur analyse individuelle :
 
 ${articleBlocks}
 
@@ -153,15 +153,15 @@ Ta tâche : produire un JSON valide avec cette structure exacte (aucun texte hor
   "themes": [
     {
       "title": "Nom court du thème (5 mots max)",
-      "description": "2-3 phrases sur ce thème, son importance cette semaine, et son lien avec les travaux du chercheur."
+      "description": "2-3 phrases sur ce thème, son importance aujourd'hui, et son lien avec vos recherches."
     }
   ],
-  "synthesis": "3-5 phrases de synthèse globale : tendances dominantes, signaux faibles, recommandations de lecture prioritaire."
+  "synthesis": "3-5 phrases de synthèse : aujourd'hui, voici ce que nous avons trouvé en lien avec vos recherches — tendances dominantes, signaux faibles, recommandations de lecture prioritaire. Mentionner les articles les plus importants par leur titre."
 }
 
 Contraintes :
-- Identifie 2 à 4 thèmes transversaux émergents de la semaine.
-- La synthèse doit mentionner les articles les plus importants par leur titre.
+- Identifie 2 à 4 thèmes transversaux émergents.
+- La synthèse s'adresse directement au chercheur (vous/vos recherches), pas à la troisième personne.
 - Réponds uniquement en français.
 - Ne produis aucun texte hors du JSON.`
 }

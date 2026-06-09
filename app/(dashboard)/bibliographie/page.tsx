@@ -566,9 +566,13 @@ function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle
           <button
             onClick={handleReadToggle}
             disabled={toggling}
-            className="text-xs text-muted-foreground hover:text-foreground underline transition-colors disabled:opacity-40"
+            className={`text-xs px-3 py-1 rounded-full border transition-colors disabled:opacity-40 ${
+              isRead
+                ? "border-muted-foreground/30 text-muted-foreground hover:border-foreground hover:text-foreground"
+                : "border-primary/30 text-primary hover:bg-primary/5"
+            }`}
           >
-            {isRead ? "Marquer non lu" : "Marquer comme lu"}
+            {isRead ? "✓ Lu" : "Marquer comme lu"}
           </button>
         </div>
       </div>
