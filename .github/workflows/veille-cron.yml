@@ -2,51 +2,128 @@ name: Veille quotidienne
 
 on:
   schedule:
-    # 13h Paris (UTC+2 en été) — 1er run d'extraction
-    - cron: '0 11 * * *'
-    # 14h Paris (UTC+2 en été) — 2ème run d'extraction
-    - cron: '0 12 * * *'
-    # 15h Paris (UTC+2 en été) — 3ème run d'extraction
-    - cron: '0 13 * * *'
-    # 16h Paris (UTC+2 en été) — résumé IA consolidé (après les 3 runs d'extraction)
-    - cron: '0 14 * * *'
+    # 10h UTC (12h Paris été / 11h Paris hiver) — après les publications asiatiques et européennes du matin
+    - cron: '0 10 * * *'
   workflow_dispatch:
     inputs:
-      daily_summary:
-        description: 'Générer le résumé IA consolidé du jour'
+      run_id:
+        description: 'Reprendre un run existant (laisser vide pour nouveau run)'
         required: false
-        default: 'false'
+        default: ''
+      skip_to:
+        description: 'Sauter directement à une phase (extract|score|recap-articles|recap-global)'
+        required: false
+        default: 'extract'
         type: choice
-        options: ['false', 'true']
+        options: ['extract', 'score', 'recap-articles', 'recap-global']
 
 jobs:
-  run-veille:
+  # ── Job 1 : Extraction + filtre garde-fou ─────────────────────────────────
+  extract:
+    name: '1 · Extract'
     runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.extract.outputs.run_id }}
+
     steps:
-      - name: Déclencher le pipeline veille
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run extraction
+        id: extract
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          EXISTING_RUN_ID: ${{ github.event.inputs.run_id }}
+          SKIP_TO: ${{ github.event.inputs.skip_to }}
         run: |
-          # 4ème run (14h UTC = 16h Paris) → résumé IA consolidé sur tous les articles du jour
-          HOUR=$(date -u +%-H)
-          DAILY_SUMMARY="false"
-          if [ "$HOUR" = "14" ]; then
-            DAILY_SUMMARY="true"
-          fi
-          # workflow_dispatch override
-          if [ "${{ github.event.inputs.daily_summary }}" = "true" ]; then
-            DAILY_SUMMARY="true"
-          fi
+          RUN_ID=$(npx ts-node --project tsconfig.scripts.json scripts/veille/extract.ts)
+          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "Extraction terminée — run_id=${RUN_ID}"
 
-          echo "daily_summary=${DAILY_SUMMARY}"
+  # ── Job 2 : Scoring sémantique ────────────────────────────────────────────
+  score:
+    name: '2 · Score'
+    needs: extract
+    runs-on: ubuntu-latest
 
-          response=$(curl -s -L -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "${{ secrets.VERCEL_APP_URL }}/api/cron/veille?daily_summary=${DAILY_SUMMARY}")
+    steps:
+      - uses: actions/checkout@v4
 
-          echo "HTTP status: $response"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-          if [ "$response" != "200" ]; then
-            echo "Erreur : le pipeline veille a retourné HTTP $response"
-            exit 1
-          fi
+      - name: Install dependencies
+        run: npm ci
 
-          echo "Pipeline veille démarré avec succès (daily_summary=${DAILY_SUMMARY})"
+      - name: Run scoring
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUN_ID: ${{ needs.extract.outputs.run_id }}
+        run: |
+          echo "Scoring run_id=${RUN_ID}"
+          npx ts-node --project tsconfig.scripts.json scripts/veille/score.ts
+
+  # ── Job 3 : Récap IA par article ──────────────────────────────────────────
+  recap-articles:
+    name: '3 · Récap articles'
+    needs: [extract, score]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run article recaps
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RUN_ID: ${{ needs.extract.outputs.run_id }}
+        run: |
+          echo "Récap articles run_id=${RUN_ID}"
+          npx ts-node --project tsconfig.scripts.json scripts/veille/recap-articles.ts
+
+  # ── Job 4 : Récap IA global ───────────────────────────────────────────────
+  recap-global:
+    name: '4 · Récap global'
+    needs: [extract, recap-articles]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run global recap
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RUN_ID: ${{ needs.extract.outputs.run_id }}
+        run: |
+          echo "Récap global run_id=${RUN_ID}"
+          npx ts-node --project tsconfig.scripts.json scripts/veille/recap-global.ts
