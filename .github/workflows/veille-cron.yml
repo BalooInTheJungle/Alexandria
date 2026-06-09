@@ -85,9 +85,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EXISTING_RUN_ID: ${{ github.event.inputs.run_id }}
         run: |
-          RUN_ID=$(npx ts-node --project tsconfig.scripts.json scripts/veille/extract.ts)
-          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-          echo "Extraction terminée — run_id=${RUN_ID}"
+          # Le script écrit directement run_id dans $GITHUB_OUTPUT
+          npx tsx scripts/veille/extract.ts
 
   # ── Job 2 : Scoring sémantique ────────────────────────────────────────────
   score:
@@ -114,7 +113,7 @@ jobs:
           RUN_ID: ${{ needs.extract.outputs.run_id }}
         run: |
           echo "Scoring run_id=${RUN_ID}"
-          npx ts-node --project tsconfig.scripts.json scripts/veille/score.ts
+          npx tsx scripts/veille/score.ts
 
   # ── Job 3 : Récap IA par article ──────────────────────────────────────────
   recap-articles:
@@ -142,7 +141,7 @@ jobs:
           RUN_ID: ${{ needs.extract.outputs.run_id }}
         run: |
           echo "Récap articles run_id=${RUN_ID}"
-          npx ts-node --project tsconfig.scripts.json scripts/veille/recap-articles.ts
+          npx tsx scripts/veille/recap-articles.ts
 
   # ── Job 4 : Récap IA global ───────────────────────────────────────────────
   recap-global:
@@ -170,7 +169,7 @@ jobs:
           RUN_ID: ${{ needs.extract.outputs.run_id }}
         run: |
           echo "Récap global run_id=${RUN_ID}"
-          npx ts-node --project tsconfig.scripts.json scripts/veille/recap-global.ts
+          npx tsx scripts/veille/recap-global.ts
 
   # ══════════════════════════════════════════════════════════════════════════
   # STRATÉGIE "legacy" — appel HTTP vers Vercel (ancienne méthode)

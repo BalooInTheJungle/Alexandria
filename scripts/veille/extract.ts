@@ -134,12 +134,23 @@ async function insertItems(
   const inserted: { id: string; abstract: string | null }[] = []
   for (let i = 0; i < items.length; i += 50) {
     const batch = items.slice(i, i + 50)
+    // Insert simple sans ON CONFLICT — l'index doi est partiel (WHERE doi IS NOT NULL)
+    // ce qui rend onConflict: 'doi' incompatible avec Supabase upsert.
+    // La dédup est déjà faite en amont via knownDois — les doublons résiduels sont ignorés.
     const { data, error } = await sb
       .from('veille_items')
-      .upsert(batch, { onConflict: 'doi', ignoreDuplicates: true })
+      .insert(batch)
       .select('id, abstract')
-    if (error) log('insert', `Erreur batch ${i}: ${error.message}`, 'error')
-    else inserted.push(...(data ?? []))
+    if (error) {
+      // Erreur de violation unique (doublon résiduel) → on continue sans bloquer
+      if (error.code === '23505') {
+        log('insert', `Batch ${Math.floor(i / 50) + 1} — doublon DOI ignoré`, 'warn')
+      } else {
+        log('insert', `Erreur batch ${i}: ${error.message}`, 'error')
+      }
+    } else {
+      inserted.push(...(data ?? []))
+    }
     log('insert', `Batch ${Math.floor(i / 50) + 1} — ${(data ?? []).length} insérés`)
   }
   return inserted
@@ -347,8 +358,16 @@ async function runExtraction(): Promise<string> {
 
 runExtraction()
   .then(runId => {
-    // STDOUT = run_id uniquement (capturé par GitHub Actions)
-    process.stdout.write(runId + '\n')
+    // Écrire le run_id dans $GITHUB_OUTPUT si disponible (GitHub Actions)
+    // sinon sur stdout pour usage local
+    const githubOutput = process.env.GITHUB_OUTPUT
+    if (githubOutput) {
+      const fs = require('fs')
+      fs.appendFileSync(githubOutput, `run_id=${runId}\n`)
+      process.stderr.write(`[extract] run_id écrit dans GITHUB_OUTPUT: ${runId}\n`)
+    } else {
+      process.stdout.write(runId + '\n')
+    }
     process.exit(0)
   })
   .catch(err => {
