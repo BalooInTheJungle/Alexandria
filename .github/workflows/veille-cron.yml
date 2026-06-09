@@ -2,8 +2,8 @@ name: Veille quotidienne
 
 on:
   schedule:
-    # 10h UTC (12h Paris été / 11h Paris hiver) — après les publications asiatiques et européennes du matin
-    - cron: '0 10 * * *'
+    # 12h UTC (14h Paris été / 13h Paris hiver) — après les publications asiatiques et européennes du matin
+    - cron: '0 12 * * *'
   workflow_dispatch:
     inputs:
       strategy:
