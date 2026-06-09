@@ -48,6 +48,8 @@ type VeilleRun = {
   ai_summary?: string | null;
   high_score_count?: number | null;
   score_threshold?: number | null;
+  ai_analysis_count?: number;
+  pertinent_count?: number;
 };
 
 type CorpusRef = {
@@ -989,59 +991,60 @@ export default function BibliographiePage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Journée</TableHead>
-                      <TableHead>Runs</TableHead>
+                      <TableHead>Date · Heure</TableHead>
+                      <TableHead>Statut</TableHead>
                       <TableHead className="text-right">Extraits</TableHead>
                       <TableHead className="text-right">Pertinents ≥75%</TableHead>
-                      <TableHead className="text-right">Résumé IA</TableHead>
+                      <TableHead className="text-right">Analyses IA</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {(() => {
-                      // Group runs by UTC date
-                      const groups = new Map<string, typeof runs>();
-                      for (const r of runs) {
-                        const d = (r.started_at ?? r.created_at ?? "").slice(0, 10);
-                        if (!groups.has(d)) groups.set(d, []);
-                        groups.get(d)!.push(r);
-                      }
-                      return Array.from(groups.entries()).map(([date, dayRuns]) => {
-                        const totalItems   = dayRuns.reduce((s, r) => s + (r.items_count ?? 0), 0);
-                        const totalHigh    = dayRuns.reduce((s, r) => s + (r.high_score_count ?? 0), 0);
-                        const hasAi        = dayRuns.some(r => r.ai_summary);
-                        const aiCount      = (() => { try { const r = dayRuns.find(r => r.ai_summary); return r ? JSON.parse(r.ai_summary!).articles?.length ?? 0 : 0; } catch { return 0; } })();
-                        const allCompleted = dayRuns.every(r => r.status === "completed");
-                        const hasFailed    = dayRuns.some(r => r.status === "failed");
-                        const hasRunning   = dayRuns.some(r => r.status === "running");
-                        const statusLabel  = hasRunning ? "running" : hasFailed ? "partial" : allCompleted ? "completed" : "partial";
-                        const statusStyle  = statusLabel === "completed" ? "bg-green-100 text-green-700" : statusLabel === "running" ? "bg-yellow-100 text-yellow-700" : "bg-orange-100 text-orange-700";
-                        const label = new Date(date + "T12:00:00Z").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-                        return (
-                          <TableRow
-                            key={date}
-                            className="cursor-pointer hover:bg-muted/50 transition-colors"
-                            onClick={() => window.location.href = `/bibliographie/historique/day/${date}`}
-                          >
-                            <TableCell className="text-sm font-medium capitalize">{label}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1.5">
-                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusStyle}`}>{statusLabel}</span>
-                                <span className="text-xs text-muted-foreground">{dayRuns.length} run{dayRuns.length > 1 ? "s" : ""}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">{totalItems > 0 ? totalItems : "—"}</TableCell>
-                            <TableCell className="text-right tabular-nums font-medium text-green-700">
-                              {totalHigh > 0 ? totalHigh : "—"}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {hasAi && aiCount > 0
-                                ? <span className="text-xs font-semibold text-violet-600">{aiCount} ✦</span>
-                                : <span className="text-xs text-muted-foreground">—</span>}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      });
-                    })()}
+                    {runs.map((run) => {
+                      const dt = run.started_at ?? run.created_at ?? "";
+                      const dateLabel = dt
+                        ? new Date(dt).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+                        : "—";
+                      const timeLabel = dt
+                        ? new Date(dt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })
+                        : "";
+                      const statusStyle =
+                        run.status === "completed" ? "bg-green-100 text-green-700" :
+                        run.status === "running"   ? "bg-blue-100 text-blue-700 animate-pulse" :
+                        run.status === "failed"    ? "bg-red-100 text-red-700" :
+                        "bg-gray-100 text-gray-600";
+                      const statusLabel =
+                        run.status === "completed" ? "Terminé" :
+                        run.status === "running"   ? "En cours" :
+                        run.status === "failed"    ? "Échec" : run.status;
+                      return (
+                        <TableRow
+                          key={run.id}
+                          className="cursor-pointer hover:bg-muted/50 transition-colors"
+                          onClick={() => window.location.href = `/bibliographie/historique/${run.id}`}
+                        >
+                          <TableCell>
+                            <div className="text-sm font-medium capitalize">{dateLabel}</div>
+                            {timeLabel && <div className="text-xs text-muted-foreground">{timeLabel}</div>}
+                          </TableCell>
+                          <TableCell>
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${statusStyle}`}>
+                              {statusLabel}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {(run.items_count ?? 0) > 0 ? run.items_count : "—"}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm font-medium text-green-700">
+                            {(run.pertinent_count ?? 0) > 0 ? run.pertinent_count : "—"}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {(run.ai_analysis_count ?? 0) > 0
+                              ? <span className="text-xs font-semibold text-violet-600">{run.ai_analysis_count} ✦</span>
+                              : <span className="text-xs text-muted-foreground">—</span>}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

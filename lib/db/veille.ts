@@ -17,7 +17,7 @@ function getAdminSupabase() {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type VeilleRunRow = VeilleRun
-export type VeilleRunWithCount = VeilleRunRow & { items_count: number }
+export type VeilleRunWithCount = VeilleRunRow & { items_count: number; ai_analysis_count: number; pertinent_count: number }
 export type VeilleItemWithMeta = VeilleItem & {
   source_name: string | null
   document_id: string | null
@@ -54,6 +54,7 @@ export async function listVeilleRuns(limit = 50): Promise<VeilleRunRow[]> {
 export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWithCount[]> {
   const supabase = await createClient()
   const lim = Math.max(1, Math.min(100, limit))
+
   const { data, error } = await supabase
     .from('veille_runs')
     .select('id, status, started_at, completed_at, error_message, created_at, ai_summary, high_score_count, score_threshold, veille_items(count)')
@@ -61,10 +62,31 @@ export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWit
     .limit(lim)
   if (error) { LOG('listVeilleRunsWithCounts error', error.message); throw error }
   const rows = (data ?? []) as any[]
+
+  // Fetch ai_analysis_count and pertinent_count in a single batch query
+  const runIds = rows.map((r: any) => r.id as string)
+  const admin = getAdminSupabase()
+
+  const [aiRes, pertinentRes] = await Promise.all([
+    admin.from('veille_items').select('run_id').in('run_id', runIds).not('ai_analysis', 'is', null),
+    admin.from('veille_items').select('run_id').in('run_id', runIds).gte('similarity_score', 0.75),
+  ])
+
+  const aiCountByRun = new Map<string, number>()
+  for (const row of (aiRes.data ?? [])) {
+    aiCountByRun.set(row.run_id, (aiCountByRun.get(row.run_id) ?? 0) + 1)
+  }
+  const pertinentCountByRun = new Map<string, number>()
+  for (const row of (pertinentRes.data ?? [])) {
+    pertinentCountByRun.set(row.run_id, (pertinentCountByRun.get(row.run_id) ?? 0) + 1)
+  }
+
   LOG('listVeilleRunsWithCounts', { count: rows.length })
-  return rows.map((r) => ({
+  return rows.map((r: any) => ({
     ...r,
-    items_count: r.veille_items?.[0]?.count ?? 0,
+    items_count:       r.veille_items?.[0]?.count ?? 0,
+    ai_analysis_count: aiCountByRun.get(r.id) ?? 0,
+    pertinent_count:   pertinentCountByRun.get(r.id) ?? 0,
   }))
 }
 
