@@ -85,9 +85,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EXISTING_RUN_ID: ${{ github.event.inputs.run_id }}
         run: |
-          RUN_ID=$(npx tsx scripts/veille/extract.ts)
-          echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
-          echo "Extraction terminée — run_id=${RUN_ID}"
+          # Le script écrit directement run_id dans $GITHUB_OUTPUT
+          npx tsx scripts/veille/extract.ts
 
   # ── Job 2 : Scoring sémantique ────────────────────────────────────────────
   score:
