@@ -82,7 +82,7 @@ Les scripts importent directement les modules `lib/veille/` et `lib/db/` — pas
 | `docs/VEILLE_PIPELINE_REFACTOR.md`               | Créer    | ✅ Fait  |
 | `tsconfig.scripts.json`                          | Créer    | ✅ Fait  |
 | `.github/workflows/veille-cron.yml`              | Modifier | ✅ Fait  |
-| `scripts/veille/extract.ts`                      | Créer    | ⬜ À faire |
+| `scripts/veille/extract.ts`                      | Créer    | ✅ Fait  |
 | `scripts/veille/score.ts`                        | Créer    | ⬜ À faire |
 | `scripts/veille/recap-articles.ts`               | Créer    | ⬜ À faire |
 | `scripts/veille/recap-global.ts`                 | Créer    | ⬜ À faire |
