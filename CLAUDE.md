@@ -50,6 +50,10 @@ cd scripts && python3 ingest.py
 # Ingestion articles auteur (data/Articles auteur/)
 cd scripts && python3 ingest.py --author
 
+# Après ingestion --author : recalculer les représentants Semantic Scholar (prend ~90s)
+export $(grep -v '^#' .env.local | xargs)
+npx tsx scripts/compute-ss-representatives.ts
+
 # Correction titres espacés articles auteur (après ingestion --author)
 cd scripts && python3 fix_author_titles.py --apply
 
@@ -256,12 +260,24 @@ Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentie
 | Analyse IA | **≥ 80%** | Articles envoyés à GPT pour ai_analysis |
 | Stats "pertinents" | ≥ 75% | KPI global de la page |
 
+#### Job 1b — `scripts/veille/extract-semanticscholar.ts` (optionnel)
+Activé si variable repo GitHub `ENABLE_SEMANTIC_SCHOLAR=true`. Tourne en parallèle du Job 1.
+1. Charge les `ss_paper_id` depuis `ss_representative_papers` (pré-calculés par `compute-ss-representatives.ts`)
+2. Appelle `POST /recommendations/v1/papers/` → top 100 papers récents (60j) similaires aux articles auteur
+3. Filtre abstract < 50 chars + dédup DOI vs items existants
+4. Insert dans `veille_items` avec `source_type='semantic_scholar'`
+5. Fusionne ses logs dans `pipeline_logs` du run (préfixe `ss/`)
+
+**Pré-requis** : `compute-ss-representatives.ts` doit avoir été lancé au moins une fois après `ingest.py --author`.
+Clé API SS optionnelle (`SS_API_KEY`) — sans clé : limite 1 req/s (rate limit fréquent).
+
 #### Stratégie active / rollback
 Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
-- `actions` (défaut) — les 4 jobs Node.js décrits ci-dessus
+- `actions` (défaut) — les 4 jobs Node.js décrits ci-dessus + Job 1b optionnel
 - `legacy` — appel HTTP vers `/api/cron/veille` sur Vercel (obsolète, Hobby 10s timeout)
 
 > **Secrets GitHub requis** : `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`
+> **Variables repo GitHub** : `ENABLE_SEMANTIC_SCHOLAR=true` (optionnel)
 > **Durée typique** : ~6-8 min (extract 1min + score 3min + recap-articles 1.5min + recap-global 30s)
 
 ### Base de données — points critiques
@@ -311,6 +327,10 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 | Cron rétention 30 jours | ✅ Fonctionnel |
 | Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
 | Articles auteur indexés (521 docs, is_author_article) | ✅ Fonctionnel |
+| Source Semantic Scholar (Job 1b optionnel) | ✅ Prêt — activer via `ENABLE_SEMANTIC_SCHOLAR=true` |
+| Badge source RSS / Semantic Scholar sur les cards | ✅ Fonctionnel |
+| Page publique `/` (landing FR/EN) | ✅ Fonctionnel — accessible sans connexion |
+| Module Lecture assistée | ⏳ À construire (voir docs/ROADMAP.md V2) |
 | Upload PDF + ingestion | ⚠️ À vérifier |
 | UMAP sur nouveau corpus | ⏳ À relancer (compute_umap.py) |
 

@@ -87,14 +87,63 @@ Mettre à jour ce fichier à chaque jalon atteint.
 
 ---
 
-## V2 — Veille augmentée
+## V1.8 — Semantic Scholar + Landing page ✅ (terminé — Juin 2026)
+
+**Objectif** : étendre la couverture de la veille au-delà des 44 sources RSS + créer une page publique.
+
+| Étape | État | Détail |
+|-------|------|--------|
+| Source Semantic Scholar (recommandations) | ✅ | `extract-semanticscholar.ts` — POST /recommendations/v1/papers/ |
+| Centroïde auteur → articles représentatifs | ✅ | RPC `get_author_representative_titles()` sur 85k chunks auteur |
+| Cache ss_representative_papers | ✅ | Table dédiée + `compute-ss-representatives.ts` à relancer après ingest --author |
+| Flag `ENABLE_SEMANTIC_SCHOLAR` | ✅ | Variable repo GitHub — pipeline inchangé si absent |
+| Badge source sur VeilleArticleCard | ✅ | 🔭 Semantic Scholar (bleu) / RSS (gris) |
+| Page publique `/` (landing) | ✅ | FR/EN toggle, hero, 3 modules, stats sondage, comment ça marche |
+| Middleware : `/` non protégée | ✅ | Accessible sans connexion |
+
+**À faire :**
+- Obtenir clé API SS (formulaire soumis) → ajouter `SS_API_KEY` dans secrets GitHub + script
+- Relancer `compute-ss-representatives.ts` avec clé SS pour peupler la table correctement
+
+---
+
+## V2 — Module Lecture assistée ⏳ (à construire)
+
+**Objectif** : aider le chercheur à lire et comprendre les articles pertinents identifiés par la veille.
+Motivé par sondage 39 chercheurs : 46% citent la lecture/synthèse comme activité la plus chronophage, 95% ratent des publications faute de temps.
+
+**Niveau 1 — Abstract (toujours disponible)**
+
+| Fonctionnalité | Priorité | Détail |
+|---------------|----------|--------|
+| Résumé structuré abstract (Problème / Méthode / Résultats / Apport) | P1 | GPT-4o-mini sur abstract |
+| Articles corpus les plus proches | P1 | `match_chunks` avec embedding abstract (Xenova, réutilisé tel quel) |
+| Autres publications du même auteur | P1 | OpenAlex API (déjà intégré dans le projet) |
+| Label thématique / cluster | P2 | GPT sur les chunks similaires trouvés |
+
+**Niveau 2 — PDF uploadé**
+
+| Fonctionnalité | Priorité | Détail |
+|---------------|----------|--------|
+| Upload PDF → chunking → embedding | P1 | Pipeline `/api/documents/upload` réutilisé, flag `is_reading_session` |
+| Résumé complet par section (Intro / Méthodes / Résultats / Discussion) | P1 | GPT sur chunks nettoyés par section |
+| Détection références citées dans le corpus | P2 | Regex section References → recoupement DOIs corpus |
+| Passages PDF les plus proches du corpus | P1 | `match_chunks` entre chunks nouveau PDF et corpus |
+
+**Décisions techniques à valider en session :**
+- Réutiliser `chunks` avec flag `is_reading_session=true` ou table dédiée `reading_chunks`
+- Traitement long sur Vercel : streaming SSE ou job Supabase background
+- Nettoyage bruit PDF avant LLM : s'appuyer sur chunking par section existant (ingest.py)
+
+---
+
+## V3 — Veille augmentée
 
 **Objectif** : aller plus loin dans la personnalisation et l'exploitation de la veille.
 
 | Fonctionnalité | Priorité | Détail |
 |---------------|----------|--------|
 | Filtres dans la liste veille | P1 | Par auteur, journal, date, score minimum |
-| Marquer "à lire" / "lu" / "ignoré" | P1 | État par article, persisté en base |
 | Ajouter un article veille au corpus RAG | P1 | Depuis la liste veille → upload → ingestion automatique |
 | Notifications veille | P2 | Email ou push quand un run produit des articles > seuil |
 | Gestion des sources depuis l'UI | P2 | Ajouter / désactiver une source sans SQL |
