@@ -24,12 +24,9 @@ import type { RunLogEntry, RunLogLevel } from '../../lib/db/types'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const SS_SEARCH_URL    = 'https://api.semanticscholar.org/graph/v1/paper/search'
-const SS_RECS_URL      = 'https://api.semanticscholar.org/recommendations/v1/papers/'
-const SS_FIELDS        = 'paperId,title,authors,year,publicationDate,externalIds,abstract,url,venue'
-const MAX_RECS         = parseInt(process.env.SS_MAX_RECOMMENDATIONS ?? '100', 10)
-const TOP_TITLES       = parseInt(process.env.SS_REPRESENTATIVE_TITLES ?? '15', 10)
-const SS_DELAY_MS      = 500 // délai entre appels API pour éviter rate limit
+const SS_RECS_URL = 'https://api.semanticscholar.org/recommendations/v1/papers/'
+const SS_FIELDS   = 'paperId,title,authors,year,publicationDate,externalIds,abstract,url,venue'
+const MAX_RECS    = parseInt(process.env.SS_MAX_RECOMMENDATIONS ?? '100', 10)
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 
@@ -63,57 +60,27 @@ async function appendLogs(runId: string) {
   await sb.from('veille_runs').update({ pipeline_logs: [...existing, ...collectedLogs] }).eq('id', runId)
 }
 
-function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
+// ── Étape 1 : paperIds pré-calculés depuis ss_representative_papers ──────────
 
-// ── Étape 1 : titres représentatifs via centroïde ────────────────────────────
-
-async function loadRepresentativeTitles(): Promise<string[]> {
+async function loadPaperIds(): Promise<string[]> {
   const sb = getSupabase()
-  log('centroid', `Calcul du centroïde des chunks auteur, top ${TOP_TITLES} titres…`)
-
   const { data, error } = await sb
-    .rpc('get_author_representative_titles', { top_n: TOP_TITLES })
+    .from('ss_representative_papers')
+    .select('ss_paper_id, title')
+    .not('ss_paper_id', 'is', null)
+    .order('distance', { ascending: true })
 
-  if (error) throw new Error(`get_author_representative_titles: ${error.message}`)
+  if (error) throw new Error(`ss_representative_papers: ${error.message}`)
 
-  const titles = (data as { title: string; distance: number }[])
-    .map(r => r.title)
-    .filter(t => t && t.length > 20)
-
-  log('centroid', `${titles.length} titres représentatifs trouvés`)
-  titles.forEach((t, i) => log('centroid', `  #${i + 1} ${t.slice(0, 80)}`))
-  return titles
-}
-
-// ── Étape 2 : résolution titre → paperId SS ──────────────────────────────────
-
-async function resolvePaperId(title: string): Promise<string | null> {
-  const url = `${SS_SEARCH_URL}?query=${encodeURIComponent(title)}&limit=1&fields=paperId,title`
-  const res  = await fetch(url)
-  if (!res.ok) {
-    log('resolve', `SS search échoué pour "${title.slice(0, 50)}": HTTP ${res.status}`, 'warn')
-    return null
+  const rows = (data ?? []) as { ss_paper_id: string; title: string }[]
+  if (rows.length === 0) {
+    log('papers', 'Table ss_representative_papers vide — lancer compute-ss-representatives.ts', 'warn')
+    return []
   }
-  const json = await res.json()
-  const paper = json.data?.[0]
-  if (!paper) {
-    log('resolve', `Aucun résultat SS pour "${title.slice(0, 50)}"`, 'warn')
-    return null
-  }
-  return paper.paperId as string
-}
 
-async function resolvePaperIds(titles: string[]): Promise<string[]> {
-  const ids: string[] = []
-  for (const title of titles) {
-    const id = await resolvePaperId(title)
-    if (id) {
-      ids.push(id)
-      log('resolve', `✓ "${title.slice(0, 60)}" → ${id}`)
-    }
-    await sleep(SS_DELAY_MS)
-  }
-  log('resolve', `${ids.length}/${titles.length} paperIds résolus`)
+  const ids = rows.map(r => r.ss_paper_id)
+  log('papers', `${ids.length} paperIds chargés depuis ss_representative_papers`)
+  rows.forEach((r, i) => log('papers', `  #${i + 1} ${r.title.slice(0, 70)} → ${r.ss_paper_id}`))
   return ids
 }
 
@@ -216,23 +183,15 @@ async function main() {
 
   process.stderr.write(`\n🔭 [extract-ss] Démarrage — run_id=${runId}\n\n`)
 
-  // Étape 1 : centroïde → titres représentatifs
-  const titles = await loadRepresentativeTitles()
-  if (titles.length === 0) {
-    log('main', 'Aucun titre représentatif — arrêt (chunks auteur manquants ?)', 'warn')
-    await appendLogs(runId)
-    return
-  }
-
-  // Étape 2 : titres → paperIds SS
-  const paperIds = await resolvePaperIds(titles)
+  // Étape 1 : paperIds pré-calculés
+  const paperIds = await loadPaperIds()
   if (paperIds.length === 0) {
-    log('main', 'Aucun paperId résolu sur SS — arrêt', 'warn')
+    log('main', 'Aucun paperId disponible — arrêt. Lancer : npx tsx scripts/compute-ss-representatives.ts', 'warn')
     await appendLogs(runId)
     return
   }
 
-  // Étape 3 : recommendations SS
+  // Étape 2 : recommendations SS
   const papers = await fetchRecommendations(paperIds)
 
   // Étape 4 : dédup + insertion
