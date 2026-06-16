@@ -28,12 +28,11 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
   const isProtected =
     path.startsWith("/rag") ||
-    path.startsWith("/bibliographie") ||
-    path === "/";
+    path.startsWith("/bibliographie");
 
   if (isProtected && !user) {
     const loginUrl = new URL("/login", request.url);
-    if (path !== "/") loginUrl.searchParams.set("next", path);
+    loginUrl.searchParams.set("next", path);
     return NextResponse.redirect(loginUrl);
   }
 
