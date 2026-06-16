@@ -2,8 +2,12 @@
 /**
  * scripts/veille/extract-semanticscholar.ts — Job 1b : Semantic Scholar Recommendations
  *
- * Charge les DOIs des articles auteur depuis Supabase, appelle l'API Semantic Scholar
- * recommendations, filtre les articles avec abstract, insère dans veille_items.
+ * Stratégie :
+ *   1. Calcule le centroïde des embeddings des chunks auteur (RPC Supabase)
+ *   2. Trouve les N articles auteur les plus proches de ce centroïde
+ *   3. Recherche leurs paperIds sur l'API SS (par titre)
+ *   4. Appelle SS recommendations → articles récents similaires
+ *   5. Insère dans veille_items (dédup DOI)
  *
  * Usage : npx tsx scripts/veille/extract-semanticscholar.ts
  * Env vars :
@@ -11,6 +15,7 @@
  *   SUPABASE_SERVICE_ROLE_KEY    — clé service role
  *   RUN_ID                       — run_id créé par extract.ts (Job 1)
  *   SS_MAX_RECOMMENDATIONS       — (optionnel) nombre max de recommandations (défaut: 100)
+ *   SS_REPRESENTATIVE_TITLES     — (optionnel) nombre de titres représentatifs (défaut: 15)
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -19,10 +24,12 @@ import type { RunLogEntry, RunLogLevel } from '../../lib/db/types'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const SS_BASE_URL      = 'https://api.semanticscholar.org/recommendations/v1/papers/'
+const SS_SEARCH_URL    = 'https://api.semanticscholar.org/graph/v1/paper/search'
+const SS_RECS_URL      = 'https://api.semanticscholar.org/recommendations/v1/papers/'
 const SS_FIELDS        = 'paperId,title,authors,year,publicationDate,externalIds,abstract,url,venue'
 const MAX_RECS         = parseInt(process.env.SS_MAX_RECOMMENDATIONS ?? '100', 10)
-const AUTHOR_DOI_LIMIT = 500 // max DOIs envoyés comme positive papers
+const TOP_TITLES       = parseInt(process.env.SS_REPRESENTATIVE_TITLES ?? '15', 10)
+const SS_DELAY_MS      = 500 // délai entre appels API pour éviter rate limit
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 
@@ -51,31 +58,102 @@ function log(phase: string, msg: string, level: RunLogLevel = 'info') {
 async function appendLogs(runId: string) {
   if (collectedLogs.length === 0) return
   const sb = getSupabase()
-  // Charge les logs existants et y ajoute les nôtres
   const { data } = await sb.from('veille_runs').select('pipeline_logs').eq('id', runId).single()
   const existing: RunLogEntry[] = (data?.pipeline_logs as RunLogEntry[]) ?? []
   await sb.from('veille_runs').update({ pipeline_logs: [...existing, ...collectedLogs] }).eq('id', runId)
-  log('logs', `${collectedLogs.length} logs sauvegardés en DB`)
 }
 
-// ── Chargement des DOIs auteur ────────────────────────────────────────────────
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 
-async function loadAuthorDois(): Promise<string[]> {
+// ── Étape 1 : titres représentatifs via centroïde ────────────────────────────
+
+async function loadRepresentativeTitles(): Promise<string[]> {
   const sb = getSupabase()
-  const { data, error } = await sb
-    .from('documents')
-    .select('doi')
-    .eq('is_author_article', true)
-    .not('doi', 'is', null)
-    .limit(AUTHOR_DOI_LIMIT)
+  log('centroid', `Calcul du centroïde des chunks auteur, top ${TOP_TITLES} titres…`)
 
-  if (error) throw new Error(`loadAuthorDois: ${error.message}`)
-  const dois = (data ?? []).map((r: any) => r.doi as string).filter(Boolean)
-  log('author-dois', `${dois.length} DOIs auteur chargés`)
-  return dois
+  const { data, error } = await sb
+    .rpc('get_author_representative_titles', { top_n: TOP_TITLES })
+
+  if (error) throw new Error(`get_author_representative_titles: ${error.message}`)
+
+  const titles = (data as { title: string; distance: number }[])
+    .map(r => r.title)
+    .filter(t => t && t.length > 20)
+
+  log('centroid', `${titles.length} titres représentatifs trouvés`)
+  titles.forEach((t, i) => log('centroid', `  #${i + 1} ${t.slice(0, 80)}`))
+  return titles
 }
 
-// ── Chargement des DOIs déjà en base (dédup) ─────────────────────────────────
+// ── Étape 2 : résolution titre → paperId SS ──────────────────────────────────
+
+async function resolvePaperId(title: string): Promise<string | null> {
+  const url = `${SS_SEARCH_URL}?query=${encodeURIComponent(title)}&limit=1&fields=paperId,title`
+  const res  = await fetch(url)
+  if (!res.ok) {
+    log('resolve', `SS search échoué pour "${title.slice(0, 50)}": HTTP ${res.status}`, 'warn')
+    return null
+  }
+  const json = await res.json()
+  const paper = json.data?.[0]
+  if (!paper) {
+    log('resolve', `Aucun résultat SS pour "${title.slice(0, 50)}"`, 'warn')
+    return null
+  }
+  return paper.paperId as string
+}
+
+async function resolvePaperIds(titles: string[]): Promise<string[]> {
+  const ids: string[] = []
+  for (const title of titles) {
+    const id = await resolvePaperId(title)
+    if (id) {
+      ids.push(id)
+      log('resolve', `✓ "${title.slice(0, 60)}" → ${id}`)
+    }
+    await sleep(SS_DELAY_MS)
+  }
+  log('resolve', `${ids.length}/${titles.length} paperIds résolus`)
+  return ids
+}
+
+// ── Étape 3 : recommendations SS ─────────────────────────────────────────────
+
+interface SsPaper {
+  paperId: string
+  title: string | null
+  abstract: string | null
+  url: string | null
+  publicationDate: string | null
+  year: number | null
+  venue: string | null
+  authors: { name: string }[]
+  externalIds: { DOI?: string } | null
+}
+
+async function fetchRecommendations(positiveIds: string[]): Promise<SsPaper[]> {
+  if (positiveIds.length === 0) return []
+
+  log('api', `Appel SS recommendations — ${positiveIds.length} positive papers, max=${MAX_RECS}`)
+
+  const res = await fetch(`${SS_RECS_URL}?fields=${SS_FIELDS}&limit=${MAX_RECS}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ positivePaperIds: positiveIds, negativePaperIds: [] }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`SS recommendations API ${res.status}: ${body}`)
+  }
+
+  const json = await res.json()
+  const papers: SsPaper[] = json.recommendedPapers ?? []
+  log('api', `${papers.length} recommandations reçues`)
+  return papers
+}
+
+// ── Étape 4 : dédup + insertion ───────────────────────────────────────────────
 
 async function loadKnownDois(): Promise<Set<string>> {
   const sb = getSupabase()
@@ -94,8 +172,6 @@ async function loadKnownDois(): Promise<Set<string>> {
   return dois
 }
 
-// ── Chargement de la source SS en DB ─────────────────────────────────────────
-
 async function loadSsSourceId(): Promise<string> {
   const sb = getSupabase()
   const { data, error } = await sb
@@ -109,56 +185,14 @@ async function loadSsSourceId(): Promise<string> {
   return data.id
 }
 
-// ── Appel API Semantic Scholar ────────────────────────────────────────────────
-
-interface SsPaper {
-  paperId: string
-  title: string | null
-  abstract: string | null
-  url: string | null
-  publicationDate: string | null
-  year: number | null
-  venue: string | null
-  authors: { name: string }[]
-  externalIds: { DOI?: string; ArXiv?: string } | null
-}
-
-async function fetchRecommendations(positiveDois: string[]): Promise<SsPaper[]> {
-  // SS accepte des IDs sous la forme "DOI:10.1234/..." ou des paperId SS
-  const positiveIds = positiveDois.slice(0, AUTHOR_DOI_LIMIT).map(doi => `DOI:${doi}`)
-
-  log('api', `Appel SS recommendations — ${positiveIds.length} positive papers, max=${MAX_RECS}`)
-
-  const res = await fetch(`${SS_BASE_URL}?fields=${SS_FIELDS}&limit=${MAX_RECS}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ positivePaperIds: positiveIds, negativePaperIds: [] }),
-  })
-
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`SS API ${res.status}: ${body}`)
-  }
-
-  const json = await res.json()
-  const papers: SsPaper[] = json.recommendedPapers ?? []
-  log('api', `${papers.length} recommandations reçues`)
-  return papers
-}
-
-// ── Insertion en batch ────────────────────────────────────────────────────────
-
 async function insertItems(items: VeilleItemInsert[]): Promise<number> {
   if (items.length === 0) return 0
-  const sb    = getSupabase()
+  const sb     = getSupabase()
   let inserted = 0
 
   for (let i = 0; i < items.length; i += 50) {
     const batch = items.slice(i, i + 50)
-    const { data, error } = await sb
-      .from('veille_items')
-      .insert(batch)
-      .select('id')
+    const { data, error } = await sb.from('veille_items').insert(batch).select('id')
 
     if (error) {
       if (error.code === '23505') {
@@ -182,45 +216,47 @@ async function main() {
 
   process.stderr.write(`\n🔭 [extract-ss] Démarrage — run_id=${runId}\n\n`)
 
-  const [authorDois, knownDois, sourceId] = await Promise.all([
-    loadAuthorDois(),
-    loadKnownDois(),
-    loadSsSourceId(),
-  ])
-
-  if (authorDois.length === 0) {
-    log('main', 'Aucun DOI auteur trouvé — arrêt', 'warn')
+  // Étape 1 : centroïde → titres représentatifs
+  const titles = await loadRepresentativeTitles()
+  if (titles.length === 0) {
+    log('main', 'Aucun titre représentatif — arrêt (chunks auteur manquants ?)', 'warn')
     await appendLogs(runId)
     return
   }
 
-  // Appel API SS
-  const papers = await fetchRecommendations(authorDois)
+  // Étape 2 : titres → paperIds SS
+  const paperIds = await resolvePaperIds(titles)
+  if (paperIds.length === 0) {
+    log('main', 'Aucun paperId résolu sur SS — arrêt', 'warn')
+    await appendLogs(runId)
+    return
+  }
 
-  // Filtre + construction des items
+  // Étape 3 : recommendations SS
+  const papers = await fetchRecommendations(paperIds)
+
+  // Étape 4 : dédup + insertion
+  const [knownDois, sourceId] = await Promise.all([loadKnownDois(), loadSsSourceId()])
+
   let skippedNoAbstract = 0
   let skippedKnown      = 0
   const items: VeilleItemInsert[] = []
 
   for (const p of papers) {
     const doi = p.externalIds?.DOI ?? null
-
-    // Dédup DOI
     if (doi && knownDois.has(doi)) { skippedKnown++; continue }
-
-    // Abstract requis
     if (!p.abstract || p.abstract.trim().length < 50) { skippedNoAbstract++; continue }
 
     items.push({
-      run_id:          runId,
-      source_id:       sourceId,
-      url:             p.url ?? `https://www.semanticscholar.org/paper/${p.paperId}`,
-      title:           p.title ?? '(sans titre)',
-      authors:         p.authors.map(a => a.name),
+      run_id:       runId,
+      source_id:    sourceId,
+      url:          p.url ?? `https://www.semanticscholar.org/paper/${p.paperId}`,
+      title:        p.title ?? '(sans titre)',
+      authors:      p.authors.map(a => a.name),
       doi,
-      abstract:        p.abstract,
-      published_at:    p.publicationDate ?? (p.year ? `${p.year}-01-01` : null),
-      last_error:      null,
+      abstract:     p.abstract,
+      published_at: p.publicationDate ?? (p.year ? `${p.year}-01-01` : null),
+      last_error:   null,
     })
 
     if (doi) knownDois.add(doi)
