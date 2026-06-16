@@ -88,11 +88,43 @@ jobs:
           # Le script écrit directement run_id dans $GITHUB_OUTPUT
           npx tsx scripts/veille/extract.ts
 
+  # ── Job 1b : Semantic Scholar Recommendations (optionnel) ────────────────
+  extract-ss:
+    name: '1b · Extract Semantic Scholar [actions]'
+    needs: [setup, extract]
+    # Activé uniquement si le secret ENABLE_SEMANTIC_SCHOLAR == 'true'
+    if: needs.setup.outputs.strategy == 'actions' && vars.ENABLE_SEMANTIC_SCHOLAR == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Semantic Scholar extraction
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUN_ID: ${{ needs.extract.outputs.run_id }}
+          SS_MAX_RECOMMENDATIONS: '100'
+        run: |
+          echo "Semantic Scholar extraction run_id=${RUN_ID}"
+          npx tsx scripts/veille/extract-semanticscholar.ts
+
   # ── Job 2 : Scoring sémantique ────────────────────────────────────────────
   score:
     name: '2 · Score [actions]'
-    needs: [setup, extract]
-    if: needs.setup.outputs.strategy == 'actions'
+    needs: [setup, extract, extract-ss]
+    if: |
+      always() &&
+      needs.setup.outputs.strategy == 'actions' &&
+      needs.extract.result == 'success'
     runs-on: ubuntu-latest
 
     steps:

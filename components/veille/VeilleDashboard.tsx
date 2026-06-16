@@ -38,6 +38,7 @@ interface VeilleItem {
   published_at: string | null;
   similarity_score: number | null;
   last_error: string | null;
+  source_name: string | null;
 }
 
 interface RunSummary {

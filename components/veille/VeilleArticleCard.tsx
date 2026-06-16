@@ -10,10 +10,25 @@ interface VeilleArticle {
   published_at: string | null;
   similarity_score: number | null;
   last_error: string | null;
+  source_name: string | null;
 }
 
 interface Props {
   article: VeilleArticle;
+}
+
+function SourceBadge({ name }: { name: string | null }) {
+  if (!name) return null;
+  const isSemanticScholar = name.toLowerCase().includes('semantic scholar');
+  return (
+    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium ${
+      isSemanticScholar
+        ? 'bg-blue-100 text-blue-700'
+        : 'bg-gray-100 text-gray-500'
+    }`}>
+      {isSemanticScholar ? '🔭 Semantic Scholar' : name}
+    </span>
+  );
 }
 
 function ScoreBadge({ score }: { score: number | null }) {
@@ -43,8 +58,9 @@ export default function VeilleArticleCard({ article }: Props) {
     <div className="rounded-lg border border-border bg-card p-4 hover:bg-accent/30 transition-colors">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <ScoreBadge score={article.similarity_score} />
+            <SourceBadge name={article.source_name} />
             {dateStr && (
               <span className="text-xs text-muted-foreground">{dateStr}</span>
             )}
