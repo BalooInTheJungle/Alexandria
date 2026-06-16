@@ -269,7 +269,8 @@ async function runExtraction(): Promise<string> {
         if (doi) {
           const openAlex = abstractMap.get(doi)
           const crossRef = crossRefMap.get(doi)
-          if (openAlex?.abstract && !abstract) abstract = openAlex.abstract
+          // Prefer OpenAlex abstract: cleaner, untruncated, no publisher noise
+          if (openAlex?.abstract) abstract = openAlex.abstract
           const isFinal = openAlex?.is_final || crossRef?.is_final || false
           if (!isFinal) { rssSkipped++; continue }
           rssFinalized++

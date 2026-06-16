@@ -1,7 +1,12 @@
 // Scores veille articles against the RAG corpus
-// - similarity score: embed abstract → match_chunks cosine similarity (top-1 score)
-// - corpus_refs:      top-3 matching chunks with similarity >= CORPUS_REF_THRESHOLD
+// - similarity score: abstract split into chunks → embed each → match_chunks → max similarity
+// - corpus_refs:      top-3 matching chunks with similarity >= CORPUS_REF_THRESHOLD (across all abstract chunks)
 // - heuristic score:  count corpus stemmed terms found in abstract (fast, no embedding)
+//
+// Chunking rationale: all-MiniLM-L6-v2 is trained on short sentences. Embedding a full
+// abstract (~400 words) into a single 384D vector loses too much information. Splitting
+// into ~150-word chunks gives one precise vector per idea, improving recall and reducing
+// false positives caused by generic journal-name matches.
 
 import { createClient } from '@supabase/supabase-js'
 import { embedQuery } from '../rag/embed'
@@ -9,6 +14,9 @@ import type { CorpusRef } from '../db/types'
 
 const CORPUS_REF_THRESHOLD = 0.75  // min similarity to include a chunk as a corpus ref
 const EXCERPT_MAX_CHARS     = 350   // max chars to keep from chunk content (~2-3 sentences)
+const ABSTRACT_CHUNK_WORDS  = 150   // words per abstract chunk
+const ABSTRACT_CHUNK_OVERLAP = 1    // sentences of overlap between consecutive chunks
+const ABSTRACT_MAX_CHUNKS   = 4     // cap to avoid too many RPC calls per article
 
 function getSupabase() {
   return createClient(
@@ -24,65 +32,138 @@ type ScoreResult = {
 
 const MATCH_TIMEOUT_MS = 30_000  // abort match_chunks if no response in 30s
 
+// Split an abstract into overlapping chunks of ~ABSTRACT_CHUNK_WORDS words.
+// Uses sentence boundaries to avoid cutting mid-sentence.
+function splitAbstractIntoChunks(abstract: string): string[] {
+  const sentences = abstract
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0)
+
+  if (sentences.length <= 3) return [abstract]
+
+  const chunks: string[] = []
+  let i = 0
+
+  while (i < sentences.length && chunks.length < ABSTRACT_MAX_CHUNKS) {
+    const chunk: string[] = []
+    let wordCount = 0
+
+    // Add overlap: reuse last sentence of previous chunk
+    if (i > 0 && ABSTRACT_CHUNK_OVERLAP > 0) {
+      const overlapStart = Math.max(0, i - ABSTRACT_CHUNK_OVERLAP)
+      for (let k = overlapStart; k < i; k++) {
+        chunk.push(sentences[k])
+        wordCount += sentences[k].split(/\s+/).length
+      }
+    }
+
+    // Fill chunk up to ABSTRACT_CHUNK_WORDS words
+    while (i < sentences.length && wordCount < ABSTRACT_CHUNK_WORDS) {
+      chunk.push(sentences[i])
+      wordCount += sentences[i].split(/\s+/).length
+      i++
+    }
+
+    const text = chunk.join(' ').trim()
+    if (text.length >= 40) chunks.push(text)
+  }
+
+  return chunks.length > 0 ? chunks : [abstract]
+}
+
+// Match one embedding against the corpus. Returns rows or null on timeout/error.
+async function matchChunks(
+  embedding: number[]
+): Promise<{ doc_title: string; content: string; page: number | null; similarity: number }[] | null> {
+  const supabase = getSupabase()
+  const rpcPromise = supabase.rpc('match_chunks', {
+    query_embedding: embedding,
+    match_threshold: 0.0,
+    match_count:     3,
+  })
+  const timeoutPromise = new Promise<null>((_, reject) =>
+    setTimeout(() => reject(new Error('match_chunks timeout')), MATCH_TIMEOUT_MS)
+  )
+
+  try {
+    const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: unknown } | null
+    if (!result) return null
+    if (result.error) {
+      console.error('[score] match_chunks error:', (result.error as any).message)
+      return null
+    }
+    return (result.data as any[]) ?? []
+  } catch {
+    console.error('[score] match_chunks timeout')
+    return null
+  }
+}
+
 // Score a single abstract against the corpus.
-// Returns top-1 similarity score and up to 3 corpus refs (similarity >= CORPUS_REF_THRESHOLD).
+// Splits abstract into chunks, embeds each, takes max similarity across chunks.
+// corpus_refs = union of chunks with similarity >= CORPUS_REF_THRESHOLD across all abstract chunks.
 async function scoreAbstract(abstract: string): Promise<ScoreResult> {
   try {
-    let embedding: number[]
-    try {
-      embedding = await embedQuery(abstract)
-    } catch (embedErr: any) {
-      console.error('[score] embedQuery failed:', embedErr.message)
+    const abstractChunks = splitAbstractIntoChunks(abstract)
+    console.log(`[score] abstract split into ${abstractChunks.length} chunk(s)`)
+
+    let bestSimilarity: number | null = null
+    const allRefs: CorpusRef[] = []
+    const seenExcerpts = new Set<string>()
+    let anyTimeout = false
+
+    for (const chunk of abstractChunks) {
+      let embedding: number[]
+      try {
+        embedding = await embedQuery(chunk)
+      } catch (embedErr: any) {
+        console.error('[score] embedQuery failed:', embedErr.message)
+        continue
+      }
+
+      const rows = await matchChunks(embedding)
+      if (rows === null) {
+        anyTimeout = true
+        continue
+      }
+      if (rows.length === 0) continue
+
+      const chunkSimilarity = typeof rows[0].similarity === 'number'
+        ? Math.round(rows[0].similarity * 1000) / 1000
+        : null
+
+      if (chunkSimilarity !== null) {
+        if (bestSimilarity === null || chunkSimilarity > bestSimilarity) {
+          bestSimilarity = chunkSimilarity
+        }
+      }
+
+      for (const row of rows) {
+        if (row.similarity < CORPUS_REF_THRESHOLD) continue
+        const key = `${row.doc_title}::${row.page}`
+        if (seenExcerpts.has(key)) continue
+        seenExcerpts.add(key)
+        allRefs.push({
+          doc_title:  row.doc_title ?? 'Document inconnu',
+          excerpt:    row.content.length > EXCERPT_MAX_CHARS
+            ? row.content.slice(0, EXCERPT_MAX_CHARS).trimEnd() + '…'
+            : row.content,
+          page:       row.page ?? null,
+          similarity: Math.round(row.similarity * 1000) / 1000,
+        })
+      }
+    }
+
+    // If all chunks timed out, return null to mark as "not scored"
+    if (anyTimeout && bestSimilarity === null) {
       return { similarity: null, refs: [] }
     }
 
-    const supabase  = getSupabase()
-
-    const rpcPromise = supabase.rpc('match_chunks', {
-      query_embedding:  embedding,
-      match_threshold:  0.0,
-      match_count:      3,
-    })
-    const timeoutPromise = new Promise<null>((_, reject) =>
-      setTimeout(() => reject(new Error('match_chunks timeout')), MATCH_TIMEOUT_MS)
-    )
-
-    let data: unknown, error: unknown
-    try {
-      const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: unknown }
-      data = result?.data
-      error = result?.error
-    } catch (timeoutErr: any) {
-      console.error('[score] match_chunks timeout — returning null similarity')
-      return { similarity: null, refs: [] }
+    return {
+      similarity: bestSimilarity,
+      refs:       allRefs.sort((a, b) => b.similarity - a.similarity).slice(0, 5),
     }
-
-    if (error) {
-      console.error('[score] match_chunks error:', (error as any).message)
-      return { similarity: null, refs: [] }
-    }
-
-    if (!data || (data as unknown[]).length === 0) return { similarity: 0, refs: [] }
-
-    const rows = data as { doc_title: string; content: string; page: number | null; similarity: number }[]
-    const similarity = typeof rows[0].similarity === 'number'
-      ? Math.round(rows[0].similarity * 1000) / 1000
-      : null
-
-    const refs: CorpusRef[] = (rows as {
-      doc_title: string; content: string; page: number | null; similarity: number
-    }[])
-      .filter(row => row.similarity >= CORPUS_REF_THRESHOLD)
-      .map(row => ({
-        doc_title:  row.doc_title ?? 'Document inconnu',
-        excerpt:    row.content.length > EXCERPT_MAX_CHARS
-          ? row.content.slice(0, EXCERPT_MAX_CHARS).trimEnd() + '…'
-          : row.content,
-        page:       row.page ?? null,
-        similarity: Math.round(row.similarity * 1000) / 1000,
-      }))
-
-    return { similarity, refs }
   } catch (err: any) {
     console.error('[score] Error:', err.message)
     return { similarity: null, refs: [] }
@@ -115,7 +196,7 @@ export function scoreHeuristic(abstract: string, corpusTerms: string[]): number 
   return Math.round((matched / corpusTerms.length) * 1000) / 1000
 }
 
-const SCORE_CONCURRENCY = 5   // parallel scoring workers — reduced to avoid Supabase overload
+const SCORE_CONCURRENCY = Number(process.env.SCORE_CONCURRENCY ?? 5)
 
 // Score all items that have an abstract, using parallel batches.
 // onProgress is called every 10 items with (processed, total) for live reporting.
