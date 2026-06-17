@@ -9,6 +9,7 @@ const links = [
   { href: "/rag", label: "Chatbot" },
   { href: "/database", label: "Database" },
   { href: "/bibliographie", label: "Bibliographie" },
+  { href: "/analyse", label: "Analyse" },
 ] as const;
 
 export default function NavLinks() {

@@ -64,7 +64,23 @@ export async function GET(request: Request) {
       );
     }
 
-    return NextResponse.json({ deleted: ids.length });
+    // Supprimer les analyses temporaires expirées (chunks supprimés en CASCADE)
+    const now = new Date().toISOString();
+    const { data: expiredAnalyses, error: analysesError } = await supabase
+      .from("document_analyses")
+      .delete()
+      .eq("is_integrated", false)
+      .lt("expires_at", now)
+      .select("id");
+
+    if (analysesError) {
+      console.error("[cron/retention] analyses delete error", analysesError);
+    }
+
+    const deletedAnalyses = expiredAnalyses?.length ?? 0;
+    console.log("[cron/retention] done", { deletedConversations: ids.length, deletedAnalyses });
+
+    return NextResponse.json({ deleted: ids.length, deletedAnalyses });
   } catch (e) {
     console.error("[cron/retention] error", e);
     return NextResponse.json(
