@@ -113,6 +113,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RUN_ID: ${{ needs.extract.outputs.run_id }}
           SS_MAX_RECOMMENDATIONS: '100'
+          SS_API_KEY: ${{ secrets.SS_API_KEY }}
         run: |
           echo "Semantic Scholar extraction run_id=${RUN_ID}"
           npx tsx scripts/veille/extract-semanticscholar.ts

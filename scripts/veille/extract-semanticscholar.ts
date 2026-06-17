@@ -103,9 +103,13 @@ async function fetchRecommendations(positiveIds: string[]): Promise<SsPaper[]> {
 
   log('api', `Appel SS recommendations — ${positiveIds.length} positive papers, max=${MAX_RECS}`)
 
+  const ssApiKey = process.env.SS_API_KEY
   const res = await fetch(`${SS_RECS_URL}?fields=${SS_FIELDS}&limit=${MAX_RECS}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(ssApiKey ? { 'x-api-key': ssApiKey } : {}),
+    },
     body: JSON.stringify({ positivePaperIds: positiveIds, negativePaperIds: [] }),
   })
 
