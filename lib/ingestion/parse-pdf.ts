@@ -13,7 +13,8 @@ export type ParsePdfResult = {
 
 export async function parsePdfBuffer(buffer: Buffer): Promise<ParsePdfResult> {
   LOG("parsePdfBuffer", { size: buffer.length });
-  const pdfParse = (await import("pdf-parse")).default;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (buf: Buffer) => Promise<{ text: string; numpages: number }>;
   const result = await pdfParse(buffer);
   const text = (result?.text ?? "").trim();
   const numpages = result?.numpages ?? 0;
