@@ -1,6 +1,6 @@
 /**
  * Extraction de texte depuis un buffer PDF (Node).
- * Utilise pdf-parse v2 (PDFParse avec data: buffer).
+ * Utilise pdf-parse v1 (API simple : pdfParse(buffer)).
  */
 
 const LOG = (msg: string, ...args: unknown[]) =>
@@ -13,14 +13,10 @@ export type ParsePdfResult = {
 
 export async function parsePdfBuffer(buffer: Buffer): Promise<ParsePdfResult> {
   LOG("parsePdfBuffer", { size: buffer.length });
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
-  const result = await parser.getText();
-  if (typeof (parser as { destroy?: () => Promise<void> }).destroy === "function") {
-    await (parser as { destroy: () => Promise<void> }).destroy();
-  }
+  const pdfParse = (await import("pdf-parse")).default;
+  const result = await pdfParse(buffer);
   const text = (result?.text ?? "").trim();
-  const numpages = result?.total ?? 0;
+  const numpages = result?.numpages ?? 0;
   LOG("parsePdfBuffer done", { numpages, textLength: text.length });
   return { text, numpages };
 }
