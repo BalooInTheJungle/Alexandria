@@ -40,6 +40,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/rag", request.url));
   }
 
+  if (user && path === "/dashboard") {
+    return NextResponse.redirect(new URL("/rag", request.url));
+  }
+
   return response;
 }
 
