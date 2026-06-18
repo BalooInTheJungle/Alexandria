@@ -201,7 +201,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       // 2. Passages corpus les plus proches (match_chunks, exclure chunks is_temp)
       supabase.rpc("match_chunks", {
         query_embedding: meanEmbedding,
-        match_threshold: 0.5,
+        match_threshold: 0.1,
         match_count: 8,
       }).then(({ data, error }) => {
         if (error) throw error
