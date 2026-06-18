@@ -13,6 +13,10 @@ type Props = {
   highlight: string | null
 }
 
+function normalise(s: string) {
+  return s.toLowerCase().replace(/\s+/g, " ").trim()
+}
+
 export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [numPages, setNumPages] = useState<number>(0)
@@ -24,10 +28,11 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
   useEffect(() => {
     fetch(`/api/analyse/${analysisId}/pdf`)
       .then((r) => r.json())
-      .then((d) => { if (d.url) setPdfUrl(d.url); else setError("PDF non disponible") })
+      .then((d) => { if (d.url) setPdfUrl(d.url); else setError("PDF non disponible pour cette analyse.") })
       .catch(() => setError("Erreur de chargement du PDF"))
   }, [analysisId])
 
+  // Sauter à la page quand la source change
   useEffect(() => {
     if (page && page > 0) setCurrentPage(page)
   }, [page])
@@ -35,27 +40,37 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
   useEffect(() => {
     if (!containerRef.current) return
     const ro = new ResizeObserver((entries) => {
-      setContainerWidth(entries[0].contentRect.width)
+      setContainerWidth(Math.floor(entries[0].contentRect.width))
     })
     ro.observe(containerRef.current)
     return () => ro.disconnect()
   }, [])
 
+  // Surlignage : cherche des fragments de l'extrait dans chaque item texte
   const customTextRenderer = useCallback(({ str }: { str: string }) => {
-    if (!highlight || !str) return str
-    const idx = str.toLowerCase().indexOf(highlight.slice(0, 30).toLowerCase())
-    if (idx === -1) return str
-    return (
-      `<mark style="background:rgba(234,179,8,0.4);border-radius:2px;">${str}</mark>`
-    )
+    if (!highlight || !str || str.length < 3) return str
+    const normStr = normalise(str)
+    const normHL = normalise(highlight)
+    // Cherche un fragment de 20 chars de l'extrait dans l'item texte
+    const fragment = normHL.slice(0, 40)
+    if (normStr.includes(fragment.slice(0, 20))) {
+      return `<mark style="background:rgba(234,179,8,0.45);border-radius:2px;padding:0 1px;">${str}</mark>`
+    }
+    // Cherche aussi l'item dans l'extrait (pour les fragments courts)
+    if (normHL.includes(normStr) && normStr.length > 10) {
+      return `<mark style="background:rgba(234,179,8,0.45);border-radius:2px;padding:0 1px;">${str}</mark>`
+    }
+    return str
   }, [highlight])
 
   if (error) return (
-    <div className="text-xs text-muted-foreground py-3 text-center">{error}</div>
+    <div className="text-xs text-muted-foreground py-6 text-center rounded border border-border bg-muted/20">
+      {error}
+    </div>
   )
 
   if (!pdfUrl) return (
-    <div className="text-xs text-muted-foreground py-3 text-center animate-pulse">Chargement du PDF…</div>
+    <div className="text-xs text-muted-foreground py-6 text-center animate-pulse">Chargement du PDF…</div>
   )
 
   return (
@@ -65,26 +80,27 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
         <button
           onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
           disabled={currentPage <= 1}
-          className="px-2 py-0.5 rounded border border-border hover:border-primary disabled:opacity-30"
+          className="px-2 py-0.5 rounded border border-border hover:border-primary disabled:opacity-30 transition-colors"
         >←</button>
-        <span>Page {currentPage} / {numPages || "…"}</span>
+        <span>Page {currentPage}{numPages ? ` / ${numPages}` : ""}</span>
         <button
           onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
           disabled={currentPage >= numPages}
-          className="px-2 py-0.5 rounded border border-border hover:border-primary disabled:opacity-30"
+          className="px-2 py-0.5 rounded border border-border hover:border-primary disabled:opacity-30 transition-colors"
         >→</button>
       </div>
 
-      <div className="overflow-hidden rounded border border-border">
+      <div className="overflow-auto rounded border border-border max-h-[70vh]">
         <Document
           file={pdfUrl}
           onLoadSuccess={({ numPages }) => setNumPages(numPages)}
           onLoadError={() => setError("Impossible de lire le PDF")}
-          loading={<div className="text-xs text-muted-foreground py-6 text-center animate-pulse">Chargement…</div>}
+          loading={<div className="text-xs text-muted-foreground py-8 text-center animate-pulse">Chargement…</div>}
         >
           <Page
+            key={`page-${currentPage}`}
             pageNumber={currentPage}
-            width={containerWidth}
+            width={containerWidth > 0 ? containerWidth - 2 : 400}
             renderTextLayer={true}
             renderAnnotationLayer={false}
             customTextRenderer={customTextRenderer}
