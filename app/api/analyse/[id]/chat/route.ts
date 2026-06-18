@@ -61,7 +61,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // Vérifier que l'analyse appartient à l'utilisateur
   const { data: analysis } = await supabase
     .from("document_analyses")
-    .select("id, document_id, title")
+    .select("id, document_id, title, doi")
     .eq("id", analysisId)
     .eq("user_id", user.id)
     .single()
