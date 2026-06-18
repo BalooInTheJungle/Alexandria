@@ -59,6 +59,7 @@ export default function AnalysisPage() {
   const [integrating, setIntegrating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<TabId>("corpus")
+  const warmedUp = React.useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -219,6 +220,7 @@ export default function AnalysisPage() {
       )}
 
       {/* ── Onglet 3 : Discussion ── */}
+      {tab === "chat" && !warmedUp.current && (() => { warmedUp.current = true; fetch("/api/analyse/warmup") })()}
       {tab === "chat" && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
