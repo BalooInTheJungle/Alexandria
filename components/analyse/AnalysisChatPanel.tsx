@@ -28,6 +28,9 @@ const SUGGESTIONS = [
   "Quelles différences avec le corpus ?",
 ]
 
+const LOG = (msg: string, ...args: unknown[]) =>
+  console.log("[AnalysisChatPanel]", msg, ...args)
+
 export default function AnalysisChatPanel({ analysisId }: { analysisId: string }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
@@ -42,6 +45,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
 
   async function sendMessage(query: string) {
     if (!query.trim() || loading) return
+    LOG("sendMessage input:", { query: query.slice(0, 80), historyLength: messages.length })
     setInput("")
     setActiveSources(null)
 
@@ -54,11 +58,14 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
     setMessages((prev) => [...prev, assistantMsg])
 
     try {
+      LOG("fetch start:", { analysisId })
       const res = await fetch(`/api/analyse/${analysisId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, history }),
       })
+
+      LOG("fetch response:", { status: res.status, ok: res.ok })
 
       if (!res.ok) {
         const d = await res.json()
@@ -68,6 +75,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
       let sources: Source[] = []
+      let tokenCount = 0
 
       while (reader) {
         const { done, value } = await reader.read()
@@ -76,11 +84,15 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
         for (const line of text.split("\n")) {
           if (!line.startsWith("data: ")) continue
           const raw = line.slice(6).trim()
-          if (raw === "[DONE]") break
+          if (raw === "[DONE]") {
+            LOG("stream done:", { sourcesReceived: sources.length, tokenCount })
+            break
+          }
           try {
             const parsed = JSON.parse(raw)
             if (parsed.sources) {
               sources = parsed.sources
+              LOG("sources received:", sources.map((s) => ({ index: s.index, is_document: s.is_document, similarity: s.similarity })))
               setMessages((prev) => {
                 const next = [...prev]
                 next[next.length - 1] = { ...next[next.length - 1], sources }
@@ -89,6 +101,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
               setActiveSources(sources)
             }
             if (parsed.token) {
+              tokenCount++
               setMessages((prev) => {
                 const next = [...prev]
                 next[next.length - 1] = {
@@ -102,6 +115,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
         }
       }
     } catch (err) {
+      LOG("error:", err)
       setMessages((prev) => {
         const next = [...prev]
         next[next.length - 1] = {
