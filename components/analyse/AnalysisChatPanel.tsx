@@ -244,7 +244,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
                         {src.is_document ? "Document" : "Corpus"}
                       </span>
                       <span className="text-xs text-muted-foreground ml-auto">
-                        {Math.round(src.similarity * 100)}%
+                        {Math.max(0, Math.round(src.similarity * 100))}%
                       </span>
                     </div>
                     <p className="text-xs font-medium truncate">{src.doc_title ?? "Document analysé"}</p>
