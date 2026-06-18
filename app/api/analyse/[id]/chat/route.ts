@@ -115,7 +115,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       similarity: cosineSim(parseEmb(c.embedding), embedding),
       doc_title: analysis.title,
       doc_doi: analysis.doi,
-      doc_storage_path: null,
+      doc_storage_path: null as unknown as string,
     } as MatchedChunk))
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, 5)
