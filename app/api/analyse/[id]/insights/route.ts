@@ -179,10 +179,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     LOG("chunks loaded", { count: chunks.length })
 
     // Embedding moyen de tous les chunks → représente l'article entier
-    const dim = (chunks[0].embedding as number[]).length
+    // Supabase peut retourner le vecteur comme string "[0.1,...]" ou comme number[]
+    const parseEmb = (raw: unknown): number[] =>
+      typeof raw === "string" ? JSON.parse(raw) : (raw as number[])
+
+    const firstEmb = parseEmb(chunks[0].embedding)
+    LOG("embedding type", { type: typeof chunks[0].embedding, dim: firstEmb.length })
+    const dim = firstEmb.length
     const meanEmbedding = new Array(dim).fill(0) as number[]
     for (const c of chunks) {
-      const emb = c.embedding as number[]
+      const emb = parseEmb(c.embedding)
       for (let i = 0; i < dim; i++) meanEmbedding[i] += emb[i]
     }
     for (let i = 0; i < dim; i++) meanEmbedding[i] /= chunks.length
