@@ -81,21 +81,46 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Embedding failed" }, { status: 500 })
   }
 
-  // 1. Chunks du document analysé (priorité)
-  const { data: docChunksRaw, error: docErr } = await supabase.rpc("match_chunks", {
-    query_embedding: embedding,
-    match_threshold: 0.3,
-    match_count: 6,
-  })
-  if (docErr) console.error("[API] match_chunks doc error:", docErr)
+  // 1. Chunks du document analysé — récupérés directement par document_id (pas de seuil)
+  //    puis triés par similarité avec la requête pour garder les plus pertinents en premier
+  const { data: docChunksRaw, error: docErr } = await supabase
+    .from("chunks")
+    .select("id, document_id, content, position, page, section_title, embedding")
+    .eq("document_id", analysis.document_id)
+    .not("embedding", "is", null)
+    .order("position")
+    .limit(10)
+  if (docErr) console.error("[API] chunks doc error:", docErr)
 
-  const docChunksAll = (docChunksRaw ?? []) as MatchedChunk[]
-  LOG("match_chunks raw (all)", { total: docChunksAll.length, documentId: analysis.document_id })
+  const parseEmb = (raw: unknown): number[] =>
+    typeof raw === "string" ? JSON.parse(raw) : (raw as number[])
 
-  const docChunks: MatchedChunk[] = docChunksAll
-    .filter((c) => c.document_id === analysis.document_id)
+  const cosineSim = (a: number[], b: number[]) => {
+    let dot = 0, na = 0, nb = 0
+    for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
+    return dot / (Math.sqrt(na) * Math.sqrt(nb))
+  }
+
+  const docChunks: MatchedChunk[] = ((docChunksRaw ?? []) as Array<{
+    id: string; document_id: string; content: string; position: number
+    page: number | null; section_title: string | null; embedding: unknown
+  }>)
+    .map((c) => ({
+      id: c.id,
+      document_id: c.document_id,
+      content: c.content,
+      position: c.position,
+      page: c.page,
+      section_title: c.section_title,
+      similarity: cosineSim(parseEmb(c.embedding), embedding),
+      doc_title: analysis.title,
+      doc_doi: analysis.doi,
+      doc_storage_path: null,
+    } as MatchedChunk))
+    .sort((a, b) => b.similarity - a.similarity)
     .slice(0, 5)
-  LOG("doc chunks after filter", { count: docChunks.length, similarities: docChunks.map((c) => c.similarity) })
+
+  LOG("doc chunks loaded", { count: docChunks.length, similarities: docChunks.map((c) => c.similarity) })
 
   // 2. Chunks corpus complémentaires (hors document analysé)
   const { data: corpusChunksRaw, error: corpusErr } = await supabase.rpc("match_chunks", {
