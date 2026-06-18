@@ -35,17 +35,20 @@ const SUGGESTIONS = [
   "Quelles différences avec le corpus ?",
 ]
 
-function renderWithCitations(
-  content: string,
+function renderInline(
+  text: string,
   sources: Source[],
   selectedSource: Source | null,
   onSelect: (s: Source) => void
-) {
-  const parts = content.split(/(\[\d+\])/g)
+): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*|\[\d+\])/g)
   return parts.map((part, i) => {
-    const match = part.match(/^\[(\d+)\]$/)
-    if (match) {
-      const idx = parseInt(match[1]) - 1
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+    }
+    const citMatch = part.match(/^\[(\d+)\]$/)
+    if (citMatch) {
+      const idx = parseInt(citMatch[1]) - 1
       const src = sources[idx]
       if (src) {
         const isSelected = selectedSource?.index === src.index && selectedSource?.excerpt === src.excerpt
@@ -53,21 +56,72 @@ function renderWithCitations(
           <button
             key={i}
             onClick={() => onSelect(src)}
-            title={src.excerpt?.slice(0, 80)}
+            title={src.excerpt?.slice(0, 100)}
             className={[
-              "inline-flex items-center justify-center text-[10px] font-bold rounded px-1 py-0.5 mx-0.5 transition-colors border",
+              "inline-flex items-center justify-center text-[10px] font-bold rounded px-1 py-0.5 mx-0.5 transition-colors border align-middle",
               isSelected
                 ? "bg-primary text-primary-foreground border-primary"
                 : "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20",
             ].join(" ")}
           >
-            {match[1]}
+            {citMatch[1]}
           </button>
         )
       }
     }
     return <span key={i}>{part}</span>
   })
+}
+
+function renderMarkdown(
+  content: string,
+  sources: Source[],
+  selectedSource: Source | null,
+  onSelect: (s: Source) => void
+) {
+  const lines = content.split("\n")
+  const nodes: React.ReactNode[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+
+    if (line.startsWith("# ")) {
+      nodes.push(
+        <h2 key={i} className="text-sm font-bold mt-3 mb-1">
+          {renderInline(line.slice(2), sources, selectedSource, onSelect)}
+        </h2>
+      )
+    } else if (line.startsWith("## ")) {
+      nodes.push(
+        <h3 key={i} className="text-xs font-bold mt-2 mb-0.5 uppercase tracking-wide text-muted-foreground">
+          {renderInline(line.slice(3), sources, selectedSource, onSelect)}
+        </h3>
+      )
+    } else if (line.startsWith("- ")) {
+      nodes.push(
+        <div key={i} className="flex gap-1.5 mb-0.5 ml-1">
+          <span className="mt-1.5 w-1 h-1 rounded-full bg-current shrink-0" />
+          <span>{renderInline(line.slice(2), sources, selectedSource, onSelect)}</span>
+        </div>
+      )
+    } else if (line.match(/^\d+\.\s/)) {
+      nodes.push(
+        <p key={i} className="mb-0.5 ml-1">
+          {renderInline(line, sources, selectedSource, onSelect)}
+        </p>
+      )
+    } else if (line.trim() === "") {
+      nodes.push(<div key={i} className="h-2" />)
+    } else {
+      nodes.push(
+        <p key={i} className="mb-0.5">
+          {renderInline(line, sources, selectedSource, onSelect)}
+        </p>
+      )
+    }
+  }
+
+  return <div className="text-sm leading-relaxed space-y-0">{nodes}</div>
 }
 
 export default function AnalysisChatPanel({ analysisId }: { analysisId: string }) {
@@ -240,11 +294,9 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
                         : "bg-muted text-foreground",
                     ].join(" ")}>
                       {msg.role === "assistant" && msg.isComplete && msg.sources?.length ? (
-                        <p className="whitespace-pre-wrap">
-                          {renderWithCitations(msg.content, msg.sources, selectedSource, setSelectedSource)}
-                        </p>
+                        renderMarkdown(msg.content, msg.sources, selectedSource, setSelectedSource)
                       ) : (
-                        <p className="whitespace-pre-wrap">
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed">
                           {msg.content || (loading && i === messages.length - 1 ? "…" : "")}
                         </p>
                       )}
@@ -279,13 +331,11 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
 
       {/* ── Modal PDF plein écran ── */}
       <Dialog open={pdfOpen} onOpenChange={setPdfOpen}>
-        <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col p-4 gap-3">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-muted-foreground">
-              Document{selectedSource?.page ? ` — page ${selectedSource.page}` : ""}
-            </p>
-          </div>
-          <div className="flex-1 overflow-auto">
+        <DialogContent className="!max-w-[96vw] w-[96vw] h-[94vh] flex flex-col p-3 gap-2">
+          <p className="text-xs font-semibold text-muted-foreground shrink-0">
+            Document{selectedSource?.page ? ` — page ${selectedSource.page}` : ""}
+          </p>
+          <div className="flex-1 min-h-0 overflow-auto">
             <AnalysisPdfViewer
               analysisId={analysisId}
               page={selectedSource?.page ?? 1}

@@ -22,7 +22,7 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
   const [numPages, setNumPages] = useState<number>(0)
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [error, setError] = useState<string | null>(null)
-  const [containerWidth, setContainerWidth] = useState<number>(400)
+  const [containerWidth, setContainerWidth] = useState<number>(700)
   const containerRef = React.useRef<HTMLDivElement>(null)
 
   useEffect(() => {
