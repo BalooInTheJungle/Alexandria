@@ -5,14 +5,20 @@
  * Sur Vercel (serverless), le filesystem est en lecture seule : on redirige le cache vers /tmp.
  */
 
+import path from "path";
+import fs from "fs";
 import { pipeline } from "@xenova/transformers";
 
 const MODEL = "Xenova/all-MiniLM-L6-v2";
 const DIM = 384;
 
-// Vercel : filesystem du déploiement en lecture seule ; passer cache_dir dans les options du pipeline
+// Priorité : modèle pré-bundlé au build (.model-cache/) → sinon /tmp (Vercel cold start)
+const bundledCache = path.join(process.cwd(), ".model-cache");
 const PIPELINE_OPTS: { quantized: boolean; cache_dir?: string } = { quantized: true };
-if (typeof process !== "undefined" && process.env?.VERCEL === "1") {
+if (fs.existsSync(bundledCache)) {
+  PIPELINE_OPTS.cache_dir = bundledCache;
+  console.log("[RAG/embed] Using bundled model cache:", bundledCache);
+} else if (typeof process !== "undefined" && process.env?.VERCEL === "1") {
   PIPELINE_OPTS.cache_dir = "/tmp/transformers-cache";
 }
 
