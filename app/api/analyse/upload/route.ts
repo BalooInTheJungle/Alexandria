@@ -80,6 +80,14 @@ export async function POST(request: Request) {
     const analysisId = analysis.id
     LOG("analysis created", { analysisId, doi })
 
+    // Stocker le PDF dans Supabase Storage
+    const storagePath = `${analysisId}.pdf`
+    const { error: storageError } = await supabase.storage
+      .from("analyses")
+      .upload(storagePath, buffer, { contentType: "application/pdf", upsert: true })
+    if (storageError) LOG("storage upload warning", storageError.message)
+    else LOG("pdf stored", { storagePath })
+
     // Créer le document lié
     const { data: doc, error: docError } = await supabase
       .from("documents")

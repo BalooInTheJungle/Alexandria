@@ -4,6 +4,9 @@ import React, { useState, useRef, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import dynamic from "next/dynamic"
+
+const AnalysisPdfViewer = dynamic(() => import("./AnalysisPdfViewer"), { ssr: false })
 
 type Source = {
   index: number
@@ -31,7 +34,7 @@ const SUGGESTIONS = [
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[AnalysisChatPanel]", msg, ...args)
 
-export default function AnalysisChatPanel({ analysisId }: { analysisId: string }) {
+export default function AnalysisChatPanel({ analysisId }: { analysisId: string; }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
@@ -224,13 +227,22 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
               )}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {/* Viewer PDF — au-dessus des sources */}
+            {activeSources && (
+              <AnalysisPdfViewer
+                analysisId={analysisId}
+                page={activeSources.find((s) => s.is_document)?.page ?? activeSources[0]?.page ?? 1}
+                highlight={activeSources.find((s) => s.is_document)?.excerpt ?? activeSources[0]?.excerpt ?? null}
+              />
+            )}
+
             {!activeSources ? (
               <p className="text-xs text-muted-foreground py-4 text-center">
                 Les passages utilisés apparaîtront ici après chaque réponse.
               </p>
             ) : (
-              <div className="space-y-4 max-h-[480px] overflow-y-auto pr-1">
+              <div className="space-y-4 max-h-[300px] overflow-y-auto pr-1">
                 {activeSources.map((src) => (
                   <div key={src.index} className="space-y-1">
                     <div className="flex items-center gap-2">
