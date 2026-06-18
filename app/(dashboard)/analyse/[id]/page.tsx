@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import AnalysisChatPanel from "@/components/analyse/AnalysisChatPanel"
 import { Button } from "@/components/ui/button"
 
 type Summary = {
@@ -319,6 +320,12 @@ export default function AnalysisPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Chatbot document */}
+      <div>
+        <h2 className="text-lg font-semibold font-title mb-3">Discussion sur le document</h2>
+        <AnalysisChatPanel analysisId={id} />
+      </div>
     </main>
   )
 }
