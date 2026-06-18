@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
 import dynamic from "next/dynamic"
 
 const AnalysisPdfViewer = dynamic(() => import("./AnalysisPdfViewer"), { ssr: false })
@@ -24,6 +25,7 @@ type Message = {
   role: "user" | "assistant"
   content: string
   sources?: Source[]
+  isComplete?: boolean
 }
 
 const SUGGESTIONS = [
@@ -33,12 +35,48 @@ const SUGGESTIONS = [
   "Quelles différences avec le corpus ?",
 ]
 
+function renderWithCitations(
+  content: string,
+  sources: Source[],
+  selectedSource: Source | null,
+  onSelect: (s: Source) => void
+) {
+  const parts = content.split(/(\[\d+\])/g)
+  return parts.map((part, i) => {
+    const match = part.match(/^\[(\d+)\]$/)
+    if (match) {
+      const idx = parseInt(match[1]) - 1
+      const src = sources[idx]
+      if (src) {
+        const isSelected = selectedSource?.index === src.index && selectedSource?.excerpt === src.excerpt
+        return (
+          <button
+            key={i}
+            onClick={() => onSelect(src)}
+            title={src.excerpt?.slice(0, 80)}
+            className={[
+              "inline-flex items-center justify-center text-[10px] font-bold rounded px-1 py-0.5 mx-0.5 transition-colors border",
+              isSelected
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20",
+            ].join(" ")}
+          >
+            {match[1]}
+          </button>
+        )
+      }
+    }
+    return <span key={i}>{part}</span>
+  })
+}
+
 export default function AnalysisChatPanel({ analysisId }: { analysisId: string }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [warming, setWarming] = useState(true)
   const [selectedSource, setSelectedSource] = useState<Source | null>(null)
+  const [pdfOpen, setPdfOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -63,7 +101,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
     setMessages((prev) => [...prev, userMsg])
     setLoading(true)
 
-    const assistantMsg: Message = { role: "assistant", content: "" }
+    const assistantMsg: Message = { role: "assistant", content: "", isComplete: false }
     setMessages((prev) => [...prev, assistantMsg])
 
     try {
@@ -91,6 +129,12 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
           const raw = line.slice(6).trim()
           if (raw === "[DONE]") {
             LOG("stream done:", { sourcesReceived: sources.length, tokenCount })
+            // Marquer le message comme complet → active les citations cliquables
+            setMessages((prev) => {
+              const next = [...prev]
+              next[next.length - 1] = { ...next[next.length - 1], isComplete: true }
+              return next
+            })
             break
           }
           try {
@@ -128,6 +172,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
         next[next.length - 1] = {
           ...next[next.length - 1],
           content: err instanceof Error ? err.message : "Erreur inattendue",
+          isComplete: true,
         }
         return next
       })
@@ -138,114 +183,117 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+    <>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
 
-      {/* ── Gauche : PDF viewer ── */}
-      <div className="lg:col-span-3">
-        <div className="rounded-lg border border-border bg-card p-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-            Document
-            {selectedSource?.page && (
-              <span className="ml-2 font-normal normal-case">— page {selectedSource.page}</span>
-            )}
-          </p>
-          <AnalysisPdfViewer
-            analysisId={analysisId}
-            page={selectedSource?.page ?? 1}
-            highlight={selectedSource?.excerpt ?? null}
-          />
-        </div>
-      </div>
-
-      {/* ── Droite : Chat + sources ── */}
-      <div className="lg:col-span-2 flex flex-col gap-3">
-
-        {/* Messages */}
-        <div className="rounded-lg border border-border bg-card p-3 flex flex-col gap-3">
-          {messages.length === 0 && (
-            <div className="flex flex-wrap gap-2 py-1">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => sendMessage(s)}
-                  className="text-xs px-3 py-1.5 rounded-full border border-border hover:border-primary hover:text-primary transition-colors"
-                >
-                  {s}
-                </button>
-              ))}
+        {/* ── Gauche : PDF viewer ── */}
+        <div className="lg:col-span-3">
+          <div className="rounded-lg border border-border bg-card p-3">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Document
+                {selectedSource?.page && (
+                  <span className="ml-2 font-normal normal-case">— page {selectedSource.page}</span>
+                )}
+              </p>
+              <button
+                onClick={() => setPdfOpen(true)}
+                title="Plein écran"
+                className="text-xs text-muted-foreground hover:text-primary transition-colors px-1.5 py-0.5 rounded border border-border hover:border-primary"
+              >
+                ⛶ Plein écran
+              </button>
             </div>
-          )}
+            <AnalysisPdfViewer
+              analysisId={analysisId}
+              page={selectedSource?.page ?? 1}
+              highlight={selectedSource?.excerpt ?? null}
+            />
+          </div>
+        </div>
 
-          <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-1">
-            {messages.map((msg, i) => (
-              <div key={i}>
-                {/* Bulle */}
-                <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
-                  <div className={[
-                    "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
-                    msg.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-foreground",
-                  ].join(" ")}>
-                    <p className="whitespace-pre-wrap">{msg.content || (loading && i === messages.length - 1 ? "…" : "")}</p>
+        {/* ── Droite : Chat ── */}
+        <div className="lg:col-span-2 flex flex-col gap-3">
+          <div className="rounded-lg border border-border bg-card p-3 flex flex-col gap-3">
+            {messages.length === 0 && (
+              <div className="flex flex-wrap gap-2 py-1">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => sendMessage(s)}
+                    className="text-xs px-3 py-1.5 rounded-full border border-border hover:border-primary hover:text-primary transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-1">
+              {messages.map((msg, i) => (
+                <div key={i}>
+                  <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
+                    <div className={[
+                      "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-foreground",
+                    ].join(" ")}>
+                      {msg.role === "assistant" && msg.isComplete && msg.sources?.length ? (
+                        <p className="whitespace-pre-wrap">
+                          {renderWithCitations(msg.content, msg.sources, selectedSource, setSelectedSource)}
+                        </p>
+                      ) : (
+                        <p className="whitespace-pre-wrap">
+                          {msg.content || (loading && i === messages.length - 1 ? "…" : "")}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
+              ))}
+              <div ref={bottomRef} />
+            </div>
 
-                {/* Sources sous le message assistant */}
-                {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
-                  <div className="mt-2 space-y-1 pl-1">
-                    {msg.sources.map((src) => (
-                      <button
-                        key={src.index}
-                        onClick={() => setSelectedSource(src)}
-                        className={[
-                          "w-full text-left rounded px-2 py-1.5 text-xs transition-colors border",
-                          selectedSource?.index === src.index && selectedSource?.excerpt === src.excerpt
-                            ? "border-primary bg-primary/5 text-primary"
-                            : "border-border hover:border-primary/50 hover:bg-muted/50 text-muted-foreground",
-                        ].join(" ")}
-                      >
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                          <span className="font-bold text-primary">[{src.index}]</span>
-                          <span className={[
-                            "px-1 py-0.5 rounded text-[10px] font-medium",
-                            src.is_document ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
-                          ].join(" ")}>
-                            {src.is_document ? "Document" : "Corpus"}
-                          </span>
-                          {src.page && <span className="text-[10px]">p.{src.page}</span>}
-                          <span className="ml-auto text-[10px]">{Math.max(0, Math.round(src.similarity * 100))}%</span>
-                        </div>
-                        <p className="line-clamp-2 text-[11px] leading-relaxed">{src.excerpt}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-            <div ref={bottomRef} />
+            {/* Input */}
+            <form
+              onSubmit={(e) => { e.preventDefault(); sendMessage(input) }}
+              className="flex gap-2 pt-1 border-t border-border mt-1"
+            >
+              <Input
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={warming ? "Initialisation du modèle…" : "Posez une question…"}
+                disabled={loading || warming}
+                className="flex-1 text-sm"
+              />
+              <Button type="submit" size="sm" disabled={loading || warming || !input.trim()}>
+                {loading ? "…" : "Envoyer"}
+              </Button>
+            </form>
           </div>
-
-          {/* Input */}
-          <form
-            onSubmit={(e) => { e.preventDefault(); sendMessage(input) }}
-            className="flex gap-2 pt-1 border-t border-border mt-1"
-          >
-            <Input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={warming ? "Initialisation du modèle…" : "Posez une question…"}
-              disabled={loading || warming}
-              className="flex-1 text-sm"
-            />
-            <Button type="submit" size="sm" disabled={loading || warming || !input.trim()}>
-              {loading ? "…" : "Envoyer"}
-            </Button>
-          </form>
         </div>
+
       </div>
 
-    </div>
+      {/* ── Modal PDF plein écran ── */}
+      <Dialog open={pdfOpen} onOpenChange={setPdfOpen}>
+        <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col p-4 gap-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-muted-foreground">
+              Document{selectedSource?.page ? ` — page ${selectedSource.page}` : ""}
+            </p>
+          </div>
+          <div className="flex-1 overflow-auto">
+            <AnalysisPdfViewer
+              analysisId={analysisId}
+              page={selectedSource?.page ?? 1}
+              highlight={selectedSource?.excerpt ?? null}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
