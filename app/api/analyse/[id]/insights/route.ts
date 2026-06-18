@@ -202,7 +202,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       supabase.rpc("match_chunks", {
         query_embedding: meanEmbedding,
         match_threshold: 0.1,
-        match_count: 8,
+        match_count: 30,
       }).then(({ data, error }) => {
         if (error) throw error
         // Filtrer les chunks de cette analyse (is_temp)

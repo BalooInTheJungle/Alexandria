@@ -101,7 +101,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { data: corpusChunksRaw, error: corpusErr } = await supabase.rpc("match_chunks", {
     query_embedding: embedding,
     match_threshold: 0.5,
-    match_count: 4,
+    match_count: 15,
   })
   if (corpusErr) console.error("[API] match_chunks corpus error:", corpusErr)
 
