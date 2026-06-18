@@ -35,6 +35,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
+  const [warming, setWarming] = useState(true)
   const [activeSources, setActiveSources] = useState<Source[] | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -42,6 +43,13 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
+
+  useEffect(() => {
+    LOG("warmup start")
+    fetch("/api/analyse/warmup")
+      .then(() => { LOG("warmup done"); setWarming(false) })
+      .catch(() => { LOG("warmup failed — allowing anyway"); setWarming(false) })
+  }, [])
 
   async function sendMessage(query: string) {
     if (!query.trim() || loading) return
@@ -191,11 +199,11 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Posez une question sur ce document…"
-                disabled={loading}
+                placeholder={warming ? "Initialisation du modèle…" : "Posez une question sur ce document…"}
+                disabled={loading || warming}
                 className="flex-1 text-sm"
               />
-              <Button type="submit" size="sm" disabled={loading || !input.trim()}>
+              <Button type="submit" size="sm" disabled={loading || warming || !input.trim()}>
                 {loading ? "…" : "Envoyer"}
               </Button>
             </form>
