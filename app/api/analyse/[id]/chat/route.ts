@@ -70,37 +70,51 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Analysis not found" }, { status: 404 })
   }
 
-  LOG("start", { analysisId, query: query.slice(0, 60) })
+  LOG("start", { analysisId, documentId: analysis.document_id, query: query.slice(0, 80) })
 
-  const embedding = await embedQuery(query)
+  let embedding: number[]
+  try {
+    embedding = await embedQuery(query)
+    LOG("embedding ok", { dims: embedding.length })
+  } catch (err) {
+    console.error("[API] POST /api/analyse/[id]/chat embedding error:", err)
+    return NextResponse.json({ error: "Embedding failed" }, { status: 500 })
+  }
 
   // 1. Chunks du document analysé (priorité)
-  const { data: docChunksRaw } = await supabase.rpc("match_chunks", {
+  const { data: docChunksRaw, error: docErr } = await supabase.rpc("match_chunks", {
     query_embedding: embedding,
     match_threshold: 0.3,
     match_count: 6,
   })
+  if (docErr) console.error("[API] match_chunks doc error:", docErr)
 
-  const docChunks: MatchedChunk[] = ((docChunksRaw ?? []) as MatchedChunk[])
+  const docChunksAll = (docChunksRaw ?? []) as MatchedChunk[]
+  LOG("match_chunks raw (all)", { total: docChunksAll.length, documentId: analysis.document_id })
+
+  const docChunks: MatchedChunk[] = docChunksAll
     .filter((c) => c.document_id === analysis.document_id)
     .slice(0, 5)
+  LOG("doc chunks after filter", { count: docChunks.length, similarities: docChunks.map((c) => c.similarity) })
 
   // 2. Chunks corpus complémentaires (hors document analysé)
-  const { data: corpusChunksRaw } = await supabase.rpc("match_chunks", {
+  const { data: corpusChunksRaw, error: corpusErr } = await supabase.rpc("match_chunks", {
     query_embedding: embedding,
     match_threshold: 0.5,
     match_count: 4,
   })
+  if (corpusErr) console.error("[API] match_chunks corpus error:", corpusErr)
 
   const corpusChunks: MatchedChunk[] = ((corpusChunksRaw ?? []) as MatchedChunk[])
     .filter((c) => c.document_id !== analysis.document_id)
     .slice(0, 3)
-
-  LOG("chunks", { docChunks: docChunks.length, corpusChunks: corpusChunks.length })
+  LOG("corpus chunks after filter", { count: corpusChunks.length, similarities: corpusChunks.map((c) => c.similarity) })
 
   const allChunks = [...docChunks, ...corpusChunks]
+  LOG("total chunks for context", { total: allChunks.length })
 
   if (allChunks.length === 0) {
+    LOG("no chunks found — returning guard message")
     return NextResponse.json({
       answer: "Je n'ai pas trouvé de passage pertinent dans le document pour répondre à cette question.",
       sources: [],
@@ -128,7 +142,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   ]
 
   const apiKey = getSanitizedOpenAIKey()
-  if (!apiKey) return NextResponse.json({ error: "OPENAI_API_KEY not set" }, { status: 500 })
+  if (!apiKey) {
+    console.error("[API] POST /api/analyse/[id]/chat OPENAI_API_KEY missing")
+    return NextResponse.json({ error: "OPENAI_API_KEY not set" }, { status: 500 })
+  }
+
+  LOG("calling OpenAI", { model: "gpt-4o-mini", contextChunks: allChunks.length, historyMessages: history.length })
 
   const client = new OpenAI({ apiKey })
 
