@@ -11,13 +11,17 @@ const cacheDir = path.join(process.cwd(), ".model-cache")
 
 console.log("[prebuild-embed] Downloading model to", cacheDir)
 
-try {
-  await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
-    quantized: true,
-    cache_dir: cacheDir,
-  } as object)
-  console.log("[prebuild-embed] Model cached successfully")
-} catch (err) {
-  console.error("[prebuild-embed] Failed:", err)
-  process.exit(1)
+async function main() {
+  try {
+    await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+      quantized: true,
+      cache_dir: cacheDir,
+    } as object)
+    console.log("[prebuild-embed] Model cached successfully")
+  } catch (err) {
+    console.error("[prebuild-embed] Failed:", err)
+    process.exit(1)
+  }
 }
+
+main()
