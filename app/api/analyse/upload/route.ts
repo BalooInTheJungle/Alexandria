@@ -142,10 +142,7 @@ export async function POST(request: Request) {
     // Marquer processing → ready (insights pas encore calculés)
     await Promise.all([
       supabase.from("document_analyses").update({ status: "ready" }).eq("id", analysisId),
-      supabase.from("documents").update({
-        status: "done",
-        ingestion_log: { numpages, chunks_count: totalInserted, ingested_at: new Date().toISOString() },
-      }).eq("id", documentId),
+      supabase.from("documents").update({ status: "done" }).eq("id", documentId),
     ])
 
     LOG("done", { analysisId, documentId, totalInserted, doi })
