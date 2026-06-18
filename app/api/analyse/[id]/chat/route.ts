@@ -114,10 +114,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   LOG("total chunks for context", { total: allChunks.length })
 
   if (allChunks.length === 0) {
-    LOG("no chunks found — returning guard message")
-    return NextResponse.json({
-      answer: "Je n'ai pas trouvé de passage pertinent dans le document pour répondre à cette question.",
-      sources: [],
+    LOG("no chunks found — returning guard message as SSE")
+    const enc = new TextEncoder()
+    const guardMsg = "Je n'ai pas trouvé de passage pertinent dans le document pour répondre à cette question."
+    const readable = new ReadableStream({
+      start(controller) {
+        controller.enqueue(enc.encode(`data: ${JSON.stringify({ sources: [] })}\n\n`))
+        controller.enqueue(enc.encode(`data: ${JSON.stringify({ token: guardMsg })}\n\n`))
+        controller.enqueue(enc.encode("data: [DONE]\n\n"))
+        controller.close()
+      }
+    })
+    return new Response(readable, {
+      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" }
     })
   }
 
