@@ -41,6 +41,7 @@ export default function AnalysePage() {
     }
     setUploading(true)
     setUploadError(null)
+    fetch("/api/analyse/warmup") // préchauffe le modèle pendant l'upload
     try {
       const form = new FormData()
       form.append("file", file)
