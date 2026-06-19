@@ -105,10 +105,10 @@ export default function AnalysisPage() {
   const topScore = corpusRefs.length > 0 ? Math.max(...corpusRefs.map((r) => r.similarity)) : 0
 
   return (
-    <main className="w-full px-6 py-4 space-y-4">
+    <main className="w-full px-6 flex flex-col overflow-hidden" style={{ height: "calc(100vh - 57px)" }}>
 
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 py-3 shrink-0">
         <div className="space-y-1">
           <button onClick={() => router.push("/analyse")} className="text-xs text-muted-foreground hover:text-foreground">
             ← Retour
@@ -128,7 +128,7 @@ export default function AnalysisPage() {
       </div>
 
       {/* Onglets */}
-      <div className="flex gap-1 border-b border-border overflow-x-auto">
+      <div className="flex gap-1 border-b border-border overflow-x-auto shrink-0">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -147,7 +147,7 @@ export default function AnalysisPage() {
 
       {/* ── Onglet 1 : Proximité corpus ── */}
       {tab === "corpus" && (
-        <div className="space-y-6">
+        <div className="flex-1 overflow-y-auto py-4 space-y-6">
           {corpusRefs.length === 0 ? (
             <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Aucune connexion trouvée dans le corpus.</CardContent></Card>
           ) : (
@@ -192,7 +192,7 @@ export default function AnalysisPage() {
 
       {/* ── Onglet 2 : Résumé ── */}
       {tab === "summary" && (
-        <div className="space-y-4">
+        <div className="flex-1 overflow-y-auto py-4 space-y-4">
           {!summary ? (
             <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">Résumé non disponible.</CardContent></Card>
           ) : (
@@ -220,19 +220,14 @@ export default function AnalysisPage() {
 
       {/* ── Onglet 3 : Discussion ── */}
       {tab === "chat" && (
-        <div className="h-[calc(100vh-190px)] flex flex-col gap-3">
-          <p className="text-sm text-muted-foreground shrink-0">
-            Interrogez ce document et votre corpus. Les réponses citent les passages sources.
-          </p>
-          <div className="flex-1 min-h-0">
-            <AnalysisChatPanel analysisId={id} title={analysis.title ?? undefined} />
-          </div>
+        <div className="flex-1 min-h-0 py-2">
+          <AnalysisChatPanel analysisId={id} title={analysis.title ?? undefined} />
         </div>
       )}
 
       {/* ── Onglet 4 : Aller plus loin ── */}
       {tab === "recommend" && (
-        <div className="space-y-6">
+        <div className="flex-1 overflow-y-auto py-4 space-y-6">
 
           {/* Références citées */}
           {citedRefs.length > 0 && (

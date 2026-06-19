@@ -342,14 +342,14 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
                                       : "border-border hover:border-primary/50 hover:bg-muted/40",
                                   ].join(" ")}
                                 >
-                                  <div className="flex items-center gap-2 mb-1.5">
+                                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                                     <span className="font-bold text-primary">[{src.index}]</span>
                                     <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] font-medium">Document</span>
                                     {src.page && (
-                                      <span className="text-muted-foreground text-[10px]">Page {src.page}</span>
+                                      <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">p. {src.page}</span>
                                     )}
                                     {src.section_title && (
-                                      <span className="text-muted-foreground text-[10px] truncate">· {src.section_title}</span>
+                                      <span className="text-muted-foreground text-[10px] truncate max-w-[120px]">{src.section_title}</span>
                                     )}
                                     <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
                                       {Math.max(0, Math.round(src.similarity * 100))}%
