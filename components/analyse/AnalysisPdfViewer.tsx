@@ -85,8 +85,8 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
         </p>
       )}
 
-      {/* Scroll vertical continu */}
-      <div className="overflow-auto flex-1 min-h-0 rounded border border-border">
+      {/* Scroll horizontal continu — toutes les pages en ligne */}
+      <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0 rounded border border-border">
         <Document
           file={pdfUrl}
           onLoadSuccess={({ numPages: n }) => {
@@ -96,29 +96,31 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
           onLoadError={() => setError("Impossible de lire le PDF")}
           loading={<div className="text-xs text-muted-foreground py-8 text-center animate-pulse">Chargement…</div>}
         >
-          {Array.from({ length: numPages }, (_, i) => {
-            const pageNum = i + 1
-            const isTarget = pageNum === page
-            return (
-              <div
-                key={pageNum}
-                ref={(el) => { pageRefs.current[i] = el }}
-                className={[
-                  "border-b border-border last:border-b-0",
-                  isTarget ? "ring-2 ring-primary/30" : "",
-                ].join(" ")}
-              >
-                <Page
-                  pageNumber={pageNum}
-                  width={containerWidth > 0 ? containerWidth - 2 : 700}
-                  renderTextLayer={true}
-                  renderAnnotationLayer={false}
-                  customTextRenderer={isTarget ? makeTextRenderer(pageNum) : undefined}
-                  loading={<div style={{ height: 800 }} className="animate-pulse bg-muted/10" />}
-                />
-              </div>
-            )
-          })}
+          <div className="flex flex-row gap-2 p-2 w-max">
+            {Array.from({ length: numPages }, (_, i) => {
+              const pageNum = i + 1
+              const isTarget = pageNum === page
+              return (
+                <div
+                  key={pageNum}
+                  ref={(el) => { pageRefs.current[i] = el }}
+                  className={[
+                    "rounded shrink-0 border border-border",
+                    isTarget ? "ring-2 ring-primary/50" : "",
+                  ].join(" ")}
+                >
+                  <Page
+                    pageNumber={pageNum}
+                    height={Math.max(400, (containerRef.current?.clientHeight ?? 600) - 20)}
+                    renderTextLayer={true}
+                    renderAnnotationLayer={false}
+                    customTextRenderer={isTarget ? makeTextRenderer(pageNum) : undefined}
+                    loading={<div style={{ width: 300, height: 400 }} className="animate-pulse bg-muted/10" />}
+                  />
+                </div>
+              )
+            })}
+          </div>
         </Document>
       </div>
     </div>
