@@ -294,7 +294,7 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col justify-end flex-1 space-y-4 py-1">
+                <div className="space-y-4 py-1">
                   {messages.map((msg, i) => (
                     <div key={i}>
                       <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
