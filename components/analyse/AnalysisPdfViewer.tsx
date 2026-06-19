@@ -111,7 +111,7 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
                 >
                   <Page
                     pageNumber={pageNum}
-                    height={Math.max(400, (containerRef.current?.clientHeight ?? 600) - 20)}
+                    height={480}
                     renderTextLayer={true}
                     renderAnnotationLayer={false}
                     customTextRenderer={isTarget ? makeTextRenderer(pageNum) : undefined}
