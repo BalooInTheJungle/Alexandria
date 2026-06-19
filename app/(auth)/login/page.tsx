@@ -33,7 +33,7 @@ export default function LoginPage() {
         return;
       }
       router.refresh();
-      router.push("/rag");
+      router.push("/bibliographie");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur de connexion");
     } finally {
