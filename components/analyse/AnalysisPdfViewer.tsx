@@ -74,7 +74,7 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
   )
 
   return (
-    <div ref={containerRef} className="w-full">
+    <div ref={containerRef} className="w-full h-full flex flex-col gap-2">
       {/* Navigation pages */}
       <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
         <button
@@ -90,7 +90,7 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
         >→</button>
       </div>
 
-      <div className="overflow-auto rounded border border-border max-h-[70vh]">
+      <div className="overflow-auto rounded border border-border flex-1 min-h-0">
         <Document
           file={pdfUrl}
           onLoadSuccess={({ numPages }) => setNumPages(numPages)}

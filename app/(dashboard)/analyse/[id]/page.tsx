@@ -105,7 +105,7 @@ export default function AnalysisPage() {
   const topScore = corpusRefs.length > 0 ? Math.max(...corpusRefs.map((r) => r.similarity)) : 0
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+    <main className="w-full px-6 py-4 space-y-4">
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
@@ -220,11 +220,13 @@ export default function AnalysisPage() {
 
       {/* ── Onglet 3 : Discussion ── */}
       {tab === "chat" && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
+        <div className="h-[calc(100vh-190px)] flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground shrink-0">
             Interrogez ce document et votre corpus. Les réponses citent les passages sources.
           </p>
-          <AnalysisChatPanel analysisId={id} />
+          <div className="flex-1 min-h-0">
+            <AnalysisChatPanel analysisId={id} />
+          </div>
         </div>
       )}
 

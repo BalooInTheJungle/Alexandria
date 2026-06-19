@@ -238,11 +238,11 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 h-full">
 
         {/* ── Gauche : PDF viewer ── */}
-        <div className="lg:col-span-3">
-          <div className="rounded-lg border border-border bg-card p-3">
+        <div className="lg:col-span-3 h-full flex flex-col">
+          <div className="rounded-lg border border-border bg-card p-3 h-full flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Document
@@ -258,17 +258,19 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
                 ⛶ Plein écran
               </button>
             </div>
-            <AnalysisPdfViewer
-              analysisId={analysisId}
-              page={selectedSource?.page ?? 1}
-              highlight={selectedSource?.excerpt ?? null}
-            />
+            <div className="flex-1 min-h-0 overflow-auto">
+              <AnalysisPdfViewer
+                analysisId={analysisId}
+                page={selectedSource?.page ?? 1}
+                highlight={selectedSource?.excerpt ?? null}
+              />
+            </div>
           </div>
         </div>
 
         {/* ── Droite : Chat ── */}
-        <div className="lg:col-span-2 flex flex-col gap-3">
-          <div className="rounded-lg border border-border bg-card p-3 flex flex-col gap-3">
+        <div className="lg:col-span-2 h-full flex flex-col">
+          <div className="rounded-lg border border-border bg-card p-3 h-full flex flex-col gap-3">
             {messages.length === 0 && (
               <div className="flex flex-wrap gap-2 py-1">
                 {SUGGESTIONS.map((s) => (
@@ -283,7 +285,7 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
               </div>
             )}
 
-            <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-1">
+            <div className="space-y-4 flex-1 min-h-0 overflow-y-auto pr-1">
               {messages.map((msg, i) => (
                 <div key={i}>
                   <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
