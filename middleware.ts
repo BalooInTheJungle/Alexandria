@@ -27,8 +27,9 @@ export async function middleware(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
   const isProtected =
-    path.startsWith("/rag") ||
-    path.startsWith("/bibliographie");
+    path.startsWith("/bibliographie") ||
+    path.startsWith("/database") ||
+    path.startsWith("/analyse");
 
   if (isProtected && !user) {
     const loginUrl = new URL("/login", request.url);
@@ -36,12 +37,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user && (path === "/login" || path === "/auth/callback")) {
-    return NextResponse.redirect(new URL("/rag", request.url));
-  }
-
-  if (user && path === "/dashboard") {
-    return NextResponse.redirect(new URL("/rag", request.url));
+  if (user && (path === "/login" || path === "/auth/callback" || path === "/dashboard")) {
+    return NextResponse.redirect(new URL("/bibliographie", request.url));
   }
 
   return response;
