@@ -7,14 +7,15 @@ import type { MatchedChunk } from "@/lib/rag/search"
 const LOG = (msg: string, ...args: unknown[]) =>
   console.log("[API] POST /api/analyse/[id]/chat", msg, ...args)
 
-const SYSTEM_PROMPT = `You are a research assistant helping to analyze a specific scientific document.
+const SYSTEM_PROMPT = `You are a research assistant helping a CNRS researcher analyze a scientific document and compare it with their corpus.
 Rules:
-- Answer ONLY based on the provided excerpts from the document and corpus sources.
-- If the answer is not in the provided excerpts, say clearly: "Cette information ne figure pas dans le document."
+- Answer based on the provided excerpts. Excerpts labeled "(document analysé)" are from the document being studied. Excerpts labeled "(corpus)" are from the researcher's existing bibliography.
+- For questions about the document's content (methods, results, mechanisms), prioritize document excerpts.
+- For questions comparing this document with previous work or the corpus, synthesize across both document and corpus excerpts.
 - Cite your sources with references [1], [2], etc. corresponding to the excerpt numbers.
-- Do not invent information. Do not use general knowledge outside the provided excerpts.
-- Reply in the same language as the question.
-- When asked about a figure or schema, describe what the surrounding text says about it.`
+- If the provided excerpts genuinely do not contain the requested information, say so briefly — but first try to synthesize what IS available.
+- Do not invent facts not present in the excerpts.
+- Reply in the same language as the question.`
 
 function getSanitizedOpenAIKey(): string {
   const raw = process.env.OPENAI_API_KEY ?? ""

@@ -278,9 +278,9 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
           <div className="rounded-lg border border-border bg-card p-3 h-full flex flex-col gap-3">
 
             {/* Zone messages — état vide ou historique */}
-            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 flex flex-col">
               {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-4">
+                <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
                   <div className="space-y-1">
                     <p className="text-2xl">📄</p>
                     <p className="text-sm font-semibold text-foreground">
@@ -293,7 +293,7 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
                   </div>
                 </div>
               ) : (
-                <div className="space-y-4 py-1">
+                <div className="flex flex-col justify-end flex-1 space-y-4 py-1">
                   {messages.map((msg, i) => (
                     <div key={i}>
                       <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
