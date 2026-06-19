@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const links = [
-  { href: "/rag", label: "Chatbot" },
   { href: "/database", label: "Database" },
   { href: "/bibliographie", label: "Bibliographie" },
   { href: "/analyse", label: "Analyse" },

@@ -20,7 +20,7 @@ export default async function DashboardLayout({
     <>
       <header className="flex items-center justify-between border-b border-border px-4 py-2">
         <div className="flex items-center gap-4">
-          <Link href="/rag" className="flex items-center shrink-0">
+          <Link href="/database" className="flex items-center shrink-0">
             <Image
               src={LOGO_YELLOW_PATH}
               alt="Alexandria"
