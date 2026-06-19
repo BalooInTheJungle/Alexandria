@@ -11,9 +11,9 @@ const t = {
   fr: {
     nav_login: "Connexion",
     hero_tag: "Outil de recherche scientifique IA",
-    hero_title: "Votre corpus.\nVotre veille.\nVotre assistant.",
+    hero_title: "Votre corpus.\nVotre veille.\nVotre analyse.",
     hero_sub:
-      "Alexandria centralise votre bibliothèque scientifique, surveille la littérature mondiale et vous aide à lire plus vite — sans quitter votre domaine.",
+      "Alexandria centralise votre bibliothèque scientifique, surveille la littérature mondiale et vous aide à analyser chaque article — sans quitter votre domaine.",
     cta: "Accéder à l'application",
     modules_title: "Trois modules, un seul outil",
     modules_sub:
@@ -26,22 +26,22 @@ const t = {
     m1_b2: "Filtre ASAP / preprints automatique",
     m1_b3: "Synthèse IA quotidienne",
     m1_b4: "Sources RSS + Semantic Scholar",
-    m2_tag: "Module 2 — Bientôt",
+    m2_tag: "Module 2",
     m2_title: "Lecture assistée",
     m2_desc:
-      "Identifiez un article pertinent ? Alexandria vous aide à le lire. Résumé structuré, connexions avec votre corpus, autres publications de l'auteur — sans uploader le PDF si l'abstract suffit.",
-    m2_b1: "Résumé Problème / Méthode / Résultats",
-    m2_b2: "Articles du corpus les plus proches",
-    m2_b3: "Autres travaux de l'auteur (OpenAlex)",
-    m2_b4: "Analyse complète sur upload PDF",
+      "Uploadez un PDF : Alexandria le résume, identifie les connexions avec votre corpus et vous permet d'interroger le document en langage naturel. Les réponses citent les passages sources.",
+    m2_b1: "Résumé structuré (problème / méthodes / résultats)",
+    m2_b2: "Passages du corpus les plus proches",
+    m2_b3: "Discussion IA avec citations cliquables",
+    m2_b4: "Scroll PDF synchronisé avec les sources",
     m3_tag: "Module 3",
-    m3_title: "RAG sur corpus",
+    m3_title: "Analyse approfondie",
     m3_desc:
-      "Interrogez directement vos 850 000+ chunks de littérature scientifique en langage naturel. Réponses sourcées, streaming, historique de conversations.",
-    m3_b1: "Recherche hybride vectorielle + FTS",
-    m3_b2: "Réponses sourcées avec citations",
-    m3_b3: "Streaming SSE",
-    m3_b4: "Historique de conversations",
+      "Comparez l'article analysé à votre bibliographie, explorez les références citées, et découvrez des recommandations Semantic Scholar pour aller plus loin dans la lecture.",
+    m3_b1: "Proximité sémantique avec le corpus",
+    m3_b2: "Références citées (dans le corpus ou non)",
+    m3_b3: "Recommandations Semantic Scholar",
+    m3_b4: "Intégration directe au corpus",
     stats_title: "Ce que dit la recherche",
     stats_sub:
       "Sondage mené auprès de 39 chercheurs — doctorants et enseignants-chercheurs.",
@@ -58,17 +58,17 @@ const t = {
     h1_desc: "Vos PDFs sont découpés en chunks, traduits si besoin, et indexés avec des embeddings 384D dans Supabase pgvector.",
     h2_title: "Veille quotidienne",
     h2_desc: "Un pipeline GitHub Actions tourne à 9h chaque matin : RSS, Semantic Scholar, scoring sémantique, analyse GPT.",
-    h3_title: "Interface unifiée",
-    h3_desc: "Veille scorée, lecture assistée et RAG chat dans une seule interface — sans changer d'outil.",
+    h3_title: "Analyse à la demande",
+    h3_desc: "Uploadez un article : résumé structuré, connexions corpus, discussion IA et recommandations — en moins de 30 secondes.",
     footer_made: "Construit pour la recherche académique.",
     footer_stack: "Next.js · Supabase · OpenAI · Semantic Scholar",
   },
   en: {
     nav_login: "Login",
     hero_tag: "AI Scientific Research Tool",
-    hero_title: "Your corpus.\nYour monitoring.\nYour assistant.",
+    hero_title: "Your corpus.\nYour monitoring.\nYour analysis.",
     hero_sub:
-      "Alexandria centralizes your scientific library, monitors global literature and helps you read faster — without leaving your field.",
+      "Alexandria centralizes your scientific library, monitors global literature and helps you analyze every paper — without leaving your field.",
     cta: "Open the app",
     modules_title: "Three modules, one tool",
     modules_sub: "Built for researchers who don't have time to read everything.",
@@ -80,22 +80,22 @@ const t = {
     m1_b2: "Automatic ASAP / preprint filter",
     m1_b3: "Daily AI synthesis",
     m1_b4: "RSS + Semantic Scholar sources",
-    m2_tag: "Module 2 — Coming soon",
+    m2_tag: "Module 2",
     m2_title: "Assisted Reading",
     m2_desc:
-      "Found a relevant paper? Alexandria helps you read it. Structured summary, connections to your corpus, other publications by the same author — no PDF upload needed if the abstract is enough.",
-    m2_b1: "Problem / Method / Results summary",
-    m2_b2: "Closest papers in your corpus",
-    m2_b3: "Other works by the author (OpenAlex)",
-    m2_b4: "Full analysis on PDF upload",
+      "Upload a PDF: Alexandria summarizes it, identifies connections with your corpus and lets you query the document in plain language. Answers cite the source passages.",
+    m2_b1: "Structured summary (problem / methods / results)",
+    m2_b2: "Closest passages in your corpus",
+    m2_b3: "AI discussion with clickable citations",
+    m2_b4: "PDF scroll synchronized with sources",
     m3_tag: "Module 3",
-    m3_title: "RAG on Corpus",
+    m3_title: "Deep Analysis",
     m3_desc:
-      "Query your 850,000+ chunks of scientific literature in plain language. Sourced answers, streaming, conversation history.",
-    m3_b1: "Hybrid vector + FTS search",
-    m3_b2: "Sourced answers with citations",
-    m3_b3: "SSE streaming",
-    m3_b4: "Conversation history",
+      "Compare the analyzed paper to your bibliography, explore cited references, and discover Semantic Scholar recommendations to go further.",
+    m3_b1: "Semantic proximity with the corpus",
+    m3_b2: "Cited references (in corpus or not)",
+    m3_b3: "Semantic Scholar recommendations",
+    m3_b4: "Direct integration into corpus",
     stats_title: "What research shows",
     stats_sub:
       "Survey conducted with 39 researchers — PhD students and faculty.",
@@ -112,8 +112,8 @@ const t = {
     h1_desc: "Your PDFs are chunked, translated if needed, and indexed with 384D embeddings in Supabase pgvector.",
     h2_title: "Daily monitoring",
     h2_desc: "A GitHub Actions pipeline runs at 9am every morning: RSS, Semantic Scholar, semantic scoring, GPT analysis.",
-    h3_title: "Unified interface",
-    h3_desc: "Scored monitoring, assisted reading and RAG chat in one interface — no tool switching.",
+    h3_title: "On-demand analysis",
+    h3_desc: "Upload a paper: structured summary, corpus connections, AI discussion and recommendations — in under 30 seconds.",
     footer_made: "Built for academic research.",
     footer_stack: "Next.js · Supabase · OpenAI · Semantic Scholar",
   },
@@ -137,21 +137,14 @@ function ModuleCard({
   title,
   desc,
   bullets,
-  soon,
 }: {
   tag: string;
   title: string;
   desc: string;
   bullets: string[];
-  soon?: boolean;
 }) {
   return (
-    <div className={`relative rounded-2xl border p-6 flex flex-col gap-4 ${soon ? "border-yellow-400/40 bg-yellow-500/5" : "border-border bg-card"}`}>
-      {soon && (
-        <span className="absolute top-4 right-4 text-xs font-medium px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-600">
-          Soon
-        </span>
-      )}
+    <div className="relative rounded-2xl border border-border bg-card p-6 flex flex-col gap-4">
       <div>
         <p className="text-xs font-semibold text-yellow-500 uppercase tracking-widest mb-1">{tag}</p>
         <h3 className="text-xl font-semibold">{title}</h3>
@@ -252,7 +245,6 @@ export default function LandingPage() {
             title={T.m2_title}
             desc={T.m2_desc}
             bullets={[T.m2_b1, T.m2_b2, T.m2_b3, T.m2_b4]}
-            soon
           />
           <ModuleCard
             tag={T.m3_tag}
