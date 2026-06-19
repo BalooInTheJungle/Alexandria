@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState, useCallback } from "react"
+import React, { useEffect, useState, useCallback, useRef } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
 import "react-pdf/dist/Page/TextLayer.css"
 import "react-pdf/dist/Page/AnnotationLayer.css"
@@ -20,10 +20,10 @@ function normalise(s: string) {
 export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [numPages, setNumPages] = useState<number>(0)
-  const [currentPage, setCurrentPage] = useState<number>(1)
-  const [error, setError] = useState<string | null>(null)
   const [containerWidth, setContainerWidth] = useState<number>(700)
-  const containerRef = React.useRef<HTMLDivElement>(null)
+  const [error, setError] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([])
 
   useEffect(() => {
     fetch(`/api/analyse/${analysisId}/pdf`)
@@ -32,10 +32,12 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
       .catch(() => setError("Erreur de chargement du PDF"))
   }, [analysisId])
 
-  // Sauter à la page quand la source change
+  // Scroll vers la page cible quand la source change
   useEffect(() => {
-    if (page && page > 0) setCurrentPage(page)
-  }, [page])
+    if (!page || page < 1) return
+    const el = pageRefs.current[page - 1]
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" })
+  }, [page, highlight])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -46,21 +48,21 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
     return () => ro.disconnect()
   }, [])
 
-  // Surlignage : cherche des fragments de l'extrait dans chaque item texte
-  const customTextRenderer = useCallback(({ str }: { str: string }) => {
-    if (!highlight || !str || str.length < 3) return str
-    const normStr = normalise(str)
-    const normHL = normalise(highlight)
-    // Cherche un fragment de 20 chars de l'extrait dans l'item texte
-    const fragment = normHL.slice(0, 40)
-    if (normStr.includes(fragment.slice(0, 20))) {
-      return `<mark style="background:rgba(234,179,8,0.45);border-radius:2px;padding:0 1px;">${str}</mark>`
+  // Surligne uniquement sur la page cible pour éviter les faux positifs
+  const makeTextRenderer = useCallback((targetPage: number) => {
+    return ({ str }: { str: string }) => {
+      if (!highlight || !str || str.length < 3) return str
+      const normStr = normalise(str)
+      const normHL = normalise(highlight)
+      const fragment = normHL.slice(0, 40)
+      if (normStr.includes(fragment.slice(0, 20))) {
+        return `<mark style="background:rgba(234,179,8,0.45);border-radius:2px;padding:0 1px;">${str}</mark>`
+      }
+      if (normHL.includes(normStr) && normStr.length > 10) {
+        return `<mark style="background:rgba(234,179,8,0.45);border-radius:2px;padding:0 1px;">${str}</mark>`
+      }
+      return str
     }
-    // Cherche aussi l'item dans l'extrait (pour les fragments courts)
-    if (normHL.includes(normStr) && normStr.length > 10) {
-      return `<mark style="background:rgba(234,179,8,0.45);border-radius:2px;padding:0 1px;">${str}</mark>`
-    }
-    return str
   }, [highlight])
 
   if (error) return (
@@ -74,37 +76,49 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
   )
 
   return (
-    <div ref={containerRef} className="w-full h-full flex flex-col gap-2">
-      {/* Navigation pages */}
-      <div className="flex items-center justify-between mb-2 text-xs text-muted-foreground">
-        <button
-          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-          disabled={currentPage <= 1}
-          className="px-2 py-0.5 rounded border border-border hover:border-primary disabled:opacity-30 transition-colors"
-        >←</button>
-        <span>Page {currentPage}{numPages ? ` / ${numPages}` : ""}</span>
-        <button
-          onClick={() => setCurrentPage((p) => Math.min(numPages, p + 1))}
-          disabled={currentPage >= numPages}
-          className="px-2 py-0.5 rounded border border-border hover:border-primary disabled:opacity-30 transition-colors"
-        >→</button>
-      </div>
+    <div ref={containerRef} className="w-full h-full flex flex-col">
+      {/* Indicateur page courante */}
+      {numPages > 0 && (
+        <p className="text-[10px] text-muted-foreground mb-1 shrink-0">
+          {numPages} page{numPages > 1 ? "s" : ""}
+          {page ? ` · affichage page ${page}` : ""}
+        </p>
+      )}
 
-      <div className="overflow-auto rounded border border-border flex-1 min-h-0">
+      {/* Scroll vertical continu */}
+      <div className="overflow-auto flex-1 min-h-0 rounded border border-border">
         <Document
           file={pdfUrl}
-          onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+          onLoadSuccess={({ numPages: n }) => {
+            setNumPages(n)
+            pageRefs.current = new Array(n).fill(null)
+          }}
           onLoadError={() => setError("Impossible de lire le PDF")}
           loading={<div className="text-xs text-muted-foreground py-8 text-center animate-pulse">Chargement…</div>}
         >
-          <Page
-            key={`page-${currentPage}`}
-            pageNumber={currentPage}
-            width={containerWidth > 0 ? containerWidth - 2 : 400}
-            renderTextLayer={true}
-            renderAnnotationLayer={false}
-            customTextRenderer={customTextRenderer}
-          />
+          {Array.from({ length: numPages }, (_, i) => {
+            const pageNum = i + 1
+            const isTarget = pageNum === page
+            return (
+              <div
+                key={pageNum}
+                ref={(el) => { pageRefs.current[i] = el }}
+                className={[
+                  "border-b border-border last:border-b-0",
+                  isTarget ? "ring-2 ring-primary/30" : "",
+                ].join(" ")}
+              >
+                <Page
+                  pageNumber={pageNum}
+                  width={containerWidth > 0 ? containerWidth - 2 : 700}
+                  renderTextLayer={true}
+                  renderAnnotationLayer={false}
+                  customTextRenderer={isTarget ? makeTextRenderer(pageNum) : undefined}
+                  loading={<div style={{ height: 800 }} className="animate-pulse bg-muted/10" />}
+                />
+              </div>
+            )
+          })}
         </Document>
       </div>
     </div>
