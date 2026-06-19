@@ -60,6 +60,16 @@ export default function AnalysisPage() {
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<TabId>("corpus")
 
+  // Bloque le scroll du body uniquement sur l'onglet Discussion
+  useEffect(() => {
+    if (tab === "chat") {
+      document.body.style.overflow = "hidden"
+    } else {
+      document.body.style.overflow = ""
+    }
+    return () => { document.body.style.overflow = "" }
+  }, [tab])
+
   useEffect(() => {
     let cancelled = false
     fetch(`/api/analyse/${id}/insights`)
