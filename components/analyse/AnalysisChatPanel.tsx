@@ -131,7 +131,7 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
   const [warming, setWarming] = useState(true)
   const [selectedSource, setSelectedSource] = useState<Source | null>(null)
   const [pdfOpen, setPdfOpen] = useState(false)
-  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [suggestions, setSuggestions] = useState<string[]>(SUGGESTIONS)
   const [expandedSources, setExpandedSources] = useState<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -189,7 +189,6 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
           const raw = line.slice(6).trim()
           if (raw === "[DONE]") {
             LOG("stream done:", { sourcesReceived: sources.length, tokenCount })
-            // Marquer le message comme complet → active les citations cliquables
             setMessages((prev) => {
               const next = [...prev]
               next[next.length - 1] = { ...next[next.length - 1], isComplete: true }
@@ -207,7 +206,6 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
                 next[next.length - 1] = { ...next[next.length - 1], sources }
                 return next
               })
-              // Auto-sélectionner la première source document pour le PDF
               const firstDocSrc = sources.find((s) => s.is_document) ?? sources[0]
               if (firstDocSrc) setSelectedSource(firstDocSrc)
             }
@@ -278,10 +276,10 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
         <div className="lg:col-span-2 h-full flex flex-col">
           <div className="rounded-lg border border-border bg-card p-3 h-full flex flex-col gap-3">
 
-            {/* Zone messages — état vide ou historique */}
-            <div className="flex-1 min-h-0 overflow-y-auto pr-1 flex flex-col">
+            {/* Zone messages — scroll ChatGPT-style : messages ancrés en bas, overflow vers le haut */}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
               {messages.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
+                <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-4">
                   <div className="space-y-1">
                     <p className="text-2xl">📄</p>
                     <p className="text-sm font-semibold text-foreground">
@@ -294,102 +292,106 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
                   </div>
                 </div>
               ) : (
-                <div className="space-y-4 py-1">
-                  {messages.map((msg, i) => (
-                    <div key={i}>
-                      <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
-                        <div className={[
-                          "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
-                          msg.role === "user"
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-foreground",
-                        ].join(" ")}>
-                          {msg.role === "assistant" && msg.isComplete && msg.sources?.length ? (
-                            renderMarkdown(msg.content, msg.sources, selectedSource, setSelectedSource)
-                          ) : (
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                              {msg.content || (loading && i === messages.length - 1 ? "…" : "")}
-                            </p>
-                          )}
+                <div className="flex flex-col min-h-full">
+                  {/* Spacer : pousse les messages vers le bas quand peu de contenu */}
+                  <div className="flex-1" />
+                  <div className="space-y-4 py-1">
+                    {messages.map((msg, i) => (
+                      <div key={i}>
+                        <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
+                          <div className={[
+                            "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
+                            msg.role === "user"
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-foreground",
+                          ].join(" ")}>
+                            {msg.role === "assistant" && msg.isComplete && msg.sources?.length ? (
+                              renderMarkdown(msg.content, msg.sources, selectedSource, setSelectedSource)
+                            ) : (
+                              <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                                {msg.content || (loading && i === messages.length - 1 ? "…" : "")}
+                              </p>
+                            )}
+                          </div>
                         </div>
+
+                        {/* Dropdown sources sous chaque réponse assistant complète */}
+                        {msg.role === "assistant" && msg.isComplete && msg.sources && msg.sources.length > 0 && (
+                          <div className="mt-1.5 ml-1">
+                            <button
+                              onClick={() => setExpandedSources(expandedSources === i ? null : i)}
+                              className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              <span>{expandedSources === i ? "▾" : "▸"}</span>
+                              <span>
+                                {msg.sources.filter(s => s.is_document).length} source{msg.sources.filter(s => s.is_document).length > 1 ? "s" : ""} dans le document
+                                {msg.sources.filter(s => !s.is_document).length > 0 && ` · ${msg.sources.filter(s => !s.is_document).length} corpus`}
+                              </span>
+                            </button>
+
+                            {expandedSources === i && (
+                              <div className="mt-2 flex flex-col gap-2">
+                                {/* Sources document en premier */}
+                                {msg.sources.filter(s => s.is_document).map((src) => (
+                                  <button
+                                    key={`doc-${src.index}`}
+                                    onClick={() => setSelectedSource(src)}
+                                    className={[
+                                      "text-left rounded-lg border p-2.5 text-xs transition-colors w-full",
+                                      selectedSource?.index === src.index && selectedSource?.excerpt === src.excerpt
+                                        ? "border-primary bg-primary/5"
+                                        : "border-border hover:border-primary/50 hover:bg-muted/40",
+                                    ].join(" ")}
+                                  >
+                                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                      <span className="font-bold text-primary">[{src.index}]</span>
+                                      <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] font-medium">Document</span>
+                                      {src.page && (
+                                        <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">p. {src.page}</span>
+                                      )}
+                                      {src.section_title && (
+                                        <span className="text-muted-foreground text-[10px] truncate max-w-[120px]">{src.section_title}</span>
+                                      )}
+                                      <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                                        {Math.max(0, Math.round(src.similarity * 100))}%
+                                      </span>
+                                    </div>
+                                    <p className="text-muted-foreground leading-relaxed line-clamp-4">{src.excerpt}</p>
+                                  </button>
+                                ))}
+
+                                {/* Sources corpus ensuite */}
+                                {msg.sources.filter(s => !s.is_document).map((src) => (
+                                  <div
+                                    key={`corpus-${src.index}`}
+                                    className="text-left rounded-lg border border-border bg-muted/20 p-2.5 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                      <span className="font-bold text-muted-foreground">[{src.index}]</span>
+                                      <span className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded text-[10px] font-medium">Corpus</span>
+                                      {src.doc_title && (
+                                        <span className="text-muted-foreground text-[10px] truncate">· {src.doc_title}</span>
+                                      )}
+                                      <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                                        {Math.max(0, Math.round(src.similarity * 100))}%
+                                      </span>
+                                    </div>
+                                    <p className="text-muted-foreground leading-relaxed line-clamp-4">{src.excerpt}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-
-                      {/* Dropdown sources sous chaque réponse assistant complète */}
-                      {msg.role === "assistant" && msg.isComplete && msg.sources && msg.sources.length > 0 && (
-                        <div className="mt-1.5 ml-1">
-                          <button
-                            onClick={() => setExpandedSources(expandedSources === i ? null : i)}
-                            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            <span>{expandedSources === i ? "▾" : "▸"}</span>
-                            <span>
-                              {msg.sources.filter(s => s.is_document).length} source{msg.sources.filter(s => s.is_document).length > 1 ? "s" : ""} dans le document
-                              {msg.sources.filter(s => !s.is_document).length > 0 && ` · ${msg.sources.filter(s => !s.is_document).length} corpus`}
-                            </span>
-                          </button>
-
-                          {expandedSources === i && (
-                            <div className="mt-2 flex flex-col gap-2">
-                              {/* Sources document en premier */}
-                              {msg.sources.filter(s => s.is_document).map((src) => (
-                                <button
-                                  key={`doc-${src.index}`}
-                                  onClick={() => setSelectedSource(src)}
-                                  className={[
-                                    "text-left rounded-lg border p-2.5 text-xs transition-colors w-full",
-                                    selectedSource?.index === src.index && selectedSource?.excerpt === src.excerpt
-                                      ? "border-primary bg-primary/5"
-                                      : "border-border hover:border-primary/50 hover:bg-muted/40",
-                                  ].join(" ")}
-                                >
-                                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                    <span className="font-bold text-primary">[{src.index}]</span>
-                                    <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] font-medium">Document</span>
-                                    {src.page && (
-                                      <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">p. {src.page}</span>
-                                    )}
-                                    {src.section_title && (
-                                      <span className="text-muted-foreground text-[10px] truncate max-w-[120px]">{src.section_title}</span>
-                                    )}
-                                    <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                                      {Math.max(0, Math.round(src.similarity * 100))}%
-                                    </span>
-                                  </div>
-                                  <p className="text-muted-foreground leading-relaxed line-clamp-4">{src.excerpt}</p>
-                                </button>
-                              ))}
-
-                              {/* Sources corpus ensuite */}
-                              {msg.sources.filter(s => !s.is_document).map((src) => (
-                                <div
-                                  key={`corpus-${src.index}`}
-                                  className="text-left rounded-lg border border-border bg-muted/20 p-2.5 text-xs"
-                                >
-                                  <div className="flex items-center gap-2 mb-1.5">
-                                    <span className="font-bold text-muted-foreground">[{src.index}]</span>
-                                    <span className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded text-[10px] font-medium">Corpus</span>
-                                    {src.doc_title && (
-                                      <span className="text-muted-foreground text-[10px] truncate">· {src.doc_title}</span>
-                                    )}
-                                    <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                                      {Math.max(0, Math.round(src.similarity * 100))}%
-                                    </span>
-                                  </div>
-                                  <p className="text-muted-foreground leading-relaxed line-clamp-4">{src.excerpt}</p>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <div ref={bottomRef} />
+                    ))}
+                    <div ref={bottomRef} />
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Suggestions dynamiques au-dessus de l'input */}
+            {/* Suggestions au-dessus de l'input — visibles uniquement avant la première question */}
             {suggestions.length > 0 && messages.length === 0 && (
               <div className="flex flex-col gap-1.5 shrink-0">
                 {suggestions.map((s) => (
