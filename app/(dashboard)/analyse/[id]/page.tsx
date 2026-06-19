@@ -225,7 +225,7 @@ export default function AnalysisPage() {
             Interrogez ce document et votre corpus. Les réponses citent les passages sources.
           </p>
           <div className="flex-1 min-h-0">
-            <AnalysisChatPanel analysisId={id} />
+            <AnalysisChatPanel analysisId={id} title={analysis.title ?? undefined} />
           </div>
         </div>
       )}

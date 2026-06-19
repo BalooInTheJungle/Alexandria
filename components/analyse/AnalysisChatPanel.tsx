@@ -124,13 +124,14 @@ function renderMarkdown(
   return <div className="text-sm leading-relaxed space-y-0">{nodes}</div>
 }
 
-export default function AnalysisChatPanel({ analysisId }: { analysisId: string }) {
+export default function AnalysisChatPanel({ analysisId, title }: { analysisId: string; title?: string }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
   const [warming, setWarming] = useState(true)
   const [selectedSource, setSelectedSource] = useState<Source | null>(null)
   const [pdfOpen, setPdfOpen] = useState(false)
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -139,11 +140,15 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
   }, [messages])
 
   useEffect(() => {
-    LOG("warmup start")
+    LOG("warmup + suggestions start")
     fetch("/api/analyse/warmup")
       .then(() => { LOG("warmup done"); setWarming(false) })
       .catch(() => { LOG("warmup failed — allowing anyway"); setWarming(false) })
-  }, [])
+    fetch(`/api/analyse/${analysisId}/suggestions`)
+      .then((r) => r.json())
+      .then((d) => { if (d.suggestions?.length) { LOG("suggestions loaded", d.suggestions); setSuggestions(d.suggestions) } })
+      .catch(() => {})
+  }, [analysisId])
 
   async function sendMessage(query: string) {
     if (!query.trim() || loading) return
@@ -271,13 +276,58 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
         {/* ── Droite : Chat ── */}
         <div className="lg:col-span-2 h-full flex flex-col">
           <div className="rounded-lg border border-border bg-card p-3 h-full flex flex-col gap-3">
-            {messages.length === 0 && (
-              <div className="flex flex-wrap gap-2 py-1">
-                {SUGGESTIONS.map((s) => (
+
+            {/* Zone messages — état vide ou historique */}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+              {messages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-4">
+                  <div className="space-y-1">
+                    <p className="text-2xl">📄</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {title ? title : "Document chargé"}
+                    </p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Interrogez ce document et comparez-le à votre corpus.<br />
+                      Les réponses citent les passages sources.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4 py-1">
+                  {messages.map((msg, i) => (
+                    <div key={i}>
+                      <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
+                        <div className={[
+                          "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
+                          msg.role === "user"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-foreground",
+                        ].join(" ")}>
+                          {msg.role === "assistant" && msg.isComplete && msg.sources?.length ? (
+                            renderMarkdown(msg.content, msg.sources, selectedSource, setSelectedSource)
+                          ) : (
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                              {msg.content || (loading && i === messages.length - 1 ? "…" : "")}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={bottomRef} />
+                </div>
+              )}
+            </div>
+
+            {/* Suggestions dynamiques au-dessus de l'input */}
+            {suggestions.length > 0 && messages.length === 0 && (
+              <div className="flex flex-col gap-1.5 shrink-0">
+                {suggestions.map((s) => (
                   <button
                     key={s}
                     onClick={() => sendMessage(s)}
-                    className="text-xs px-3 py-1.5 rounded-full border border-border hover:border-primary hover:text-primary transition-colors"
+                    disabled={loading || warming}
+                    className="text-left text-xs px-3 py-2 rounded-lg border border-border hover:border-primary hover:bg-primary/5 hover:text-primary transition-colors disabled:opacity-40 leading-snug"
                   >
                     {s}
                   </button>
@@ -285,34 +335,10 @@ export default function AnalysisChatPanel({ analysisId }: { analysisId: string }
               </div>
             )}
 
-            <div className="space-y-4 flex-1 min-h-0 overflow-y-auto pr-1">
-              {messages.map((msg, i) => (
-                <div key={i}>
-                  <div className={["flex", msg.role === "user" ? "justify-end" : "justify-start"].join(" ")}>
-                    <div className={[
-                      "max-w-[90%] rounded-lg px-3 py-2 text-sm leading-relaxed",
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-foreground",
-                    ].join(" ")}>
-                      {msg.role === "assistant" && msg.isComplete && msg.sources?.length ? (
-                        renderMarkdown(msg.content, msg.sources, selectedSource, setSelectedSource)
-                      ) : (
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                          {msg.content || (loading && i === messages.length - 1 ? "…" : "")}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              <div ref={bottomRef} />
-            </div>
-
             {/* Input */}
             <form
               onSubmit={(e) => { e.preventDefault(); sendMessage(input) }}
-              className="flex gap-2 pt-1 border-t border-border mt-1"
+              className="flex gap-2 pt-1 border-t border-border shrink-0"
             >
               <Input
                 ref={inputRef}
