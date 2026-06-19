@@ -132,6 +132,7 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
   const [selectedSource, setSelectedSource] = useState<Source | null>(null)
   const [pdfOpen, setPdfOpen] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
+  const [expandedSources, setExpandedSources] = useState<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -312,6 +313,75 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
                           )}
                         </div>
                       </div>
+
+                      {/* Dropdown sources sous chaque réponse assistant complète */}
+                      {msg.role === "assistant" && msg.isComplete && msg.sources && msg.sources.length > 0 && (
+                        <div className="mt-1.5 ml-1">
+                          <button
+                            onClick={() => setExpandedSources(expandedSources === i ? null : i)}
+                            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <span>{expandedSources === i ? "▾" : "▸"}</span>
+                            <span>
+                              {msg.sources.filter(s => s.is_document).length} source{msg.sources.filter(s => s.is_document).length > 1 ? "s" : ""} dans le document
+                              {msg.sources.filter(s => !s.is_document).length > 0 && ` · ${msg.sources.filter(s => !s.is_document).length} corpus`}
+                            </span>
+                          </button>
+
+                          {expandedSources === i && (
+                            <div className="mt-2 flex flex-col gap-2">
+                              {/* Sources document en premier */}
+                              {msg.sources.filter(s => s.is_document).map((src) => (
+                                <button
+                                  key={`doc-${src.index}`}
+                                  onClick={() => setSelectedSource(src)}
+                                  className={[
+                                    "text-left rounded-lg border p-2.5 text-xs transition-colors w-full",
+                                    selectedSource?.index === src.index && selectedSource?.excerpt === src.excerpt
+                                      ? "border-primary bg-primary/5"
+                                      : "border-border hover:border-primary/50 hover:bg-muted/40",
+                                  ].join(" ")}
+                                >
+                                  <div className="flex items-center gap-2 mb-1.5">
+                                    <span className="font-bold text-primary">[{src.index}]</span>
+                                    <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-[10px] font-medium">Document</span>
+                                    {src.page && (
+                                      <span className="text-muted-foreground text-[10px]">Page {src.page}</span>
+                                    )}
+                                    {src.section_title && (
+                                      <span className="text-muted-foreground text-[10px] truncate">· {src.section_title}</span>
+                                    )}
+                                    <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                                      {Math.max(0, Math.round(src.similarity * 100))}%
+                                    </span>
+                                  </div>
+                                  <p className="text-muted-foreground leading-relaxed line-clamp-4">{src.excerpt}</p>
+                                </button>
+                              ))}
+
+                              {/* Sources corpus ensuite */}
+                              {msg.sources.filter(s => !s.is_document).map((src) => (
+                                <div
+                                  key={`corpus-${src.index}`}
+                                  className="text-left rounded-lg border border-border bg-muted/20 p-2.5 text-xs"
+                                >
+                                  <div className="flex items-center gap-2 mb-1.5">
+                                    <span className="font-bold text-muted-foreground">[{src.index}]</span>
+                                    <span className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded text-[10px] font-medium">Corpus</span>
+                                    {src.doc_title && (
+                                      <span className="text-muted-foreground text-[10px] truncate">· {src.doc_title}</span>
+                                    )}
+                                    <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                                      {Math.max(0, Math.round(src.similarity * 100))}%
+                                    </span>
+                                  </div>
+                                  <p className="text-muted-foreground leading-relaxed line-clamp-4">{src.excerpt}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                   <div ref={bottomRef} />
