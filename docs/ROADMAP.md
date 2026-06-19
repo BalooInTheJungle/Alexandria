@@ -1,184 +1,181 @@
 # ROADMAP — Alexandria
 
-Plan d'évolution V1 → V2 → V3.
-Mettre à jour ce fichier à chaque jalon atteint.
+Plan d'évolution. Mettre à jour à chaque jalon atteint.
 
 ---
 
-## V1 — Socle RAG fonctionnel ✅ (terminé)
+## V1 — Socle RAG fonctionnel ✅ (terminé — Fév. 2026)
 
-**Objectif** : interroger le corpus scientifique de façon fiable en FR et EN.
+**Objectif** : interroger le corpus scientifique de façon fiable.
 
-| Fonctionnalité | État | Détail |
-|---------------|------|--------|
-| Ingestion PDF (Python) | ✅ | Parse + chunk + embed EN (traduction FR supprimée) |
-| Recherche hybride (FTS + vector + RRF) | ✅ | EN uniquement, paramètres dynamiques |
-| Garde-fou hors domaine | ✅ | Seuil similarity_threshold depuis rag_settings |
-| Génération réponse (streaming SSE) | ✅ | gpt-4o-mini, citations [1][2]... |
-| Conversations + historique | ✅ | Pagination cursor, PATCH titre, DELETE |
-| Paramètres RAG dynamiques | ✅ | rag_settings en base, GET + PATCH avec validation |
-| Cron rétention 30 jours | ✅ | Nettoyage automatique conversations |
-| Auth (login/logout) | ✅ | Supabase Auth |
-| Pipeline veille (RSS + OpenAlex + scoring) | ✅ | 43 sources, filtre 7j, dédup DOI, similarity_score |
+| Fonctionnalité | État |
+|---------------|------|
+| Ingestion PDF Python (parse + chunk + embed EN 384D) | ✅ |
+| Recherche hybride FTS + vector + RRF | ✅ |
+| Garde-fou hors domaine (similarity_threshold) | ✅ |
+| Génération réponse streaming SSE (gpt-4o-mini) | ✅ |
+| Conversations + historique (pagination cursor) | ✅ |
+| Paramètres RAG dynamiques (rag_settings) | ✅ |
+| Cron rétention 30 jours | ✅ |
+| Auth Supabase (login/logout) | ✅ |
+| Pipeline veille RSS + OpenAlex + scoring | ✅ |
 
----
-
-## V1.5 — Interface & Sources (en cours)
-
-**Objectif** : rendre l'application utilisable au quotidien par le chercheur.
-
-| Fonctionnalité | État | Détail |
-|---------------|------|--------|
-| Navigation header (Chatbot / Database / Bibliographie) | ✅ | Layout complet |
-| Interface front RAG (sidebar, messages, scroll infini) | ✅ | Fonctionnelle |
-| Page Bibliographie refonte (tabs, cards articles, slider seuil) | ✅ | Cards 2 colonnes, seuil 75%, filtre minScore |
-| Progression pipeline live (4 phases + barre scoring) | ✅ | phases sources/urls/items/summary/done, progress toutes les 50 |
-| Scoring double (similarity + heuristic) | ✅ | similarity seul affiché en Final, heuristic informatif |
-| Résumé IA hebdomadaire | ✅ | GPT-4o-mini, contexte chunks corpus avec doc_title, stocké en DB |
-| Page Sources dédiée `/bibliographie/sources` | ✅ | Gestion active/inactive, ajout source |
-| Historique runs `/bibliographie/historique/[id]` | ✅ | Tableau complet avec scores |
-| Streaming SSE + citations `[1][2]` | ⚠️ À vérifier | Messages en `<pre>` brut actuellement |
-| Upload PDF via UI | ⏳ | Pipeline upload → ingestion |
-| Page Database — KPIs + dataviz | ✅ | KPI cards, word cloud, bar chart termes, UMAP scatter, analytics RAG |
-| Page Database — UMAP 2D corpus | ✅ | compute_umap.py → colonnes chunks.umap_x/umap_y → ScatterChart |
-| Logs requêtes RAG (query_logs) | ✅ | Table query_logs, RPC stats daily, fire-and-forget dans /api/rag/chat |
-| Analytics comportement RAG | ✅ | GET /api/analytics/overview, graphe daily queries |
+> **Note** : Le chatbot RAG a été retiré du front en juin 2026 (page `/rag` supprimée, DB vidée).
+> La tuyauterie technique (lib/rag/*, /api/rag/*) reste en place et est réutilisée par le module Analyse.
 
 ---
 
-## V1.6 — Ingestion corpus bulk ✅ (terminé — 2024-2025)
+## V1.5 — Interface & Veille ✅ (terminé — Mars 2026)
 
-**Objectif** : ingérer le corpus récent (2024-2025) avec index pgvector opérationnel.
+**Objectif** : rendre l'application utilisable au quotidien.
 
-| Étape | État | Détail |
-|-------|------|--------|
-| Script Python `scripts/ingest.py` v3 | ✅ | Récursif, YEAR_MIN/MAX configurable, IVFFlat auto via psycopg2 |
-| Suppression pipeline FR (embedding_fr, content_fr, detect-lang) | ✅ | Simplifié EN uniquement |
-| Suppression index HNSW → passage IVFFlat | ✅ | IVFFlat lists=100, créé par ingest.py après tous les inserts |
-| Ingestion 2024-2025 (2510 docs) | ✅ | 497 523 chunks, avg 198 chunks/doc |
-| Index IVFFlat opérationnel | ✅ | `idx_chunks_embedding` IVFFlat lists=100 |
-| Pipeline veille scoring fonctionnel | ✅ | 134 articles ≥ 30% sur corpus 2024-2025 |
-| Sélecteur seuil veille (20→70%) | ✅ | Défaut 30%, modifiable depuis l'UI |
-| Batch score updates veille (50 parallèle) | ✅ | Was séquentiel → bloquait pipeline 2-3min |
-| Nettoyage titres espacés (`fix_spaced_text`) | ✅ | 2656 titres corrigés en DB + fix dans ingest.py |
-| Réorganisation PDFs par année publication | ✅ | `reorganize_pdfs.py` → `data/pdfs2/YEAR/` |
-| Ingestion incrémentale 2025 (pdfs2/) | 🔄 En cours | ~1172 PDFs, dédup DOI automatique |
-| Ingestion 2026 (146 docs) | ✅ | Ajoutés au corpus |
-| Recalcul UMAP sur nouveaux chunks | ⏳ À faire | Relancer compute_umap.py après ingestion |
-| Extension corpus 2015-2023 | ⏳ Option | ~13 000 PDFs supplémentaires, dépend espace DB |
+| Fonctionnalité | État |
+|---------------|------|
+| Navigation header (tabs + layout dashboard) | ✅ |
+| Page Bibliographie : cards articles, seuil 75%, filtre lu/non lu | ✅ |
+| Page Historique runs : 1 ligne/run, date+heure, KPIs | ✅ |
+| Page détail run : thèmes, articles, logs modal, ai_analysis, corpus_refs | ✅ |
+| Pipeline veille avec synthèse IA quotidienne | ✅ |
+| Page Database : KPIs, word cloud, UMAP scatter, analytics | ✅ |
+| Page Sources : gestion active/inactive | ✅ |
+
+---
+
+## V1.6 — Ingestion bulk corpus ✅ (terminé — Avr. 2026)
+
+**Objectif** : ingérer le corpus récent (2024-2026) avec index pgvector opérationnel.
+
+| Étape | État |
+|-------|------|
+| Script ingest.py v3 (récursif, YEAR_MIN/MAX, IVFFlat auto) | ✅ |
+| Réorganisation PDFs par année publication (`data/pdfs2/YEAR/`) | ✅ |
+| Ingestion 2024-2026 : ~3 700 documents | ✅ |
+| Index IVFFlat `idx_chunks_embedding` (lists=100) — 1.3 Go | ✅ |
+| Correction texte espacé : `fix_spaced_chunks.py` sur 797k chunks | ✅ |
+| `fix_spaced_text()` intégré dans ingest.py (correction à l'extraction) | ✅ |
 
 ---
 
 ## V1.7 — Articles auteur + comparaison corpus ✅ (terminé — Mai 2026)
 
-**Objectif** : indexer les articles publiés du chercheur et visualiser leurs liens avec le corpus général.
+**Objectif** : indexer les articles publiés du chercheur et visualiser leurs liens avec le corpus.
 
-| Étape | État | Détail |
-|-------|------|--------|
-| Flag `is_author_article` sur `documents` | ✅ | Migration + index partiel |
-| Ingestion 521 articles auteur (`--author`) | ✅ | `scripts/ingest.py --author`, dossier `data/Articles auteur/` |
-| Correction 126 titres espacés | ✅ | `scripts/fix_author_titles.py` |
-| RPC `match_corpus_docs` | ✅ | SQL function IVFFlat, filtre corpus, agrège par doc |
-| Route `GET /api/corpus/author-articles` | ✅ | Liste paginée, filtre année |
-| Route `GET /api/corpus/author-articles/[id]/similar` | ✅ | Embedding moyen → top N corpus |
-| UI Database — section comparaison | ✅ | Accordion, SimilarityBadge, cache résultats |
-| Correction 797k chunks texte espacé | ✅ | `scripts/fix_spaced_chunks.py`, 0 erreur |
-| Rebuild IVFFlat sur embeddings propres | ✅ | 1.3 Go, valid=t |
+| Étape | État |
+|-------|------|
+| Flag `is_author_article` sur documents | ✅ |
+| Ingestion 521 articles auteur (`ingest.py --author`) | ✅ |
+| Correction 126 titres espacés (`fix_author_titles.py`) | ✅ |
+| RPC `match_corpus_docs` | ✅ |
+| UI Database — section comparaison articles auteur | ✅ |
+| Rebuild IVFFlat sur 848k chunks | ✅ |
 
 ---
 
 ## V1.8 — Semantic Scholar + Landing page ✅ (terminé — Juin 2026)
 
-**Objectif** : étendre la couverture de la veille au-delà des 44 sources RSS + créer une page publique.
+**Objectif** : étendre la couverture de la veille + créer une page publique.
 
-| Étape | État | Détail |
-|-------|------|--------|
-| Source Semantic Scholar (recommandations) | ✅ | `extract-semanticscholar.ts` — POST /recommendations/v1/papers/ |
-| Centroïde auteur → articles représentatifs | ✅ | RPC `get_author_representative_titles()` sur 85k chunks auteur |
-| Cache ss_representative_papers | ✅ | Table dédiée + `compute-ss-representatives.ts` à relancer après ingest --author |
-| Flag `ENABLE_SEMANTIC_SCHOLAR` | ✅ | Variable repo GitHub — pipeline inchangé si absent |
-| Badge source sur VeilleArticleCard | ✅ | 🔭 Semantic Scholar (bleu) / RSS (gris) |
-| Page publique `/` (landing) | ✅ | FR/EN toggle, hero, 3 modules, stats sondage, comment ça marche |
-| Middleware : `/` non protégée | ✅ | Accessible sans connexion |
-
-**À faire :**
-- Obtenir clé API SS (formulaire soumis) → ajouter `SS_API_KEY` dans secrets GitHub + script
-- Relancer `compute-ss-representatives.ts` avec clé SS pour peupler la table correctement
+| Étape | État |
+|-------|------|
+| Job 1b : source Semantic Scholar (recommandations basées sur articles auteur) | ✅ |
+| `compute-ss-representatives.ts` : calcul articles auteur représentatifs | ✅ |
+| Table `ss_representative_papers` + RPC `get_author_representative_titles_v2` | ✅ |
+| Flag `ENABLE_SEMANTIC_SCHOLAR` (variable repo GitHub) | ✅ |
+| Badge source sur VeilleArticleCard (RSS vs Semantic Scholar) | ✅ |
+| Page publique `/` (landing FR/EN) | ✅ |
+| Middleware : `/` non protégée, redirect post-login → `/bibliographie` | ✅ |
 
 ---
 
-## V2 — Module Lecture assistée ⏳ (à construire)
+## V1.9 — Module Lecture assistée + Analyse ✅ (terminé — Juin 2026)
 
-**Objectif** : aider le chercheur à lire et comprendre les articles pertinents identifiés par la veille.
-Motivé par sondage 39 chercheurs : 46% citent la lecture/synthèse comme activité la plus chronophage, 95% ratent des publications faute de temps.
+**Objectif** : aider le chercheur à lire et contextualiser un article pertinent via upload PDF.
 
-**Niveau 1 — Abstract (toujours disponible)**
+### Upload + chunking + embedding
+
+| Fonctionnalité | État | Détail |
+|---------------|------|--------|
+| Upload PDF via UI (max 20 Mo) | ✅ | `POST /api/analyse/upload` |
+| Parse PDF → texte par page (lib-pdf via parsePdfBuffer) | ✅ | |
+| Extraction DOI automatique (regex sur texte complet) | ✅ | |
+| Chunking EN (CHUNK_SIZE=600, CHUNK_OVERLAP=100) | ✅ | chunkText() réutilisé |
+| Embedding EN 384D (Xenova all-MiniLM-L6-v2) | ✅ | embedQuery() |
+| Stockage PDF dans Supabase Storage (bucket "analyses") | ✅ | |
+| Chunks `is_temp=true` liés à l'analyse (`analysis_id`) | ✅ | |
+| Table `document_analyses` (status machine + JSONB résultats) | ✅ | Migration 20260617 |
+
+### Calcul des insights (`GET /api/analyse/[id]/insights`)
+
+| Fonctionnalité | État | Détail |
+|---------------|------|--------|
+| Résumé structuré GPT (tldr / intro / méthodes / résultats / discussion) | ✅ | Contexte 14k chars max, JSON mode |
+| Embedding moyen de l'article (all chunks → mean vector) | ✅ | Représentation fidèle sans biais position |
+| Passages corpus les plus proches (match_chunks, threshold=0.1, top 6) | ✅ | |
+| Extraction DOIs cités (regex section References) | ✅ | |
+| Croisement cited_refs avec corpus (DOI matching → in_corpus) | ✅ | |
+| Métadonnées SS pour références citées (batch API) | ✅ | titre, auteurs, année |
+| paperId Semantic Scholar de l'article analysé | ✅ | via DOI |
+| Recommandations SS (10 articles similaires) | ✅ | POST /recommendations/v1/papers/ |
+| Cache : si status=completed → retour immédiat sans recalcul | ✅ | |
+| Calcul en parallèle (Promise.allSettled) | ✅ | Résumé + corpus + SS en simultané |
+
+### Interface page `/analyse/[id]`
+
+| Fonctionnalité | État | Détail |
+|---------------|------|--------|
+| Onglet 1 — Proximité corpus | ✅ | ScoreRing + passages avec % et extrait |
+| Onglet 2 — Résumé | ✅ | tldr en avant + 4 sections structurées |
+| Onglet 3 — Discussion (chat) | ✅ | PDF gauche (3/5) + chat droite (2/5) |
+| · PDF viewer horizontal scroll (toutes pages en ligne) | ✅ | react-pdf, height=480px, scroll sync |
+| · Navigation PDF sur clic source | ✅ | pageRefs + scrollIntoView smooth |
+| · Highlight texte sur page cible | ✅ | customTextRenderer (yellow mark) |
+| · Modal PDF plein écran | ✅ | Dialog 96vw × 94vh |
+| · Chat style ChatGPT (messages ancrés bas, overflow vers haut) | ✅ | Spacer flex-1 pattern |
+| · Citations [N] cliquables dans les réponses | ✅ | renderInline() |
+| · Markdown dans les réponses (bold, headers, listes) | ✅ | renderMarkdown() |
+| · Suggestions initiales (4 questions pertinentes) | ✅ | Hardcodées, visibles si 0 messages |
+| · Dropdown sources sous chaque réponse (document + corpus) | ✅ | Badge "p. X" amber, % similarité |
+| · Scroll ChatGPT — conteneur hauteur fixe, `min-h-0` sur grid | ✅ | |
+| Onglet 4 — Aller plus loin | ✅ | Références citées (✓ corpus / —) + recs SS |
+| Bouton "Intégrer au corpus" | ✅ | `POST /api/analyse/[id]/integrate` → is_temp=false |
+| Hauteur fixe (calc 100vh - 57px), scroll body bloqué en Discussion | ✅ | |
+
+### API Analyse
+
+| Route | Méthode | Usage |
+|-------|---------|-------|
+| `/api/analyse/upload` | POST | Upload PDF → parse → chunk → embed → document_analyses |
+| `/api/analyse/[id]/insights` | GET | Résumé GPT + corpus_refs + cited_refs + ss_recs (avec cache) |
+| `/api/analyse/[id]/chat` | POST | Discussion IA sur le document (streaming SSE) |
+| `/api/analyse/[id]/pdf` | GET | URL signée Supabase Storage (1h) |
+| `/api/analyse/[id]/integrate` | POST | is_temp=false → intégration corpus permanente |
+| `/api/analyse/[id]/suggestions` | GET | 4 suggestions hardcodées |
+| `/api/analyse/warmup` | GET | Warm-up Xenova avant la première question |
+
+---
+
+## État corpus (juin 2026)
+
+| Élément | Valeur |
+|---------|--------|
+| Documents corpus | ~3 700 (2024-2026) |
+| Articles auteur (`is_author_article=true`) | 521 |
+| Total chunks | 848 857 |
+| Dimension embeddings | 384D (all-MiniLM-L6-v2) |
+| Index IVFFlat | `idx_chunks_embedding` (lists=100) — 1.3 Go, valid=t |
+| DB Supabase | ~7 Go (plan Pro 25$/mois, limite 8 Go) |
+| UMAP | Non recalculé sur ce corpus (à faire : `compute_umap.py`) |
+
+---
+
+## V2 — Améliorations prévues
 
 | Fonctionnalité | Priorité | Détail |
 |---------------|----------|--------|
-| Résumé structuré abstract (Problème / Méthode / Résultats / Apport) | P1 | GPT-4o-mini sur abstract |
-| Articles corpus les plus proches | P1 | `match_chunks` avec embedding abstract (Xenova, réutilisé tel quel) |
-| Autres publications du même auteur | P1 | OpenAlex API (déjà intégré dans le projet) |
-| Label thématique / cluster | P2 | GPT sur les chunks similaires trouvés |
-
-**Niveau 2 — PDF uploadé**
-
-| Fonctionnalité | Priorité | Détail |
-|---------------|----------|--------|
-| Upload PDF → chunking → embedding | P1 | Pipeline `/api/documents/upload` réutilisé, flag `is_reading_session` |
-| Résumé complet par section (Intro / Méthodes / Résultats / Discussion) | P1 | GPT sur chunks nettoyés par section |
-| Détection références citées dans le corpus | P2 | Regex section References → recoupement DOIs corpus |
-| Passages PDF les plus proches du corpus | P1 | `match_chunks` entre chunks nouveau PDF et corpus |
-
-**Décisions techniques à valider en session :**
-- Réutiliser `chunks` avec flag `is_reading_session=true` ou table dédiée `reading_chunks`
-- Traitement long sur Vercel : streaming SSE ou job Supabase background
-- Nettoyage bruit PDF avant LLM : s'appuyer sur chunking par section existant (ingest.py)
-
----
-
-## V3 — Veille augmentée
-
-**Objectif** : aller plus loin dans la personnalisation et l'exploitation de la veille.
-
-| Fonctionnalité | Priorité | Détail |
-|---------------|----------|--------|
-| Filtres dans la liste veille | P1 | Par auteur, journal, date, score minimum |
-| Ajouter un article veille au corpus RAG | P1 | Depuis la liste veille → upload → ingestion automatique |
-| Notifications veille | P2 | Email ou push quand un run produit des articles > seuil |
-| Gestion des sources depuis l'UI | P2 | Ajouter / désactiver une source sans SQL |
-| Score personnalisé (auteurs/labos) | P2 | Pondération manuelle sur les critères auteur/labo |
-| Export de la liste veille | P3 | CSV ou PDF de la sélection rankée |
-
----
-
-## V3 — IA explicable et amélioration continue
-
-**Objectif** : mesurer les performances et créer une boucle de feedback pour améliorer le RAG et le scoring.
-
-| Fonctionnalité | Priorité | Détail |
-|---------------|----------|--------|
-| Feedback utilisateur sur les réponses RAG | P1 | 👍/👎 par réponse, stocké en base |
-| Tableau de bord qualité RAG | P1 | Taux de garde-fou, similarités moyennes, questions fréquentes |
-| Feedback sur le scoring veille | P1 | Marquer un article comme pertinent/non pertinent → améliore le score |
-| Amélioration automatique rag_settings | P2 | Suggestions de paramètres basées sur l'historique des feedbacks |
-| Comparaison d'articles dans le RAG | P2 | "Compare ces deux approches dans mon corpus" |
-| Exploration libre du corpus | P2 | Clustering thématique, carte des auteurs/labos |
-| Rapport hebdomadaire automatique | P3 | Résumé veille + highlights corpus via email |
-| OCR amélioré | P3 | Meilleure extraction des figures et tables des PDFs |
-
----
-
-## Questions ouvertes
-
-- **Seuil de pertinence veille** : automatique ou manuel par journal/auteur ?
-- **Boucle de feedback** : quel signal utiliser pour améliorer le scoring (clics, marques, téléchargements) ?
-- **Corpus à terme** : migration vers Supabase Storage pour les ~100 Go de PDFs ?
-- **Accès multi-utilisateurs** : partage du corpus avec des collègues du laboratoire ?
-
----
-
-## Suivi
-
-Mettre à jour l'état des fonctionnalités au fil du développement.
-Référencer la session dans `context/SESSION_LOG.md` quand un jalon est atteint.
+| UMAP recalculé sur corpus actuel (848k chunks) | P1 | Relancer `compute_umap.py` |
+| Nettoyage automatique analyses expirées (expires_at) | P1 | Cron ou trigger Supabase |
+| Upload depuis la page veille (article → analyse directe) | P1 | Lien "Analyser" sur VeilleArticleCard |
+| Filtres page veille (auteur, journal, date, score) | P2 | |
+| Notifications veille (email si articles > seuil) | P3 | |
+| Clé API Semantic Scholar (`SS_API_KEY`) | P2 | Formulaire soumis — à ajouter dans secrets GitHub |
+| Extension corpus 2015-2023 | P3 | ~13 000 PDFs — dépend de l'espace DB restant |

@@ -1,7 +1,6 @@
 # ARCHITECTURE — Schéma technique Alexandria
 
 Référence : structure des modules, schéma DB, clients Supabase, déploiement.
-Détail complet → `documentation/STRUCTURE_ET_ARCHITECTURE.md`, `documentation/SCHEMA_DB_ET_DONNEES.md`
 
 ---
 
@@ -14,25 +13,35 @@ Utilisateur
 Next.js 14 (App Router) — hébergé sur Vercel
     │
     ├── Front (React + Tailwind + shadcn/ui)
-    │       app/(auth)/login
-    │       app/(dashboard)/rag          → chatbot RAG
-    │       app/(dashboard)/bibliographie → veille + documents
+    │       app/                           → landing page publique (FR/EN)
+    │       app/(auth)/login               → login Supabase Auth
+    │       app/(dashboard)/bibliographie  → veille + historique runs + sources
+    │       app/(dashboard)/database       → KPIs corpus, UMAP, analytics
+    │       app/(dashboard)/analyse        → upload PDF + lecture assistée + analyse
+    │         └── [id]/page.tsx            → 4 onglets : Proximité / Résumé / Discussion / Aller plus loin
     │
     └── API Routes
-            /api/rag/*          → pipeline RAG
-            /api/veille/*       → pipeline veille
-            /api/documents/*    → upload PDF
-            /api/ingestion/*    → parse/chunk/embed
-            /api/cron/*         → jobs automatiques
+            /api/analyse/*      → upload, insights, chat, pdf, integrate, suggestions, warmup
+            /api/veille/*       → list, status, runs, items, stats
+            /api/cron/*         → rétention conversations (Vercel cron)
+            /api/corpus/*       → author-articles, similar (dataviz Database)
                 │
                 ▼
-        Supabase (Postgres + pgvector + Auth)
+        Supabase (Postgres + pgvector + Auth + Storage)
         OpenAI API (gpt-4o-mini)
-        @xenova/transformers (embed local 384D)
+        @xenova/transformers (embed local 384D, all-MiniLM-L6-v2)
+        Semantic Scholar API (recommandations, métadonnées)
 
-Scripts Python (manuels)
-    scripts/ingest.py → ingestion PDF complète
-    scripts/import-sources.ts → upsert sources veille
+Scripts Python (manuels, hors Vercel)
+    scripts/ingest.py              → ingestion PDF bulk + articles auteur
+    scripts/fix_spaced_chunks.py   → correction texte espacé dans les chunks
+    scripts/fix_author_titles.py   → correction titres espacés articles auteur
+    scripts/compute_umap.py        → coordonnées UMAP 2D sur les chunks
+    scripts/veille/extract.ts      → Job 1 pipeline veille (GitHub Actions)
+    scripts/veille/score.ts        → Job 2 scoring sémantique
+    scripts/veille/recap-articles.ts → Job 3 analyse IA par article ≥ 80%
+    scripts/veille/recap-global.ts   → Job 4 synthèse globale
+    scripts/compute-ss-representatives.ts → calcul articles représentatifs pour Semantic Scholar
 ```
 
 ---
@@ -43,14 +52,16 @@ Scripts Python (manuels)
 
 | Table | Rôle |
 |-------|------|
-| `documents` | Métadonnées des PDFs ingérés (titre, DOI, storage_path, status) |
-| `chunks` | Fragments de texte avec embeddings (EN + FR) et FTS |
-| `sources` | Sources de veille (43+ journaux avec ISSN/RSS URL, colonne `active`) |
-| `veille_runs` | Historique des runs de veille (status, date) |
-| `veille_items` | Articles récupérés par run (DOI, abstract, score) |
-| `conversations` | Sessions de chat RAG |
-| `messages` | Messages user + assistant par conversation |
-| `rag_settings` | Paramètres dynamiques du RAG (seuils, poids, etc.) |
+| `documents` | Métadonnées PDFs ingérés (titre, DOI, storage_path, status, is_author_article) |
+| `chunks` | Fragments texte avec embeddings EN 384D, FTS, colonnes UMAP, is_temp / analysis_id |
+| `sources` | 44+ sources de veille (ISSN, RSS URL, fetch_strategy, active) |
+| `veille_runs` | Historique runs veille (status, phase, pipeline_logs, ai_summary) |
+| `veille_items` | Articles récupérés (DOI, abstract, similarity_score, ai_analysis, corpus_refs, read_at) |
+| `document_analyses` | Analyses de documents uploadés (summary, corpus_refs, cited_refs, ss_recs, is_integrated) |
+| `ss_representative_papers` | Articles auteur représentatifs pour les recommandations Semantic Scholar |
+| `rag_settings` | Paramètres dynamiques RAG (seuils, poids, k) — legacy, utilisé par /api/rag/* |
+| `conversations` | Sessions de chat RAG — vide (chatbot retiré) |
+| `messages` | Messages user + assistant — vide (chatbot retiré) |
 
 ### Table chunks (critique)
 
@@ -58,50 +69,97 @@ Scripts Python (manuels)
 chunks (
   id uuid,
   document_id uuid,
-  content text,           -- texte EN
-  embedding vector(384),  -- vecteur EN (HNSW)
-  content_tsv tsvector,   -- FTS EN (trigger automatique)
-  content_fr text,        -- texte FR (traduit par ingest.py)
-  embedding_fr vector(384), -- vecteur FR (HNSW)
-  content_fr_tsv tsvector,  -- FTS FR (trigger automatique)
-  section text,
-  page_number int,
-  chunk_index int
+  content text,             -- texte EN
+  embedding vector(384),    -- vecteur EN (IVFFlat)
+  content_tsv tsvector,     -- FTS EN (trigger automatique)
+  position int,             -- ordre dans le document
+  page int,                 -- numéro de page source
+  section_title text,       -- section détectée
+  umap_x float, umap_y float, -- coordonnées UMAP 2D (compute_umap.py)
+  is_author_article bool,   -- chunk d'article auteur (ingest.py --author)
+  analysis_id uuid,         -- lien vers document_analyses (nullable)
+  is_temp bool              -- true si chunks d'analyse non intégrés
 )
 ```
 
 **Règles immuables :**
 - `vector(384)` — dimension fixe, ne jamais modifier
-- `content_tsv` / `content_fr_tsv` — écrits par triggers Postgres, ne pas toucher directement
+- `content_tsv` — écrit par trigger Postgres, ne pas écrire directement
+- Index IVFFlat `idx_chunks_embedding` (lists=100) — à rebuilder après ingestion bulk > 50k chunks
+
+### Table document_analyses
+
+```sql
+document_analyses (
+  id uuid,
+  user_id uuid,
+  document_id uuid,         -- lié au document dans chunks (can be null si supprimé)
+  title text,
+  doi text,
+  ss_paper_id text,         -- paperId Semantic Scholar (pour les recs)
+  status text,              -- pending | processing | ready | completed | error
+  summary jsonb,            -- { tldr, intro, methods, results, discussion }
+  corpus_refs jsonb,        -- [{ doc_title, excerpt, page, similarity }]
+  cited_refs jsonb,         -- [{ doi, in_corpus, title, year, authors[] }]
+  ss_recs jsonb,            -- [{ title, authors[], year, doi, abstract }]
+  is_integrated bool,       -- true si chunks rendus permanents
+  expires_at timestamptz,   -- null si is_integrated, sinon +7 jours
+  created_at, updated_at
+)
+```
+
+### Table veille_items
+
+```sql
+veille_items (
+  id uuid,
+  run_id uuid,
+  doi text UNIQUE,
+  title text, abstract text, authors text[], journal_name text,
+  published_at date,
+  url text,
+  source_type text,         -- 'rss' | 'openalex' | 'semantic_scholar'
+  similarity_score float,   -- 0 si scoré sans match, null si pas encore scoré
+  corpus_refs jsonb,        -- [{ doc_title, excerpt, page, similarity }] passages ≥ 75%
+  ai_analysis jsonb,        -- { contribution, relevance, corpus_link } pour ≥ 80%
+  read_at timestamptz       -- null si non lu
+)
+```
 
 ### RPCs Supabase (fonctions SQL)
 
 | RPC | Usage |
 |-----|-------|
-| `match_chunks(query_embedding, match_count, match_threshold)` | Recherche vectorielle EN (cosinus) |
-| `match_chunks_fr(...)` | Recherche vectorielle FR |
+| `match_chunks(query_embedding, match_count, match_threshold)` | Recherche vectorielle EN (cosinus) — utilisé par insights + chat Analyse |
 | `search_chunks_fts(query_text, match_count)` | Recherche FTS EN |
-| `search_chunks_fts_fr(...)` | Recherche FTS FR |
+| `match_corpus_docs(...)` | Agrège les chunks par document pour les articles auteur |
+| `get_author_representative_titles()` | Retourne les articles auteur représentatifs (centroïde) |
+| `get_veille_runs_with_counts()` | Runs avec compteurs items/pertinents/analyses |
+| `get_corpus_top_terms(...)` | Top termes du corpus (word cloud) |
+| `get_corpus_stats()` | KPIs globaux corpus |
 
-### Migrations (ordre chronologique)
+### Migrations (ordre chronologique, 50 au total)
 
 ```
 20260204100000_enable_pgvector.sql
-20260204100001_sources.sql
-20260204100002_documents.sql
-20260204100003_chunks.sql
-20260204100004_veille.sql
-20260204100005_rls.sql
-20260204100006_chunks_embedding_384.sql
-20260205100000_documents_ingestion_log.sql
-20260205100001_match_chunks_rpc.sql
-20260205100002_conversations_messages.sql
-20260205100003_rag_settings.sql
-20260205100004_search_chunks_fts.sql
-20260205100005_rag_settings_hybrid.sql
-20260206100000_chunks_bilingue_fr.sql
-20260207100000_sources_rss.sql
+... (socle V1 : sources, documents, chunks, veille, RLS, RPCs)
 20260504100000_sources_active.sql
+20260504110000_veille_run_summary.sql       — ai_summary dans veille_runs
+20260505120000_veille_items_corpus_refs.sql — corpus_refs sur veille_items
+20260505130000_query_logs.sql
+20260505140000_chunks_umap.sql              — umap_x, umap_y sur chunks
+20260526100000_documents_author_flag.sql    — is_author_article
+20260526110000_match_corpus_by_author_doc.sql
+20260526120000_match_corpus_docs_rpc.sql
+20260529100000_veille_run_logs.sql          — pipeline_logs jsonb
+20260603100000_corpus_stats_rpcs.sql
+20260603130000_veille_items_read_at.sql     — read_at (lu/non lu)
+20260603140000_veille_items_ai_analysis.sql — ai_analysis jsonb
+20260608100000_veille_items_doi_unique.sql  — contrainte unicité DOI
+20260616100000_sources_semantic_scholar.sql
+20260616110000_rpc_author_representative_titles.sql
+20260616120000_ss_representative_papers.sql
+20260617100000_document_analyses.sql        — table analyses + chunks.is_temp/analysis_id
 ```
 
 ---
@@ -112,106 +170,156 @@ chunks (
 |---------|------|-----------------|
 | `lib/supabase/client.ts` | Browser | Composants React client (`'use client'`) |
 | `lib/supabase/server.ts` | Server (cookies) | API routes standard (respecte RLS) |
-| `lib/supabase/admin.ts` | Service role | Cron + ingestion uniquement (bypasse RLS) |
+| `lib/supabase/admin.ts` | Service role | Scripts veille GitHub Actions + cron rétention |
 
 ---
 
-## Pipeline RAG — flux technique
+## Pipeline Analyse — flux technique
 
 ```
-POST /api/rag/chat
+POST /api/analyse/upload
     │
-    ├── detect-lang.ts → 'fr' | 'en'
-    ├── settings.ts → rag_settings (seuils, poids, k)
-    ├── embed.ts → queryEmbedding (Xenova, 384D)
+    ├── Auth vérifiée
+    ├── Validation : PDF, < 20 Mo
+    ├── parsePdfBuffer() → texte + nb pages
+    ├── extractDoi() → regex sur le texte complet
+    ├── insert document_analyses (status=processing)
+    ├── Supabase Storage bucket "analyses" → upload PDF (analysisId.pdf)
+    ├── insert documents (status=processing)
+    ├── chunkText() → segments avec position, page, section_title
+    ├── embedQuery() par batch de 20 → embedding 384D (Xenova)
+    ├── insert chunks (is_temp=true, analysis_id=analysisId)
+    └── status → "ready", retourne { analysisId, documentId, chunksCount, doi }
+
+GET /api/analyse/[id]/insights
     │
-    ├── search.ts
-    │     ├── match_chunks[_fr]     (vector cosinus)
-    │     ├── search_chunks_fts[_fr] (FTS)
-    │     └── RRF fusion → top-K chunks
+    ├── Si status=completed → retourne le cache immédiatement
+    ├── Si status≠ready → 409
+    ├── Charge les chunks (is_temp=true, analysis_id)
+    ├── Calcule embedding moyen (représente l'article entier)
+    ├── extractCitedDois() → regex sur le texte complet
     │
-    ├── GARDE-FOU : bestSimilarity < threshold ?
-    │     └── OUI → retourner guard_message (pas d'appel OpenAI)
+    ├── [PARALLÈLE]
+    │     ├── generateSummary() → GPT-4o-mini → { tldr, intro, methods, results, discussion }
+    │     ├── match_chunks(meanEmbedding, threshold=0.1, count=30) → corpus_refs (top 6)
+    │     ├── fetchSsMetadataBatch(citedDois) → titre/auteurs/année pour chaque DOI cité
+    │     └── fetchSsPaperId(doi) → paperId SS de l'article analysé
     │
-    ├── openai.ts → gpt-4o-mini (streaming SSE)
-    │     ├── contexte : chunks (content ou content_fr selon lang)
-    │     ├── historique : N derniers messages
-    │     └── instruction langue : "Réponds en français" / "en anglais"
+    ├── fetchSsRecs(paperId) → 10 recommandations SS (si paperId trouvé)
+    ├── Croisement cited_refs avec documents.doi → in_corpus flag
+    └── update document_analyses : status=completed, summary, corpus_refs, cited_refs, ss_recs, ss_paper_id
+
+POST /api/analyse/[id]/chat
     │
-    ├── citations.ts → [1], [2]... avec doc info
-    └── conversation-persistence.ts → insert messages + update conversation
+    ├── Auth vérifiée
+    ├── embedQuery(query) → vecteur 384D
+    ├── Chunks du document (direct par document_id, top 10 par position) → cosine sim → top 5
+    ├── match_chunks(corpus, threshold=0.5, count=15) → filtrer document analysé → top 3
+    ├── buildContext() → "[N] (document analysé / corpus) ...\ncontent"
+    ├── OpenAI gpt-4o-mini stream → SSE
+    │     event 1 : { sources: [...] }   ← envoyé en premier
+    │     events N : { token: "..." }
+    │     event last : [DONE]
+    └── Réponse en SSE
+
+POST /api/analyse/[id]/integrate
+    │
+    ├── chunks.is_temp → false  (permanents dans le corpus)
+    └── document_analyses.is_integrated → true, expires_at → null
 ```
 
 ---
 
-## Pipeline Veille — flux technique
+## Pipeline Veille — flux technique (GitHub Actions, 7h UTC)
 
 ```
-POST /api/veille/scrape (ou GET /api/cron/veille)
-    │
+Job 1 — scripts/veille/extract.ts
     ├── createRun() → veille_runs (status=running)
-    ├── getKnownDois() → déduplication
-    │
-    ├── Sources RSS (43+ journaux, filtre active=true)
-    │     ├── fetchRssFeed() → titre, DOI, abstract, auteurs, date
-    │     ├── Filtre éditorial (corrections, errata, rétractations)
-    │     ├── Filtre 7 jours
-    │     ├── Dédup par DOI
-    │     ├── OpenAlex batch (abstracts manquants + filtre type:article)
-    │     │     └── is_final=false → skip (preprint, book-chapter, etc.)
-    │     └── Lookup DOI individuel (articles sans DOI, ex. Elsevier)
-    │
-    ├── Sources OpenAlex (MDPI et similaires, filtre active=true)
-    │     ├── fetchRecentByIssn(issn, 7, filter=type:article)
-    │     └── is_final=false → skip
-    │
-    ├── insertVeilleItemsWithIds() → batch 50
-    ├── scoreVeilleItems() → embed abstract → match_chunks → similarity_score
-    └── completeRun(runId, 'completed'|'failed')
-```
+    ├── 44 sources RSS → fetch parallèle (concurrence=5) → fenêtre 7 jours
+    ├── Filtre finalisation : DOI requis → OpenAlex batch is_final → CrossRef fallback
+    ├── Rejet : ASAP, preprints, corrections, sans abstract
+    ├── Sources OpenAlex directes (MDPI : Magnetochemistry, Inorganics…)
+    ├── Dédup DOI en mémoire
+    └── Insert batch 50 → veille_items (source_type='rss'|'openalex')
 
-**Garde-fous publications finales :**
-- Filtre `active=true` sur les sources → seules les sources activées entrent dans le pipeline
-- Filtre éditorial sur le titre (corrections, errata, rétractations) dans `fetch-rss.ts`
-- Filtre `type:article` OpenAlex (côté API) → preprints et chapitres de livres exclus
-- Vérification `is_final` côté pipeline (double protection)
+Job 1b — scripts/veille/extract-semanticscholar.ts (si ENABLE_SEMANTIC_SCHOLAR=true)
+    ├── Charge ss_representative_papers (pré-calculés)
+    ├── POST /recommendations/v1/papers/ → top 100 papers (60j)
+    ├── Filtre abstract + dédup DOI
+    └── Insert veille_items (source_type='semantic_scholar')
+
+Job 2 — scripts/veille/score.ts
+    ├── Charge veille_items avec similarity_score IS NULL
+    ├── embedQuery(abstract) → 384D
+    ├── match_chunks → top-3 → similarity_score (top-1)
+    ├── corpus_refs : chunks ≥ 75% sauvegardés
+    └── Batch save 50
+
+Job 3 — scripts/veille/recap-articles.ts
+    ├── Articles similarity_score ≥ 80%
+    └── GPT-4o-mini → ai_analysis { contribution, relevance, corpus_link }
+
+Job 4 — scripts/veille/recap-global.ts
+    ├── Articles ai_analysis IS NOT NULL
+    ├── GPT-4o-mini → { themes[], synthesis }
+    └── update veille_runs : status=completed, ai_summary
+```
 
 ---
 
-## Pipeline Ingestion PDF (Python)
+## Pipeline Ingestion PDF (Python, manuel)
 
 ```
-scripts/ingest.py
+scripts/ingest.py  [--author]
     │
-    ├── Skip si storage_path déjà en base avec status=done
-    ├── Suppression + ré-ingestion si status=error ou processing
-    │
+    ├── Source : data/pdfs2/YEAR/  (ou data/Articles auteur/ avec --author)
+    ├── Dédup : skip si storage_path déjà en base avec status=done
     ├── PyMuPDF → extraction texte par page
-    │     └── OCR Tesseract si < 50 chars/page (PDF scannés)
-    │
-    ├── Chunking → CHUNK_SIZE=600, CHUNK_OVERLAP=100 (par sections)
-    ├── sentence-transformers → embedding EN (384D)
-    ├── MarianMT (Helsinki-NLP/opus-mt-en-fr) → traduction EN→FR
-    ├── sentence-transformers → embedding FR (384D)
-    └── Supabase → insert chunks (content, embedding, content_fr, embedding_fr)
-                   Triggers → content_tsv, content_fr_tsv (automatique)
+    │     └── OCR Tesseract si < 50 chars/page
+    ├── fix_spaced_text() → correction texte espacé à l'extraction
+    ├── Chunking : CHUNK_SIZE=600, CHUNK_OVERLAP=100
+    ├── sentence-transformers all-MiniLM-L6-v2 → embedding EN 384D
+    ├── insert chunks (content, embedding, page, section_title)
+    │     └── Trigger Postgres → content_tsv automatique
+    └── Après tous les inserts : CREATE INDEX CONCURRENTLY IVFFlat (lists=100)
 ```
 
 ---
 
-## Déploiement Vercel
+## Déploiement
 
+### Vercel
 | Configuration | Détail |
 |--------------|--------|
 | Cron rétention | `0 4 * * *` → `GET /api/cron/retention` (supprime conversations > 30j) |
-| Cron veille | `0 6 * * *` → `GET /api/cron/veille` (pipeline veille quotidienne) |
-| maxDuration | 300s sur `/api/cron/veille` (pipeline longue) |
-| Auth crons | `Authorization: Bearer $CRON_SECRET` (envoyé automatiquement par Vercel) |
+| Redirect post-login | Middleware → `/bibliographie` |
+| Routes protégées | `/bibliographie`, `/database`, `/analyse` (middleware.ts) |
+
+### GitHub Actions (`.github/workflows/veille-cron.yml`)
+| Déclencheur | 7h UTC (9h Paris) — quotidien |
+|-------------|-------------------------------|
+| Secrets requis | `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY` |
+| Variable optionnelle | `ENABLE_SEMANTIC_SCHOLAR=true` |
+| Durée typique | ~6-8 min (4 jobs séquentiels) |
+| Stratégie | `VEILLE_STRATEGY=actions` (défaut) |
 
 ---
 
-## Références
-- `documentation/SCHEMA_DB_ET_DONNEES.md` — schéma DB détaillé + flows numérotés
-- `documentation/STRUCTURE_ET_ARCHITECTURE.md` — arborescence complète
-- `documentation/BACK_RAG.md` — spécifications API RAG complètes
-- `documentation/PIPELINE_VEILLE_CONSOLIDE.md` — pipeline veille détaillée
+## Supabase Storage
+
+| Bucket | Contenu | Usage |
+|--------|---------|-------|
+| `analyses` | PDFs uploadés pour analyse | `GET /api/analyse/[id]/pdf` génère une URL signée 1h |
+
+---
+
+## Variables d'environnement
+
+| Variable | Usage |
+|----------|-------|
+| `NEXT_PUBLIC_SUPABASE_URL` | URL Supabase |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client navigateur |
+| `SUPABASE_SERVICE_ROLE_KEY` | Scripts + cron (admin) |
+| `OPENAI_API_KEY` | GPT-4o-mini (insights + veille) |
+| `CRON_SECRET` | Protection routes `/api/cron/*` |
+| `SS_API_KEY` | Clé Semantic Scholar (optionnelle — sans clé : 1 req/s) |

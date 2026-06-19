@@ -1,7 +1,14 @@
 # CLAUDE.md — Alexandria
 
-Outil d'aide à la recherche scientifique : RAG sur corpus PDF + veille automatisée.
+Outil d'aide à la recherche scientifique : veille automatisée + lecture assistée + analyse approfondie sur corpus PDF.
 Porteur : chercheur CNRS (Molecular Materials & Magnetism). Stack : Next.js 14, Supabase, OpenAI.
+
+**3 modules actifs :**
+- **Veille** — 44 sources RSS + Semantic Scholar, scoring sémantique quotidien, synthèse IA
+- **Lecture assistée** — upload PDF → résumé structuré + discussion IA + citations cliquables + PDF scroll sync
+- **Analyse** — proximité corpus + références croisées + recommandations Semantic Scholar + intégration corpus
+
+> ⚠️ Le chatbot RAG (`/rag`) a été retiré du front en juin 2026. La tuyauterie (`lib/rag/`, `/api/rag/`) reste pour les routes Analyse.
 
 ---
 
@@ -129,88 +136,87 @@ Copier `.env.example` → `.env.local` et remplir. Voir `.env.example` pour le d
 | `NEXT_PUBLIC_SUPABASE_URL` | URL Supabase (app + script Python) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client navigateur et serveur |
 | `SUPABASE_SERVICE_ROLE_KEY` | Script Python + cron/retention (admin) |
-| `OPENAI_API_KEY` | Génération RAG (`gpt-4o-mini`) — serveur uniquement |
+| `OPENAI_API_KEY` | GPT-4o-mini : insights Analyse + synthèse veille |
 | `CRON_SECRET` | Protection des routes `/api/cron/*` |
+| `SS_API_KEY` | Semantic Scholar (optionnel) — sans clé : 1 req/s |
 
 ---
 
 ## Architecture (résumé)
 
 Next.js 14 (App Router, TypeScript) mono-repo :
-- **Supabase** : Postgres + pgvector + Auth (cloud, pas d'on-prem)
-- **OpenAI** : `gpt-4o-mini`, streaming SSE pour les réponses RAG
-- **@xenova/transformers** : embeddings 384D côté Node (même modèle que l'ingestion Python)
-- **scripts/ingest.py** : ingestion PDF séparée (sentence-transformers + MarianMT EN→FR)
+- **Supabase** : Postgres + pgvector + Auth + Storage bucket "analyses" (cloud, pas d'on-prem)
+- **OpenAI** : `gpt-4o-mini` — insights Analyse (résumé + synthèse veille)
+- **@xenova/transformers** : embeddings 384D côté Node (all-MiniLM-L6-v2, même modèle que l'ingestion Python)
+- **scripts/ingest.py** : ingestion PDF bulk (sentence-transformers, sans traduction FR)
+- **Semantic Scholar API** : recommandations + métadonnées références citées
 
 ### Structure des modules
 
 ```
 app/
+  /                        # Landing page publique FR/EN
   (auth)/login/            # Login Supabase Auth
   (dashboard)/
-    rag/                   # Page chatbot RAG + settings
-    bibliographie/         # Veille + upload documents
+    bibliographie/         # Veille : articles ≥75%, historique runs, sources
+    database/              # KPIs corpus, UMAP, analytics, comparaison articles auteur
+    analyse/               # Liste analyses + upload PDF
+    analyse/[id]/          # 4 onglets : Proximité / Résumé / Discussion / Aller plus loin
   api/
-    rag/chat/              # POST : requête RAG, streaming SSE
-    rag/search/            # Recherche hybride seule
-    rag/conversations/     # GET liste, PATCH titre, DELETE
-    rag/conversations/[id]/messages/   # GET messages (cursor pagination)
-    rag/settings/          # GET + PATCH rag_settings
-    veille/scrape/         # POST : déclencher une run (legacy)
-    veille/list/           # GET : items du dernier run complété, triés par score
-    veille/status/[runId]/ # GET : statut run (polling)
-    veille/runs/           # GET : liste des runs avec counts (items, pertinents, ai_analysis)
+    analyse/upload/        # POST : upload PDF → parse → chunk → embed → document_analyses
+    analyse/[id]/insights/ # GET : résumé GPT + corpus_refs + cited_refs + ss_recs (avec cache)
+    analyse/[id]/chat/     # POST : discussion IA streaming SSE (doc + corpus)
+    analyse/[id]/pdf/      # GET : URL signée Supabase Storage (1h)
+    analyse/[id]/integrate/ # POST : is_temp=false → intégration corpus permanente
+    analyse/[id]/suggestions/ # GET : 4 suggestions hardcodées
+    analyse/warmup/        # GET : warm-up Xenova avant première question
+    veille/list/           # GET : items du dernier run complété
+    veille/runs/           # GET : liste des runs avec counts
     veille/runs/[id]/      # GET : détail run (pipeline_logs, ai_summary…)
-    veille/items/top/      # GET : articles pertinents ≥75% toutes runs, paginés (10/page) — Cache-Control: no-store
+    veille/items/top/      # GET : articles ≥75% toutes runs, paginés — Cache-Control: no-store
     veille/items/[id]/     # PATCH : toggle read_at (lu/non lu)
-    veille/stats/          # GET : KPIs globaux (total, scorés, pertinents ≥75%, lus) — Cache-Control: no-store
-    documents/upload/      # Upload PDF → data/pdfs/ + insert documents
-    ingestion/             # Parse → chunk → embed
+    veille/stats/          # GET : KPIs globaux — Cache-Control: no-store
     cron/retention/        # GET : suppression conversations > 30 jours
-    cron/veille/           # GET : pipeline veille legacy (Vercel, obsolète)
+    rag/*                  # Legacy — tuyauterie conservée, page front retirée
 
 lib/
   supabase/                # client.ts (browser), server.ts, admin.ts
-  db/                      # Requêtes DB + types TypeScript
-  rag/                     # detect-lang, search, embed, openai, citations,
-                           # conversation-persistence, settings, rerank
+  rag/                     # embed.ts (Xenova 384D), search.ts, openai.ts, citations.ts — réutilisés par Analyse
   veille/                  # sources, fetch-rss, openalex, crossref, score, summarize, filter-article-display
-  ingestion/               # parse-pdf, chunk, index
+  ingestion/               # parse-pdf.ts, chunk.ts, index.ts
 
 components/
-  rag/                     # RagConversationSidebar, RagMessageList
+  analyse/                 # AnalysisChatPanel.tsx, AnalysisPdfViewer.tsx
   veille/                  # VeilleDashboard, VeilleArticleCard
+  dashboard/               # NavLinks.tsx
   ui/                      # shadcn/ui : button, card, dialog, input...
 
 scripts/
-  ingest.py                # Ingestion PDF (Python, manuel) — flag --author pour articles auteur
-  fix_author_titles.py     # Correction titres espacés des articles auteur (--dry-run / --apply)
-  fix_spaced_chunks.py     # Correction texte espacé dans chunks + re-embed (--dry-run / --apply)
-  import-sources.ts        # Upsert des 44 sources en DB
+  ingest.py                # Ingestion PDF bulk (Python) — flag --author pour articles auteur
+  fix_author_titles.py     # Correction titres espacés articles auteur (--dry-run / --apply)
+  fix_spaced_chunks.py     # Correction texte espacé dans chunks (--dry-run / --apply)
   compute_umap.py          # Calcul coordonnées UMAP 2D sur les chunks
+  compute-ss-representatives.ts  # Calcul articles auteur représentatifs (pour SS recs veille)
+  import-sources.ts        # Upsert des 44 sources en DB
   veille/
-    extract.ts             # Job 1 — fetch RSS + OpenAlex, filtre finalisation, insert veille_items
+    extract.ts             # Job 1 — fetch RSS + OpenAlex, filtre finalisation
+    extract-semanticscholar.ts  # Job 1b — recs SS (si ENABLE_SEMANTIC_SCHOLAR=true)
     score.ts               # Job 2 — embed abstracts → match_chunks → similarity_score
-    recap-articles.ts      # Job 3 — GPT analyse individuelle des articles ≥80%
-    recap-global.ts        # Job 4 — GPT synthèse globale + thèmes, marque run completed
+    recap-articles.ts      # Job 3 — GPT analyse individuelle ≥80%
+    recap-global.ts        # Job 4 — GPT synthèse globale, marque run completed
 
-supabase/migrations/       # 20 migrations SQL (ordre chronologique)
-data/pdfs/                 # PDFs corpus (non versionnés)
-data/pdfs2/                # PDFs réorganisés par année de publication
+supabase/migrations/       # 50 migrations SQL (ordre chronologique)
+data/pdfs2/                # PDFs corpus réorganisés par année de publication
 data/Articles auteur/      # PDFs articles publiés du chercheur (non versionnés)
 ```
 
-### Pipeline RAG (flux d'une requête)
+### Pipeline Analyse (flux upload → discussion)
 
-1. `POST /api/rag/chat` reçoit `{ query, conversationId?, stream? }`
-2. `detect-lang.ts` → `'fr' | 'en'`
-3. Lecture `rag_settings` depuis Supabase
-4. Embedding de la requête (Xenova 384D)
-5. Recherche hybride : RPC `match_chunks` + `search_chunks_fts` → fusion RRF
-   - FR : `match_chunks_fr` + `search_chunks_fts_fr` ; fallback FR→EN si pas de chunks FR
-6. Garde-fou : `bestVectorSimilarity < similarity_threshold` → retour `guard_message`, pas d'appel OpenAI
-7. `openai.ts` avec contexte + historique + instruction langue → réponse streaming SSE
-8. Persistance : `messages` (user + assistant) + `conversations.updated_at`
+1. Upload PDF → `POST /api/analyse/upload` → `document_analyses` (status=ready) + chunks `is_temp=true`
+2. `GET /api/analyse/[id]/insights` → parallèle : résumé GPT + corpus_refs + cited_refs SS + ss_recs
+3. Page `/analyse/[id]` → 4 onglets (Proximité / Résumé / Discussion / Aller plus loin)
+4. Discussion : `POST /api/analyse/[id]/chat` → SSE (sources d'abord, puis tokens)
+5. Intégration : `POST /api/analyse/[id]/integrate` → `is_temp=false`
 
 ### Pipeline Veille
 
@@ -312,27 +318,27 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 
 | Fonctionnalité | État |
 |---------------|------|
-| RAG chat (EN, streaming, garde-fou) | ✅ Fonctionnel |
-| Conversations + historique | ✅ Fonctionnel |
-| Paramètres RAG (rag_settings) | ✅ Fonctionnel |
-| Pipeline veille GitHub Actions (4 jobs séquentiels) | ✅ Fonctionnel — ~7min/run, 638 articles/jour |
-| Filtre finalisation articles (OpenAlex + CrossRef) | ✅ Fonctionnel — exclut ASAP/preprints |
-| Scoring sémantique corpus (Xenova 384D) | ✅ Fonctionnel — ~637 scorés, ~3-8 ≥80%/jour |
-| Analyse IA par article ≥80% (ai_analysis jsonb) | ✅ Fonctionnel — tous les articles ≥80% analysés |
-| Synthèse globale du jour (ai_summary, vouvoiement) | ✅ Fonctionnel — thèmes + synthèse directe |
-| Cron veille automatique (GitHub Actions, 9h Paris) | ✅ Fonctionnel — 7h UTC |
-| Page Veille — articles ≥75%, paginés, lu/non lu | ✅ Fonctionnel — tag pill lu/non lu sous score |
-| Page Historique — 1 ligne/run, date+heure, KPIs | ✅ Fonctionnel — extraits, pertinents, analyses IA |
-| Page détail run — thèmes, articles, logs modal | ✅ Fonctionnel — ai_analysis + corpus_refs + read toggle |
-| Cron rétention 30 jours | ✅ Fonctionnel |
-| Page Database — dataviz (KPIs, UMAP, analytics) | ✅ Fonctionnel |
-| Articles auteur indexés (521 docs, is_author_article) | ✅ Fonctionnel |
-| Source Semantic Scholar (Job 1b optionnel) | ✅ Prêt — activer via `ENABLE_SEMANTIC_SCHOLAR=true` |
-| Badge source RSS / Semantic Scholar sur les cards | ✅ Fonctionnel |
-| Page publique `/` (landing FR/EN) | ✅ Fonctionnel — accessible sans connexion |
-| Module Lecture assistée | ⏳ À construire (voir docs/ROADMAP.md V2) |
-| Upload PDF + ingestion | ⚠️ À vérifier |
-| UMAP sur nouveau corpus | ⏳ À relancer (compute_umap.py) |
+| Pipeline veille GitHub Actions (4 jobs séquentiels) | ✅ ~7min/run, 638 articles/jour |
+| Filtre finalisation (OpenAlex + CrossRef) | ✅ exclut ASAP/preprints |
+| Scoring sémantique (Xenova 384D) | ✅ ~637 scorés, ~3-8 ≥80%/jour |
+| Analyse IA articles ≥80% (ai_analysis jsonb) | ✅ tous analysés |
+| Synthèse globale du jour (ai_summary) | ✅ thèmes + synthèse directe |
+| Cron veille automatique (GitHub Actions, 9h Paris) | ✅ 7h UTC |
+| Page Veille — articles ≥75%, paginés, lu/non lu | ✅ |
+| Page Historique — 1 ligne/run, KPIs | ✅ |
+| Page détail run — thèmes, articles, logs modal | ✅ |
+| Cron rétention 30 jours | ✅ |
+| Page Database — KPIs, UMAP, analytics, articles auteur | ✅ |
+| Articles auteur indexés (521 docs, is_author_article) | ✅ |
+| Source Semantic Scholar (Job 1b) | ✅ activer via `ENABLE_SEMANTIC_SCHOLAR=true` |
+| Badge source RSS / Semantic Scholar sur les cards | ✅ |
+| Page publique `/` (landing FR/EN) | ✅ accessible sans connexion |
+| **Module Analyse — Upload PDF** | ✅ parse + chunk + embed + Storage |
+| **Module Analyse — Insights** (résumé + corpus + cited_refs + ss_recs) | ✅ calcul parallèle avec cache |
+| **Module Analyse — Discussion IA** | ✅ chat streaming, citations [N], scroll PDF sync |
+| **Module Analyse — Intégration corpus** | ✅ is_temp=false en 1 clic |
+| Chatbot RAG (`/rag`) | ❌ retiré du front (juin 2026) — DB vidée |
+| UMAP recalculé sur corpus actuel | ⏳ à relancer (`compute_umap.py`) |
 
 ### Corpus actuel en base
 - **~3 700 documents corpus** (2024 + 2025 + 2026) + **521 articles auteur** (`is_author_article=true`)
