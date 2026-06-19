@@ -242,11 +242,11 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 h-full">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 h-full overflow-hidden">
 
         {/* ── Gauche : PDF viewer ── */}
-        <div className="lg:col-span-3 h-full flex flex-col">
-          <div className="rounded-lg border border-border bg-card p-3 h-full flex flex-col">
+        <div className="lg:col-span-3 min-h-0 flex flex-col">
+          <div className="rounded-lg border border-border bg-card p-3 flex-1 min-h-0 flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Document
@@ -273,8 +273,8 @@ export default function AnalysisChatPanel({ analysisId, title }: { analysisId: s
         </div>
 
         {/* ── Droite : Chat ── */}
-        <div className="lg:col-span-2 h-full flex flex-col">
-          <div className="rounded-lg border border-border bg-card p-3 h-full flex flex-col gap-3">
+        <div className="lg:col-span-2 min-h-0 flex flex-col">
+          <div className="rounded-lg border border-border bg-card p-3 flex-1 min-h-0 flex flex-col gap-3">
 
             {/* Zone messages — scroll ChatGPT-style : messages ancrés en bas, overflow vers le haut */}
             <div className="flex-1 min-h-0 overflow-y-auto pr-1">
