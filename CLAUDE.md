@@ -201,7 +201,8 @@ scripts/
   veille/
     extract.ts             # Job 1 — fetch RSS + OpenAlex, filtre finalisation
     extract-semanticscholar.ts  # Job 1b — recs SS (si ENABLE_SEMANTIC_SCHOLAR=true)
-    score.ts               # Job 2 — embed abstracts → match_chunks → similarity_score
+    score.ts               # Job 2 — embed abstracts → match_chunks + match_author_chunks → similarity_score + author_score
+    score-author.ts        # Script rétroactif — calcule author_score sur items existants
     recap-articles.ts      # Job 3 — GPT analyse individuelle ≥80%
     recap-global.ts        # Job 4 — GPT synthèse globale, marque run completed
 
@@ -213,7 +214,7 @@ data/Articles auteur/      # PDFs articles publiés du chercheur (non versionné
 ### Pipeline Analyse (flux upload → discussion)
 
 1. Upload PDF → `POST /api/analyse/upload` → `document_analyses` (status=ready) + chunks `is_temp=true`
-2. `GET /api/analyse/[id]/insights` → parallèle : résumé GPT + corpus_refs + cited_refs SS + ss_recs
+2. `GET /api/analyse/[id]/insights` → parallèle : résumé GPT + corpus_refs + author_score + cited_refs SS + ss_recs
 3. Page `/analyse/[id]` → 4 onglets (Proximité / Résumé / Discussion / Aller plus loin)
 4. Discussion : `POST /api/analyse/[id]/chat` → SSE (sources d'abord, puis tokens)
 5. Intégration : `POST /api/analyse/[id]/integrate` → `is_temp=false`
@@ -238,10 +239,13 @@ Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentie
 1. Charge tous les articles avec `similarity_score IS NULL` (auto-reprise si restart)
 2. Pour chaque article avec abstract > 50 chars :
    - `embedQuery(abstract)` → vecteur 384D via `@xenova/transformers` (all-MiniLM-L6-v2)
-   - `match_chunks RPC` → top-3 chunks les plus proches du corpus → `similarity_score` (top-1)
+   - `match_chunks RPC` + `match_author_chunks RPC` → lancés **en parallèle**
+   - `similarity_score` : top-1 similarité vs corpus complet
+   - `author_score` : top-1 similarité vs articles publiés du chercheur uniquement (`is_author_article=true`)
    - `corpus_refs` : chunks avec similarité ≥ 75% sauvegardés pour affichage
 3. Timeout `match_chunks` : 30s — si timeout → `similarity_score = 0` (jamais NULL après scoring)
-4. Sauvegarde en batch de 50
+4. `match_author_chunks` : `SET LOCAL statement_timeout = 0` dans le RPC (plpgsql volatile) — bypass timeout
+5. Sauvegarde en batch de 50
 5. Résultat typique : ~637 scorés | ~20 ≥75% | ~3-8 ≥80%
 
 #### Job 3 — `scripts/veille/recap-articles.ts`
@@ -321,24 +325,27 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 | Pipeline veille GitHub Actions (4 jobs séquentiels) | ✅ ~7min/run, 638 articles/jour |
 | Filtre finalisation (OpenAlex + CrossRef) | ✅ exclut ASAP/preprints |
 | Scoring sémantique (Xenova 384D) | ✅ ~637 scorés, ~3-8 ≥80%/jour |
+| **Double scoring : similarity_score + author_score** | ✅ parallèle, juin 2026 |
+| Script rétroactif `score-author.ts` | ✅ 22/1204 scorés (partiel) |
 | Analyse IA articles ≥80% (ai_analysis jsonb) | ✅ tous analysés |
 | Synthèse globale du jour (ai_summary) | ✅ thèmes + synthèse directe |
 | Cron veille automatique (GitHub Actions, 9h Paris) | ✅ 7h UTC |
 | Page Veille — articles ≥75%, paginés, lu/non lu | ✅ |
+| Badge "auteur XX%" orange sur les cards veille | ✅ |
 | Page Historique — 1 ligne/run, KPIs | ✅ |
 | Page détail run — thèmes, articles, logs modal | ✅ |
 | Cron rétention 30 jours | ✅ |
-| Page Database — KPIs, UMAP, analytics, articles auteur | ✅ |
+| Page Database — KPIs, UMAP clusters + carte auteur vs corpus | ✅ |
 | Articles auteur indexés (521 docs, is_author_article) | ✅ |
 | Source Semantic Scholar (Job 1b) | ✅ activer via `ENABLE_SEMANTIC_SCHOLAR=true` |
 | Badge source RSS / Semantic Scholar sur les cards | ✅ |
 | Page publique `/` (landing FR/EN) | ✅ accessible sans connexion |
 | **Module Analyse — Upload PDF** | ✅ parse + chunk + embed + Storage |
-| **Module Analyse — Insights** (résumé + corpus + cited_refs + ss_recs) | ✅ calcul parallèle avec cache |
+| **Module Analyse — Insights** (résumé + corpus + author_score + cited_refs + ss_recs) | ✅ calcul parallèle avec cache |
 | **Module Analyse — Discussion IA** | ✅ chat streaming, citations [N], scroll PDF sync |
 | **Module Analyse — Intégration corpus** | ✅ is_temp=false en 1 clic |
 | Chatbot RAG (`/rag`) | ❌ retiré du front (juin 2026) — DB vidée |
-| UMAP recalculé sur corpus actuel | ⏳ à relancer (`compute_umap.py`) |
+| UMAP recalculé sur corpus actuel | ⏳ à relancer (`compute_umap.py --all`) |
 
 ### Corpus actuel en base
 - **~3 700 documents corpus** (2024 + 2025 + 2026) + **521 articles auteur** (`is_author_article=true`)
@@ -348,10 +355,11 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 - **Titres nettoyés** : `fix_spaced_text()` à l'ingestion + `fix_author_titles.py` sur 521 articles auteur
 
 ### Veille — état en base (juin 2026)
-- `veille_items` : colonnes `read_at timestamptz` + `ai_analysis jsonb` + `similarity_score float` + `corpus_refs jsonb`
+- `veille_items` : colonnes `read_at` + `ai_analysis` + `similarity_score` + `corpus_refs` + **`author_score float`** (ajouté juin 2026)
 - `ai_analysis` structure : `{ contribution: string, relevance: string, corpus_link: string }`
 - `corpus_refs` structure : `[{ doc_title, excerpt, page, similarity }]` — passages corpus ≥75% ayant déclenché le score
 - `similarity_score = 0` si scoring tenté mais aucun match (jamais NULL après scoring, NULL = pas encore scoré)
+- `author_score` : similarité top-1 vs chunks `is_author_article=true` — NULL si non encore calculé
 - `ai_analysis` rempli uniquement pour les articles ≥80% par `recap-articles.ts`
 - **DB nettoyée le 09/06/2026** — runs propres avec nouvelle pipeline : ~638 extraits, ~637 scorés, ~3-8 ≥80%, tous analysés IA
 

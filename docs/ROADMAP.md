@@ -168,14 +168,39 @@ Plan d'évolution. Mettre à jour à chaque jalon atteint.
 
 ---
 
-## V2 — Améliorations prévues
+## V2.0 — Double scoring auteur ✅ (terminé — Juin 2026)
+
+Stratégie de scoring enrichie : les articles de veille sont maintenant scorés contre **deux référentiels** en parallèle.
+
+| Fonctionnalité | État | Détail |
+|---------------|------|--------|
+| Colonne `author_score float` dans `veille_items` | ✅ | Migration 20260623100000 |
+| Colonne `author_score float` dans `document_analyses` | ✅ | Migration 20260623120000 |
+| RPC `match_author_chunks` (is_author_article=true) | ✅ | Migration 20260623110000, plpgsql volatile |
+| Pipeline veille score.ts — double scoring en parallèle | ✅ | `match_chunks` + `match_author_chunks` simultanés |
+| Script rétroactif `score-author.ts` | ✅ | `npx tsx scripts/veille/score-author.ts [--all] [--limit=N]` |
+| UI Veille — badge orange "auteur XX%" sur les cards | ✅ | VeilleArticleCard + bibliographie/page.tsx |
+| UI Analyse — badge "Score auteur" onglet Proximité | ✅ | Recalcul automatique sur analyses en cache |
+| Page Database — carte UMAP "auteur vs corpus" | ✅ | AuthorVsCorpusMap (orange=auteur, gris=corpus) |
+| `compute_umap.py` réécriture psycopg2 | ✅ | Bypass statement_timeout, flag `--all` |
+
+### Seuils double scoring (juin 2026)
+- `author_score` ≥ 75% = très proche des thématiques du chercheur
+- `author_above_75` observé : 0/1204 (score auteur = critère plus exigeant que corpus)
+- 22/1204 articles ont un `author_score` calculé (script rétroactif partiel)
+
+---
+
+## V2.1 — Améliorations prévues
 
 | Fonctionnalité | Priorité | Détail |
 |---------------|----------|--------|
-| UMAP recalculé sur corpus actuel (848k chunks) | P1 | Relancer `compute_umap.py` |
+| UMAP recalculé sur corpus actuel (848k chunks) | P1 | Relancer `compute_umap.py --all` (10-20 min) |
+| Isolation Forest / One-Class SVM sur articles auteur | P1 | sklearn, labels implicites, intégration pipeline veille |
 | Nettoyage automatique analyses expirées (expires_at) | P1 | Cron ou trigger Supabase |
 | Upload depuis la page veille (article → analyse directe) | P1 | Lien "Analyser" sur VeilleArticleCard |
 | Filtres page veille (auteur, journal, date, score) | P2 | |
 | Notifications veille (email si articles > seuil) | P3 | |
 | Clé API Semantic Scholar (`SS_API_KEY`) | P2 | Formulaire soumis — à ajouter dans secrets GitHub |
 | Extension corpus 2015-2023 | P3 | ~13 000 PDFs — dépend de l'espace DB restant |
+| Re-embedder articles auteur avec SPECTER2 (768D) | P3 | Conditionnel — si UMAP montre clusters bien séparés |
