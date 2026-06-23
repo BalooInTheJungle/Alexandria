@@ -48,7 +48,7 @@ export async function GET(_req: Request, { params }: { params: { date: string } 
   const { data: items, error: itemsErr } = await supabase
     .from('veille_items')
     .select(`id, run_id, url, title, authors, doi, abstract, published_at,
-      similarity_score, heuristic_score, corpus_refs, read_at, ai_analysis,
+      similarity_score, author_score, heuristic_score, corpus_refs, read_at, ai_analysis,
       sources!inner(name)`)
     .in('run_id', runIds)
     .order('similarity_score', { ascending: false, nullsFirst: false })

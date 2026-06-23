@@ -4,10 +4,11 @@ Calcule les coordonnées UMAP 2D à partir des embeddings existants dans Supabas
 et les écrit dans les colonnes chunks.umap_x / chunks.umap_y.
 
 Usage:
-    cd scripts && python3 compute_umap.py
+    cd scripts && python3 compute_umap.py           # 1 chunk/doc (~3700 points, rapide)
+    cd scripts && python3 compute_umap.py --all     # tous les chunks (848k, très long)
 
 Prérequis:
-    pip install umap-learn (déjà dans requirements.txt)
+    pip install umap-learn psycopg2-binary
 """
 import os
 import sys
@@ -25,59 +26,63 @@ if env_path.exists():
 import json
 import numpy as np
 import umap
-from supabase import create_client
+import psycopg2
+import psycopg2.extras
 
-FETCH_BATCH  = 1000   # lignes par page Supabase
-UPDATE_BATCH = 200    # updates par requête
-
-def get_supabase():
-    url = (os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or "").strip()
-    key = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
-    if not url or not key:
-        sys.exit("❌  NEXT_PUBLIC_SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant dans .env.local")
-    return create_client(url, key)
+UPDATE_BATCH = 500
+ALL_CHUNKS = "--all" in sys.argv
 
 
-def fetch_embeddings(sb):
-    """Récupère tous les chunk ids + embeddings (pagination Supabase)."""
+def get_conn():
+    db_url = (os.environ.get("SUPABASE_DB_URL") or "").strip()
+    if not db_url:
+        sys.exit("❌  SUPABASE_DB_URL manquant dans .env.local")
+    conn = psycopg2.connect(db_url)
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0;")
+    return conn
+
+
+def fetch_embeddings(conn):
+    """Récupère les embeddings — 1 chunk par doc (position=0) par défaut, ou tous avec --all."""
+    if ALL_CHUNKS:
+        print("📥  Récupération de TOUS les embeddings (mode --all)...")
+        sql = """
+            SELECT id, embedding FROM chunks
+            WHERE embedding IS NOT NULL AND (is_temp = false OR is_temp IS NULL)
+        """
+    else:
+        print("📥  Récupération d'1 chunk par document (position=0)...")
+        sql = """
+            SELECT id, embedding FROM chunks
+            WHERE embedding IS NOT NULL AND position = 0 AND (is_temp = false OR is_temp IS NULL)
+        """
+
     ids, embeddings = [], []
-    offset = 0
-    print("📥  Récupération des embeddings depuis Supabase...")
-    while True:
-        res = (
-            sb.table("chunks")
-            .select("id, embedding")
-            .not_.is_("embedding", "null")
-            .range(offset, offset + FETCH_BATCH - 1)
-            .execute()
-        )
-        rows = res.data or []
-        if not rows:
-            break
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute(sql)
+        rows = cur.fetchall()
         for r in rows:
-            ids.append(r["id"])
+            ids.append(str(r["id"]))
             emb = r["embedding"]
             if isinstance(emb, str):
                 emb = json.loads(emb)
             embeddings.append(emb)
-        offset += len(rows)
-        print(f"   {offset} chunks chargés...", end="\r")
-        if len(rows) < FETCH_BATCH:
-            break
-    print(f"\n✅  {len(ids)} embeddings chargés.")
+
+    print(f"✅  {len(ids)} embeddings chargés.")
     return ids, embeddings
 
 
 def compute_umap(embeddings):
-    """Projette les embeddings 384D en 2D avec UMAP."""
-    print("🔄  Calcul UMAP (peut prendre 2-5 minutes pour 35k chunks)...")
+    n = len(embeddings)
+    print(f"🔄  Calcul UMAP sur {n} points...")
     matrix = np.array(embeddings, dtype=np.float32)
     reducer = umap.UMAP(
         n_components=2,
         n_neighbors=15,
         min_dist=0.1,
         metric="cosine",
-        random_state=42,
         verbose=True,
     )
     coords = reducer.fit_transform(matrix)
@@ -85,33 +90,36 @@ def compute_umap(embeddings):
     return coords
 
 
-def write_back(sb, ids, coords):
-    """Écrit umap_x / umap_y dans Supabase par batch."""
+def write_back(conn, ids, coords):
     total = len(ids)
     batches = math.ceil(total / UPDATE_BATCH)
     print(f"💾  Écriture de {total} coordonnées en {batches} batches...")
 
-    for b in range(batches):
-        start = b * UPDATE_BATCH
-        end   = min(start + UPDATE_BATCH, total)
-        for i in range(start, end):
-            sb.table("chunks").update({
-                "umap_x": float(coords[i, 0]),
-                "umap_y": float(coords[i, 1]),
-            }).eq("id", ids[i]).execute()
-        pct = round(end / total * 100)
-        print(f"   batch {b + 1}/{batches} ({pct}%)", end="\r")
+    with conn.cursor() as cur:
+        for b in range(batches):
+            start = b * UPDATE_BATCH
+            end = min(start + UPDATE_BATCH, total)
+            data = [(float(coords[i, 0]), float(coords[i, 1]), ids[i]) for i in range(start, end)]
+            psycopg2.extras.execute_batch(
+                cur,
+                "UPDATE chunks SET umap_x = %s, umap_y = %s WHERE id = %s::uuid",
+                data,
+                page_size=UPDATE_BATCH
+            )
+            pct = round(end / total * 100)
+            print(f"   batch {b + 1}/{batches} ({pct}%)", end="\r")
 
     print(f"\n✅  {total} chunks mis à jour.")
 
 
 def main():
-    sb = get_supabase()
-    ids, embeddings = fetch_embeddings(sb)
+    conn = get_conn()
+    ids, embeddings = fetch_embeddings(conn)
     if not ids:
         sys.exit("❌  Aucun embedding trouvé en base.")
     coords = compute_umap(embeddings)
-    write_back(sb, ids, coords)
+    write_back(conn, ids, coords)
+    conn.close()
     print("🎉  compute_umap.py terminé.")
 
 

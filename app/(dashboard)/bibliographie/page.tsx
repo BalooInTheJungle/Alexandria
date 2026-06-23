@@ -67,6 +67,7 @@ type VeilleItem = {
   abstract?: string | null;
   doi?: string | null;
   similarity_score: number | null;
+  author_score: number | null;
   heuristic_score: number | null;
   source_name: string | null;
   document_id: string | null;
@@ -267,23 +268,24 @@ function globalProgress(
 
 const DEFAULT_THRESHOLD = 0.30;
 
-function ScoreStat({ score }: { score: number | null }) {
-  if (score == null) return (
-    <div className="flex flex-col items-center justify-center rounded-lg px-3 py-2 bg-muted min-w-[68px]">
-      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Similarité</span>
-      <span className="text-lg font-bold text-muted-foreground">—</span>
-    </div>
-  );
-  const pct = Math.round(score * 100);
-  const colors = pct >= 70
-    ? "bg-green-100 text-green-800"
-    : pct >= 50
-    ? "bg-yellow-100 text-yellow-800"
+function ScoreStat({ score, authorScore }: { score: number | null; authorScore?: number | null }) {
+  const pct = score != null ? Math.round(score * 100) : null;
+  const colors = pct == null ? "bg-muted text-muted-foreground"
+    : pct >= 70 ? "bg-green-100 text-green-800"
+    : pct >= 50 ? "bg-yellow-100 text-yellow-800"
     : "bg-muted text-muted-foreground";
   return (
-    <div className={`flex flex-col items-center justify-center rounded-lg px-3 py-2 min-w-[68px] ${colors}`}>
-      <span className="text-[10px] font-semibold uppercase tracking-wide opacity-70">Similarité</span>
-      <span className="text-xl font-bold tabular-nums leading-tight">{pct}%</span>
+    <div className="flex flex-col gap-1 items-end">
+      <div className={`flex flex-col items-center justify-center rounded-lg px-3 py-2 min-w-[68px] ${colors}`}>
+        <span className="text-[10px] font-semibold uppercase tracking-wide opacity-70">Corpus</span>
+        <span className="text-xl font-bold tabular-nums leading-tight">{pct != null ? `${pct}%` : "—"}</span>
+      </div>
+      {authorScore != null && (
+        <div className="flex flex-col items-center justify-center rounded-lg px-3 py-1.5 min-w-[68px] bg-orange-100 text-orange-800">
+          <span className="text-[10px] font-semibold uppercase tracking-wide opacity-70">Auteur</span>
+          <span className="text-base font-bold tabular-nums leading-tight">{Math.round(authorScore * 100)}%</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -354,7 +356,7 @@ function SummaryArticleCard({ article, item }: { article: SummaryArticle; item: 
           }
           <p className="text-xs text-muted-foreground mt-0.5">{source}</p>
         </div>
-        <div className="shrink-0"><ScoreStat score={item?.similarity_score ?? null} /></div>
+        <div className="shrink-0"><ScoreStat score={item?.similarity_score ?? null} authorScore={item?.author_score ?? null} /></div>
       </div>
 
       <div className="h-px bg-border" />
@@ -562,7 +564,7 @@ function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle
           }
         </div>
         <div className="shrink-0 flex flex-col items-end gap-2">
-          <ScoreStat score={item.similarity_score} />
+          <ScoreStat score={item.similarity_score} authorScore={item.author_score} />
           <button
             onClick={handleReadToggle}
             disabled={toggling}

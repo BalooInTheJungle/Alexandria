@@ -9,6 +9,7 @@ interface VeilleArticle {
   url: string;
   published_at: string | null;
   similarity_score: number | null;
+  author_score: number | null;
   last_error: string | null;
   source_name: string | null;
 }
@@ -60,6 +61,11 @@ export default function VeilleArticleCard({ article }: Props) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <ScoreBadge score={article.similarity_score} />
+            {article.author_score !== null && (
+              <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-orange-100 text-orange-800">
+                <span className="opacity-70">auteur</span> {Math.round(article.author_score * 100)}%
+              </span>
+            )}
             <SourceBadge name={article.source_name} />
             {dateStr && (
               <span className="text-xs text-muted-foreground">{dateStr}</span>

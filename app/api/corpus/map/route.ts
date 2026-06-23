@@ -10,6 +10,7 @@ export type MapPoint = {
   doc_id: string;
   doc_title: string | null;
   year: number | null;
+  is_author: boolean;
 };
 
 const SAMPLE_SIZE = 5000;
@@ -22,7 +23,7 @@ export async function GET() {
     // Chunks avec coordonnées UMAP + document title via join
     const { data, error } = await supabase
       .from("chunks")
-      .select("id, umap_x, umap_y, document_id, documents(title, published_at)")
+      .select("id, umap_x, umap_y, document_id, documents(title, published_at, is_author_article)")
       .not("umap_x", "is", null)
       .not("umap_y", "is", null)
       .limit(SAMPLE_SIZE);
@@ -34,8 +35,8 @@ export async function GET() {
 
     const points: MapPoint[] = (data ?? []).map((row) => {
       const doc = Array.isArray(row.documents)
-        ? (row.documents[0] as { title?: string | null; published_at?: string | null } | undefined)
-        : (row.documents as { title?: string | null; published_at?: string | null } | null);
+        ? (row.documents[0] as { title?: string | null; published_at?: string | null; is_author_article?: boolean | null } | undefined)
+        : (row.documents as { title?: string | null; published_at?: string | null; is_author_article?: boolean | null } | null);
       return {
         id: row.id,
         x: row.umap_x as number,
@@ -43,6 +44,7 @@ export async function GET() {
         doc_id: row.document_id,
         doc_title: doc?.title ?? null,
         year: doc?.published_at ? new Date(doc.published_at).getFullYear() : null,
+        is_author: doc?.is_author_article === true,
       };
     });
 

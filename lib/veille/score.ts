@@ -27,6 +27,7 @@ function getSupabase() {
 
 type ScoreResult = {
   similarity: number | null
+  authorSimilarity: number | null
   refs: CorpusRef[]
 }
 
@@ -74,28 +75,29 @@ function splitAbstractIntoChunks(abstract: string): string[] {
 
 // Match one embedding against the corpus. Returns rows or null on timeout/error.
 async function matchChunks(
-  embedding: number[]
+  embedding: number[],
+  rpcName: 'match_chunks' | 'match_author_chunks' = 'match_chunks'
 ): Promise<{ doc_title: string; content: string; page: number | null; similarity: number }[] | null> {
   const supabase = getSupabase()
-  const rpcPromise = supabase.rpc('match_chunks', {
+  const rpcPromise = supabase.rpc(rpcName, {
     query_embedding: embedding,
     match_threshold: 0.0,
     match_count:     3,
   })
   const timeoutPromise = new Promise<null>((_, reject) =>
-    setTimeout(() => reject(new Error('match_chunks timeout')), MATCH_TIMEOUT_MS)
+    setTimeout(() => reject(new Error(`${rpcName} timeout`)), MATCH_TIMEOUT_MS)
   )
 
   try {
     const result = await Promise.race([rpcPromise, timeoutPromise]) as { data: unknown; error: unknown } | null
     if (!result) return null
     if (result.error) {
-      console.error('[score] match_chunks error:', (result.error as any).message)
+      console.error(`[score] ${rpcName} error:`, (result.error as any).message)
       return null
     }
     return (result.data as any[]) ?? []
   } catch {
-    console.error('[score] match_chunks timeout')
+    console.error(`[score] ${rpcName} timeout`)
     return null
   }
 }
@@ -113,6 +115,8 @@ async function scoreAbstract(abstract: string): Promise<ScoreResult> {
     const seenExcerpts = new Set<string>()
     let anyTimeout = false
 
+    let bestAuthorSimilarity: number | null = null
+
     for (const chunk of abstractChunks) {
       let embedding: number[]
       try {
@@ -122,47 +126,56 @@ async function scoreAbstract(abstract: string): Promise<ScoreResult> {
         continue
       }
 
-      const rows = await matchChunks(embedding)
+      // Run corpus + author scoring in parallel
+      const [rows, authorRows] = await Promise.all([
+        matchChunks(embedding, 'match_chunks'),
+        matchChunks(embedding, 'match_author_chunks'),
+      ])
+
       if (rows === null) {
         anyTimeout = true
-        continue
-      }
-      if (rows.length === 0) continue
-
-      const chunkSimilarity = typeof rows[0].similarity === 'number'
-        ? Math.round(rows[0].similarity * 1000) / 1000
-        : null
-
-      if (chunkSimilarity !== null) {
-        if (bestSimilarity === null || chunkSimilarity > bestSimilarity) {
+      } else if (rows.length > 0) {
+        const chunkSimilarity = typeof rows[0].similarity === 'number'
+          ? Math.round(rows[0].similarity * 1000) / 1000
+          : null
+        if (chunkSimilarity !== null && (bestSimilarity === null || chunkSimilarity > bestSimilarity)) {
           bestSimilarity = chunkSimilarity
+        }
+        for (const row of rows) {
+          if (row.similarity < CORPUS_REF_THRESHOLD) continue
+          const key = `${row.doc_title}::${row.page}`
+          if (seenExcerpts.has(key)) continue
+          seenExcerpts.add(key)
+          allRefs.push({
+            doc_title:  row.doc_title ?? 'Document inconnu',
+            excerpt:    row.content.length > EXCERPT_MAX_CHARS
+              ? row.content.slice(0, EXCERPT_MAX_CHARS).trimEnd() + '…'
+              : row.content,
+            page:       row.page ?? null,
+            similarity: Math.round(row.similarity * 1000) / 1000,
+          })
         }
       }
 
-      for (const row of rows) {
-        if (row.similarity < CORPUS_REF_THRESHOLD) continue
-        const key = `${row.doc_title}::${row.page}`
-        if (seenExcerpts.has(key)) continue
-        seenExcerpts.add(key)
-        allRefs.push({
-          doc_title:  row.doc_title ?? 'Document inconnu',
-          excerpt:    row.content.length > EXCERPT_MAX_CHARS
-            ? row.content.slice(0, EXCERPT_MAX_CHARS).trimEnd() + '…'
-            : row.content,
-          page:       row.page ?? null,
-          similarity: Math.round(row.similarity * 1000) / 1000,
-        })
+      if (authorRows !== null && authorRows.length > 0) {
+        const authorSim = typeof authorRows[0].similarity === 'number'
+          ? Math.round(authorRows[0].similarity * 1000) / 1000
+          : null
+        if (authorSim !== null && (bestAuthorSimilarity === null || authorSim > bestAuthorSimilarity)) {
+          bestAuthorSimilarity = authorSim
+        }
       }
     }
 
     // If all chunks timed out, return null to mark as "not scored"
     if (anyTimeout && bestSimilarity === null) {
-      return { similarity: null, refs: [] }
+      return { similarity: null, authorSimilarity: null, refs: [] }
     }
 
     return {
-      similarity: bestSimilarity,
-      refs:       allRefs.sort((a, b) => b.similarity - a.similarity).slice(0, 5),
+      similarity:       bestSimilarity,
+      authorSimilarity: bestAuthorSimilarity,
+      refs:             allRefs.sort((a, b) => b.similarity - a.similarity).slice(0, 5),
     }
   } catch (err: any) {
     console.error('[score] Error:', err.message)

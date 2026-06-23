@@ -150,6 +150,53 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
 
   if (analysis.status === "completed") {
+    // Si author_score manquant (analyse antérieure à la fonctionnalité), le calculer maintenant
+    if (analysis.author_score === null || analysis.author_score === undefined) {
+      LOG("cache hit — author_score missing, computing", { analysisId })
+      try {
+        const { data: chunks } = await supabase
+          .from("chunks")
+          .select("embedding")
+          .eq("analysis_id", analysisId)
+          .eq("is_temp", true)
+          .limit(50)
+
+        if (chunks && chunks.length > 0) {
+          const parseEmb = (raw: unknown): number[] =>
+            typeof raw === "string" ? JSON.parse(raw) : (raw as number[])
+          const dim = parseEmb(chunks[0].embedding).length
+          const meanEmb = new Array(dim).fill(0) as number[]
+          for (const c of chunks) {
+            const emb = parseEmb(c.embedding)
+            for (let i = 0; i < dim; i++) meanEmb[i] += emb[i]
+          }
+          for (let i = 0; i < dim; i++) meanEmb[i] /= chunks.length
+
+          const { data: authorRows } = await supabase.rpc("match_author_chunks", {
+            query_embedding: meanEmb,
+            match_threshold: 0.0,
+            match_count: 3,
+          })
+          const authorScore = authorRows && authorRows.length > 0
+            ? Math.round((authorRows as Array<{ similarity: number }>)[0].similarity * 1000) / 1000
+            : null
+
+          const { data: updated } = await supabase
+            .from("document_analyses")
+            .update({ author_score: authorScore })
+            .eq("id", analysisId)
+            .select("*")
+            .single()
+
+          if (updated) {
+            LOG("cache hit — author_score updated", { analysisId, authorScore })
+            return NextResponse.json(updated)
+          }
+        }
+      } catch (err) {
+        LOG("cache hit — author_score compute failed (skipped)", err)
+      }
+    }
     LOG("cache hit", { analysisId })
     return NextResponse.json(analysis)
   }
@@ -199,7 +246,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     LOG("cited DOIs extracted", { count: citedDois.length })
 
     // Lancer tout en parallèle
-    const [summaryResult, corpusResult, citedMetaMap, ssPaperIdResult, ssRecsResult] = await Promise.allSettled([
+    const [summaryResult, corpusResult, authorScoreResult, citedMetaMap, ssPaperIdResult, ssRecsResult] = await Promise.allSettled([
 
       // 1. Résumé GPT
       generateSummary(chunks),
@@ -211,22 +258,34 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         match_count: 30,
       }).then(({ data, error }) => {
         if (error) throw error
-        // Filtrer les chunks de cette analyse (is_temp)
         return ((data ?? []) as Array<{
           id: string; document_id: string; content: string; page: number | null
           section_title: string | null; similarity: number; doc_title: string | null
         }>).filter((c) => c.document_id !== analysis.document_id)
       }),
 
-      // 3. Métadonnées SS pour les DOIs cités
+      // 3. Score auteur — match contre les articles auteur uniquement
+      supabase.rpc("match_author_chunks", {
+        query_embedding: meanEmbedding,
+        match_threshold: 0.0,
+        match_count: 3,
+      }).then(({ data, error }) => {
+        if (error) return null
+        const rows = (data ?? []) as Array<{ similarity: number }>
+        return rows.length > 0 ? Math.round(rows[0].similarity * 1000) / 1000 : null
+      }),
+
+      // 4. Métadonnées SS pour les DOIs cités
       fetchSsMetadataBatch(citedDois.slice(0, 30)),
 
-      // 4. paperId SS de l'article analysé (via son DOI)
+      // 5. paperId SS de l'article analysé (via son DOI)
       analysis.doi ? fetchSsPaperId(analysis.doi) : Promise.resolve(null),
 
-      // 5. Recommandations SS (si paperId connu dès maintenant — sinon on fera après)
+      // 6. Recommandations SS (si paperId connu dès maintenant — sinon on fera après)
       Promise.resolve(null),
     ])
+
+    const authorScore = authorScoreResult.status === "fulfilled" ? authorScoreResult.value : null
 
     // Recommandations SS : nécessite paperId → peut venir de ss_paper_id existant ou du fetch
     let ssRecs: Array<{ title: string; authors: string[]; year: number | null; doi: string | null; abstract: string | null }> = []
@@ -306,6 +365,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         corpus_refs: corpusRefs,
         cited_refs: citedRefs,
         ss_recs: ssRecs,
+        author_score: authorScore,
       })
       .eq("id", analysisId)
       .select("*")

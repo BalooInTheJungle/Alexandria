@@ -99,7 +99,7 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
   let query = supabase
     .from('veille_items')
     .select(`id, run_id, source_id, url, title, authors, doi, abstract, published_at,
-      heuristic_score, similarity_score, corpus_refs, last_error, created_at, read_at, ai_analysis, sources!inner(name)`)
+      heuristic_score, similarity_score, author_score, corpus_refs, last_error, created_at, read_at, ai_analysis, sources!inner(name)`)
     .order('similarity_score', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
@@ -134,7 +134,9 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
     title: r.title ?? undefined, authors: r.authors ?? undefined, doi: r.doi ?? undefined,
     abstract: r.abstract ?? undefined, published_at: (r as any).published_at ?? undefined,
     heuristic_score: (r as any).heuristic_score ?? undefined,
-    similarity_score: r.similarity_score ?? undefined, last_error: r.last_error ?? undefined,
+    similarity_score: r.similarity_score ?? undefined,
+    author_score: (r as any).author_score ?? null,
+    last_error: r.last_error ?? undefined,
     created_at: r.created_at, source_name: sourceName(r),
     document_id: r.doi ? doiToDocumentId.get(r.doi) ?? null : null,
     corpus_refs: (r as any).corpus_refs ?? null,
@@ -216,7 +218,9 @@ export async function listTodayTopArticles(threshold: number, limit = 10): Promi
     title: r.title ?? undefined, authors: r.authors ?? undefined, doi: r.doi ?? undefined,
     abstract: r.abstract ?? undefined, published_at: (r as any).published_at ?? undefined,
     heuristic_score: (r as any).heuristic_score ?? undefined,
-    similarity_score: r.similarity_score ?? undefined, last_error: r.last_error ?? undefined,
+    similarity_score: r.similarity_score ?? undefined,
+    author_score: (r as any).author_score ?? null,
+    last_error: r.last_error ?? undefined,
     created_at: r.created_at, source_name: sourceName(r),
     document_id: null, corpus_refs: (r as any).corpus_refs ?? null,
     read_at: (r as any).read_at ?? null, ai_analysis: (r as any).ai_analysis ?? null,

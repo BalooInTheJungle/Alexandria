@@ -46,7 +46,7 @@ type SimilarDocUI = {
   best_chunk: string | null;
 };
 
-type MapPoint = { id: string; x: number; y: number; doc_id: string; doc_title: string | null; year: number | null };
+type MapPoint = { id: string; x: number; y: number; doc_id: string; doc_title: string | null; year: number | null; is_author: boolean };
 type TimelinePoint = { year: number; count: number };
 type JournalStat = { journal: string; count: number };
 
@@ -222,6 +222,56 @@ function CorpusMap({ points }: { points: MapPoint[] }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function AuthorVsCorpusMap({ points }: { points: MapPoint[] }) {
+  const corpusPoints = useMemo(() => points.filter((p) => !p.is_author).map((p) => ({ x: p.x, y: p.y, name: p.doc_title ?? "Sans titre", year: p.year })), [points]);
+  const authorPoints = useMemo(() => points.filter((p) => p.is_author).map((p) => ({ x: p.x, y: p.y, name: p.doc_title ?? "Sans titre", year: p.year })), [points]);
+
+  if (!points.length) return (
+    <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
+      <p className="text-sm text-muted-foreground">
+        Carte non disponible — lance <code className="bg-muted px-1 rounded text-xs">scripts/compute_umap.py</code> pour calculer les coordonnées.
+      </p>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="flex items-center gap-4 mb-3 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-slate-400 opacity-70" />
+          Corpus ({corpusPoints.length} docs)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-full bg-orange-500" />
+          Articles auteur ({authorPoints.length} docs)
+        </span>
+      </div>
+      <ResponsiveContainer width="100%" height={440}>
+        <ScatterChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+          <XAxis type="number" dataKey="x" hide domain={["auto", "auto"]} />
+          <YAxis type="number" dataKey="y" hide domain={["auto", "auto"]} />
+          <ZAxis range={[5, 5]} />
+          <Tooltip
+            cursor={{ strokeDasharray: "3 3" }}
+            content={({ payload }) => {
+              const p = payload?.[0]?.payload as ClusterPoint | undefined;
+              if (!p) return null;
+              return (
+                <div className="rounded border bg-background px-3 py-2 text-xs shadow max-w-[220px]">
+                  <p className="font-medium line-clamp-2 leading-snug">{p.name}</p>
+                  {p.year && <p className="text-muted-foreground mt-1">{p.year}</p>}
+                </div>
+              );
+            }}
+          />
+          <Scatter name="Corpus" data={corpusPoints} fill="#94a3b8" fillOpacity={0.4} />
+          <Scatter name="Articles auteur" data={authorPoints} fill="#f97316" fillOpacity={0.85} />
+        </ScatterChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -868,7 +918,7 @@ export default function DatabasePage() {
       <div ref={mapRef}>
         <Card>
           <CardHeader>
-            <CardTitle>Carte du corpus — espace vectoriel</CardTitle>
+            <CardTitle>Carte du corpus — clusters thématiques</CardTitle>
           </CardHeader>
           <CardContent>
             {loadingMap
@@ -877,7 +927,7 @@ export default function DatabasePage() {
                   <CorpusMap points={mapPoints} />
                   {mapPoints.length > 0 && (
                     <p className="mt-3 text-xs text-muted-foreground text-center">
-                      {mapPoints.length.toLocaleString("fr-FR")} chunks affichés · {K_CLUSTERS} clusters thématiques détectés automatiquement
+                      {mapPoints.length.toLocaleString("fr-FR")} docs affichés · {K_CLUSTERS} clusters thématiques détectés automatiquement
                     </p>
                   )}
                 </>
@@ -885,6 +935,19 @@ export default function DatabasePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Carte vectorielle UMAP — articles auteur vs corpus */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Articles auteur dans l&apos;espace vectoriel</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loadingMap
+            ? <div className="h-64 animate-pulse rounded bg-muted" />
+            : <AuthorVsCorpusMap points={mapPoints} />
+          }
+        </CardContent>
+      </Card>
 
       {/* Couverture temporelle */}
       <div ref={timelineRef}>

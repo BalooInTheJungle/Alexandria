@@ -23,6 +23,7 @@ type Analysis = {
   summary: Summary | null; corpus_refs: CorpusRef[] | null
   cited_refs: CitedRef[] | null; ss_recs: SsRec[] | null
   is_integrated: boolean; document_id: string | null
+  author_score: number | null
 }
 
 const TABS = [
@@ -165,7 +166,7 @@ export default function AnalysisPage() {
               {/* Score global */}
               <div className="flex items-center gap-6 p-5 rounded-lg border border-border bg-card">
                 <ScoreRing score={topScore} />
-                <div className="space-y-1">
+                <div className="space-y-1 flex-1">
                   <p className="font-semibold">
                     {topScore >= 0.75 ? "Très proche de votre corpus" : topScore >= 0.5 ? "Connexions significatives" : "Connexions faibles"}
                   </p>
@@ -175,6 +176,15 @@ export default function AnalysisPage() {
                   <p className="text-xs text-muted-foreground">
                     Score de similarité cosinus — basé sur l&apos;embedding moyen du document vs votre corpus.
                   </p>
+                  {analysis.author_score !== null && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium bg-orange-100 text-orange-800">
+                        <span className="opacity-70">Score auteur</span>
+                        <span className="font-bold">{Math.round(analysis.author_score * 100)}%</span>
+                      </span>
+                      <span className="text-xs text-muted-foreground">similarité vs articles publiés du chercheur</span>
+                    </div>
+                  )}
                 </div>
               </div>
 

@@ -80,14 +80,13 @@ async function loadUnscoredItems(runId: string): Promise<{ id: string; abstract:
 }
 
 async function saveScores(
-  scores: Map<string, { similarity: number | null; heuristic: number | null; refs: CorpusRef[] }>
+  scores: Map<string, { similarity: number | null; authorSimilarity: number | null; heuristic: number | null; refs: CorpusRef[] }>
 ) {
   if (scores.size === 0) return
   const sb = getSupabase()
   const entries = Array.from(scores)
   const BATCH = 50
 
-  // Count nulls for diagnostic
   const nullCount = entries.filter(([, s]) => s.similarity === null).length
   if (nullCount > 0) {
     log('save', `⚠️  ${nullCount}/${entries.length} items ont similarity=null (embed ou match_chunks échoué)`, 'warn')
@@ -95,14 +94,13 @@ async function saveScores(
 
   for (let i = 0; i < entries.length; i += BATCH) {
     const batch = entries.slice(i, i + BATCH)
-    await Promise.all(batch.map(async ([id, { similarity, heuristic, refs }]) => {
+    await Promise.all(batch.map(async ([id, { similarity, authorSimilarity, heuristic, refs }]) => {
       const patch: Record<string, unknown> = {
-        // Toujours écrire similarity_score (0 si null) pour marquer l'item comme "tenté"
-        // → distingue "pas encore scoré" (NULL) de "scoré, pas de match" (0)
         similarity_score: similarity ?? 0,
       }
-      if (heuristic !== null) patch.heuristic_score = heuristic
-      if (refs.length > 0)    patch.corpus_refs     = refs
+      if (authorSimilarity !== null) patch.author_score    = authorSimilarity
+      if (heuristic !== null)        patch.heuristic_score = heuristic
+      if (refs.length > 0)           patch.corpus_refs     = refs
       const { error } = await sb.from('veille_items').update(patch).eq('id', id)
       if (error) log('save', `Erreur update id=${id.slice(0, 8)}: ${error.message}`, 'error')
     }))
@@ -155,17 +153,18 @@ async function runScoring() {
 
   // ── Fusion similarity + heuristic + corpus_refs ────────────────────────
   let timeouts = 0
-  const bothScores = new Map<string, { similarity: number | null; heuristic: number | null; refs: CorpusRef[] }>()
+  const bothScores = new Map<string, { similarity: number | null; authorSimilarity: number | null; heuristic: number | null; refs: CorpusRef[] }>()
 
   for (const { id, abstract } of items) {
-    const result     = simScores.get(id)
-    const similarity = result?.similarity ?? null
-    const refs       = result?.refs ?? []
-    const heuristic  = abstract && abstract.length > 50 && corpusTerms.length > 0
+    const result          = simScores.get(id)
+    const similarity      = result?.similarity ?? null
+    const authorSimilarity = result?.authorSimilarity ?? null
+    const refs            = result?.refs ?? []
+    const heuristic       = abstract && abstract.length > 50 && corpusTerms.length > 0
       ? scoreHeuristic(abstract, corpusTerms)
       : null
 
-    bothScores.set(id, { similarity, heuristic, refs })
+    bothScores.set(id, { similarity, authorSimilarity, heuristic, refs })
     if (similarity === null) timeouts++
   }
 
