@@ -270,8 +270,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         match_threshold: 0.0,
         match_count: 3,
       }).then(({ data, error }) => {
-        if (error) return null
+        if (error) { LOG("match_author_chunks error", error.message); return null }
         const rows = (data ?? []) as Array<{ similarity: number }>
+        LOG("match_author_chunks result", { rows: rows.length, top: rows[0]?.similarity ?? null })
         return rows.length > 0 ? Math.round(rows[0].similarity * 1000) / 1000 : null
       }),
 

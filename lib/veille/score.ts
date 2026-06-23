@@ -179,7 +179,7 @@ async function scoreAbstract(abstract: string): Promise<ScoreResult> {
     }
   } catch (err: any) {
     console.error('[score] Error:', err.message)
-    return { similarity: null, refs: [] }
+    return { similarity: null, authorSimilarity: null, refs: [] }
   }
 }
 
