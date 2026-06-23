@@ -31,7 +31,7 @@ import type { RunLogEntry, RunLogLevel } from '../../lib/db/types'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const LOOKBACK_DAYS            = 7
+const LOOKBACK_DAYS            = 3
 const PARALLEL_RSS_CONCURRENCY = 5
 const OPENALEX_DELAY_MS        = 300
 
