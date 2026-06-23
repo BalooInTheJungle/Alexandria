@@ -47,6 +47,7 @@ type VeilleItem = {
   doi:              string | null
   abstract:         string | null
   similarity_score: number | null
+  author_score:     number | null
   source_name:      string | null
   document_id:      string | null
   corpus_refs:      CorpusRef[] | null
@@ -240,6 +241,11 @@ function ArticleCard({
         </div>
         <div className="flex flex-col items-center gap-2 shrink-0">
           <ScoreBadge score={item.similarity_score} />
+          {item.author_score !== null && (
+            <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium bg-orange-100 text-orange-800">
+              <span className="opacity-70">auteur</span> {Math.round(item.author_score * 100)}%
+            </span>
+          )}
           <button
             onClick={handleReadToggle}
             disabled={toggling}
