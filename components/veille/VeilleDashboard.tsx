@@ -37,6 +37,7 @@ interface VeilleItem {
   url: string;
   published_at: string | null;
   similarity_score: number | null;
+  author_score: number | null;
   last_error: string | null;
   source_name: string | null;
 }
