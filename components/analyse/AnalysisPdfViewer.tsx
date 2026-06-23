@@ -2,10 +2,10 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
-import "react-pdf/dist/Page/TextLayer.css"
-import "react-pdf/dist/Page/AnnotationLayer.css"
+import "react-pdf/dist/esm/Page/TextLayer.css"
+import "react-pdf/dist/esm/Page/AnnotationLayer.css"
 
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
+pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`
 
 type Props = {
   analysisId: string
@@ -20,7 +20,6 @@ function normalise(s: string) {
 export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props) {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [numPages, setNumPages] = useState<number>(0)
-  const [containerWidth, setContainerWidth] = useState<number>(700)
   const [error, setError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const pageRefs = useRef<(HTMLDivElement | null)[]>([])
@@ -32,7 +31,6 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
       .catch(() => setError("Erreur de chargement du PDF"))
   }, [analysisId])
 
-  // Scroll vers la page cible quand la source change
   useEffect(() => {
     if (!page || page < 1) return
     const el = pageRefs.current[page - 1]
@@ -48,7 +46,8 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
     return () => ro.disconnect()
   }, [])
 
-  // Surligne uniquement sur la page cible pour éviter les faux positifs
+  const [containerWidth, setContainerWidth] = useState<number>(700)
+
   const makeTextRenderer = useCallback((targetPage: number) => {
     return ({ str }: { str: string }) => {
       if (!highlight || !str || str.length < 3) return str
@@ -77,15 +76,12 @@ export default function AnalysisPdfViewer({ analysisId, page, highlight }: Props
 
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col">
-      {/* Indicateur page courante */}
       {numPages > 0 && (
         <p className="text-[10px] text-muted-foreground mb-1 shrink-0">
           {numPages} page{numPages > 1 ? "s" : ""}
           {page ? ` · affichage page ${page}` : ""}
         </p>
       )}
-
-      {/* Scroll horizontal continu — toutes les pages en ligne */}
       <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0 rounded border border-border">
         <Document
           file={pdfUrl}
