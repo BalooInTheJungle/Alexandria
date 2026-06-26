@@ -90,16 +90,16 @@ export async function listVeilleRunsWithCounts(limit = 50): Promise<VeilleRunWit
   }))
 }
 
-export type ListVeilleItemsOptions = { runId?: string; sourceId?: string; limit?: number; offset?: number; minScore?: number }
+export type ListVeilleItemsOptions = { runId?: string; sourceId?: string; limit?: number; offset?: number; minScore?: number; isRelevant?: boolean }
 
 export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Promise<VeilleItemWithMeta[]> {
-  const { runId, sourceId, limit = 100, offset = 0, minScore } = options
+  const { runId, sourceId, limit = 100, offset = 0, minScore, isRelevant } = options
   const supabase = getAdminSupabase()
 
   let query = supabase
     .from('veille_items')
     .select(`id, run_id, source_id, url, title, authors, doi, abstract, published_at,
-      heuristic_score, similarity_score, author_score, corpus_refs, last_error, created_at, read_at, ai_analysis, sources!inner(name)`)
+      heuristic_score, similarity_score, author_score, corpus_refs, last_error, created_at, read_at, is_relevant, ai_analysis, sources!inner(name)`)
     .order('similarity_score', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
@@ -107,6 +107,7 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
   if (runId)    query = query.eq('run_id', runId)
   if (sourceId) query = query.eq('source_id', sourceId)
   if (minScore !== undefined) query = query.gte('similarity_score', minScore)
+  if (isRelevant !== undefined) query = query.eq('is_relevant', isRelevant)
 
   const { data: items, error } = await query
   if (error) { LOG('listVeilleItems error', error.message); throw error }
@@ -141,6 +142,7 @@ export async function listVeilleItems(options: ListVeilleItemsOptions = {}): Pro
     document_id: r.doi ? doiToDocumentId.get(r.doi) ?? null : null,
     corpus_refs: (r as any).corpus_refs ?? null,
     read_at: (r as any).read_at ?? null,
+    is_relevant: (r as any).is_relevant ?? null,
     ai_analysis: (r as any).ai_analysis ?? null,
   }))
 }

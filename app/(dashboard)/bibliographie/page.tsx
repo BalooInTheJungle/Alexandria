@@ -74,6 +74,7 @@ type VeilleItem = {
   published_at?: string | null;
   corpus_refs?: CorpusRef[] | null;
   read_at?: string | null;
+  is_relevant?: boolean | null;
   ai_analysis?: { contribution: string; relevance: string; corpus_link: string } | null;
 };
 
@@ -519,12 +520,19 @@ function LegacySummaryView({ raw, run }: { raw: string; run: VeilleRun }) {
   )
 }
 
-function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle?: (id: string, read: boolean) => void }) {
+function VeilleItemCard({ item, onReadToggle, onRelevantToggle }: {
+  item: VeilleItem;
+  onReadToggle?: (id: string, read: boolean) => void;
+  onRelevantToggle?: (id: string, relevant: boolean | null) => void;
+}) {
   const [authorsOpen, setAuthorsOpen] = useState(false);
   const [refsOpen, setRefsOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [isRead, setIsRead] = useState(item.read_at != null);
   const [toggling, setToggling] = useState(false);
+  const [togglingRelevant, setTogglingRelevant] = useState(false);
+
+  const isRelevant = item.is_relevant === true;
 
   const href    = item.doi ? `https://doi.org/${item.doi}` : item.url;
   const authors = item.authors ?? [];
@@ -545,6 +553,21 @@ function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle
       }
     } finally {
       setToggling(false);
+    }
+  };
+
+  const handleRelevantToggle = async () => {
+    setTogglingRelevant(true);
+    const newValue = isRelevant ? null : true;
+    try {
+      const res = await fetch(`/api/veille/items/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ relevant: newValue }),
+      });
+      if (res.ok) onRelevantToggle?.(item.id, newValue);
+    } finally {
+      setTogglingRelevant(false);
     }
   };
 
@@ -575,6 +598,17 @@ function VeilleItemCard({ item, onReadToggle }: { item: VeilleItem; onReadToggle
             }`}
           >
             {isRead ? "✓ Lu" : "Marquer comme lu"}
+          </button>
+          <button
+            onClick={handleRelevantToggle}
+            disabled={togglingRelevant}
+            className={`text-xs px-3 py-1 rounded-full border transition-colors disabled:opacity-40 ${
+              isRelevant
+                ? "border-emerald-400 bg-emerald-50 text-emerald-800 hover:border-muted-foreground/30 hover:bg-transparent hover:text-muted-foreground"
+                : "border-emerald-400/50 text-emerald-700 hover:bg-emerald-50"
+            }`}
+          >
+            {isRelevant ? "✓ Pertinent" : "Pertinent ?"}
           </button>
         </div>
       </div>
@@ -674,9 +708,10 @@ export default function BibliographiePage() {
   const [topTotal, setTopTotal] = useState(0);
   const [topTotalPages, setTopTotalPages] = useState(1);
   const [loadingTop, setLoadingTop] = useState(false);
-  const [veilleStats, setVeilleStats] = useState<{ total: number; scored: number; pertinent: number; read: number } | null>(null);
+  const [veilleStats, setVeilleStats] = useState<{ total: number; scored: number; pertinent: number; read: number; relevant: number } | null>(null);
   const [search, setSearch] = useState("");
   const [showRead, setShowRead] = useState<"all" | "unread" | "read">("all");
+  const [showRelevant, setShowRelevant] = useState<"all" | "relevant" | "not-relevant">("all");
 
   const fetchSources = useCallback(async () => {
     setLoadingSources(true);
@@ -748,10 +783,12 @@ export default function BibliographiePage() {
     return items;
   }, [topItems, search, showRead]);
 
-  const fetchTopItems = useCallback(async (page: number) => {
+  const fetchTopItems = useCallback(async (page: number, relevantFilter?: "all" | "relevant" | "not-relevant") => {
     setLoadingTop(true);
     try {
-      const res = await fetch(`/api/veille/items/top?page=${page}`);
+      const filter = relevantFilter ?? showRelevant;
+      const relevantParam = filter === "relevant" ? "&relevant=true" : "";
+      const res = await fetch(`/api/veille/items/top?page=${page}${relevantParam}`);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setTopItems(data.items ?? []);
@@ -763,7 +800,12 @@ export default function BibliographiePage() {
     } finally {
       setLoadingTop(false);
     }
-  }, []);
+  }, [showRelevant]);
+
+  // Re-fetch when relevant filter changes
+  useEffect(() => {
+    fetchTopItems(1, showRelevant);
+  }, [showRelevant]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initial load
   useEffect(() => {
@@ -813,7 +855,7 @@ export default function BibliographiePage() {
         <div className="space-y-4">
 
           {/* KPIs globaux */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-5 gap-4">
             <Card>
               <CardContent className="pt-5">
                 <p className="text-sm text-muted-foreground">Articles extraits</p>
@@ -832,7 +874,7 @@ export default function BibliographiePage() {
             </Card>
             <Card>
               <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 75%)</span></p>
+                <p className="text-sm text-muted-foreground">En lien avec vos documents <span className="text-xs">(≥ 75%)</span></p>
                 <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">
                   {veilleStats ? veilleStats.pertinent.toLocaleString("fr-FR") : "—"}
                 </p>
@@ -843,6 +885,14 @@ export default function BibliographiePage() {
                 <p className="text-sm text-muted-foreground">Articles lus</p>
                 <p className="text-3xl font-semibold tabular-nums mt-1 text-blue-700">
                   {veilleStats ? veilleStats.read.toLocaleString("fr-FR") : "—"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-5">
+                <p className="text-sm text-muted-foreground">Pertinents confirmés</p>
+                <p className="text-3xl font-semibold tabular-nums mt-1 text-emerald-700">
+                  {veilleStats ? veilleStats.relevant.toLocaleString("fr-FR") : "—"}
                 </p>
               </CardContent>
             </Card>
@@ -865,6 +915,17 @@ export default function BibliographiePage() {
                   className={`px-3 h-9 transition-colors ${showRead === v ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"} ${i > 0 ? "border-l border-input" : ""}`}
                 >
                   {v === "all" ? "Tous" : v === "unread" ? "Non lus" : "Lus"}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center rounded-md border border-input overflow-hidden text-sm">
+              {(["all", "relevant", "not-relevant"] as const).map((v, i) => (
+                <button
+                  key={v}
+                  onClick={() => setShowRelevant(v)}
+                  className={`px-3 h-9 transition-colors ${showRelevant === v ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"} ${i > 0 ? "border-l border-input" : ""}`}
+                >
+                  {v === "all" ? "Tous" : v === "relevant" ? "Pertinents" : "Non évalués"}
                 </button>
               ))}
             </div>
@@ -892,10 +953,12 @@ export default function BibliographiePage() {
                   key={item.id}
                   item={item}
                   onReadToggle={(id, read) => {
-                    // Update topItems so read_at persists across re-renders
                     setTopItems(prev => prev.map(i => i.id === id ? { ...i, read_at: read ? new Date().toISOString() : null } : i));
-                    // Update KPI counter
                     setVeilleStats(prev => prev ? { ...prev, read: prev.read + (read ? 1 : -1) } : prev);
+                  }}
+                  onRelevantToggle={(id, relevant) => {
+                    setTopItems(prev => prev.map(i => i.id === id ? { ...i, is_relevant: relevant } : i));
+                    setVeilleStats(prev => prev ? { ...prev, relevant: prev.relevant + (relevant ? 1 : -1) } : prev);
                   }}
                 />
               ))}

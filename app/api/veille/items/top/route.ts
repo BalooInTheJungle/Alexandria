@@ -23,15 +23,20 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
     const offset = (page - 1) * PAGE_SIZE;
+    const relevantParam = searchParams.get("relevant");
+    const isRelevant = relevantParam === "true" ? true : relevantParam === "false" ? false : undefined;
 
-    LOG("GET", { page, offset, minScore: MIN_SCORE });
+    LOG("GET", { page, offset, minScore: MIN_SCORE, isRelevant });
 
     // Count total matching items
     const supabase = createAdminClient();
-    const { count, error: countError } = await supabase
+    let countQuery = supabase
       .from("veille_items")
       .select("id", { count: "exact", head: true })
       .gte("similarity_score", MIN_SCORE);
+    if (isRelevant !== undefined) countQuery = countQuery.eq("is_relevant", isRelevant);
+
+    const { count, error: countError } = await countQuery;
 
     if (countError) {
       LOG("count error", countError.message);
@@ -41,7 +46,7 @@ export async function GET(request: Request) {
     const total = count ?? 0;
     const totalPages = Math.ceil(total / PAGE_SIZE);
 
-    const rawItems = await listVeilleItems({ limit: PAGE_SIZE, offset, minScore: MIN_SCORE });
+    const rawItems = await listVeilleItems({ limit: PAGE_SIZE, offset, minScore: MIN_SCORE, isRelevant });
     const items = filterItemsForArticleDisplay(rawItems);
 
     LOG("ok", { total, page, returned: items.length });

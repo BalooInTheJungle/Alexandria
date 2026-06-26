@@ -82,5 +82,6 @@ export type VeilleItem = {
   created_at?: string;
   corpus_refs?: CorpusRef[] | null;
   read_at?: string | null;
+  is_relevant?: boolean | null;
   ai_analysis?: { contribution: string; relevance: string; corpus_link: string } | null;
 };

@@ -52,6 +52,7 @@ type VeilleItem = {
   document_id:      string | null
   corpus_refs:      CorpusRef[] | null
   read_at:          string | null
+  is_relevant:      boolean | null
   ai_analysis:      AiAnalysis | null
 }
 
@@ -200,14 +201,17 @@ function CorpusRefBlock({ corpusRef: r }: { corpusRef: CorpusRef }) {
 function ArticleCard({
   item,
   onToggleRead,
+  onToggleRelevant,
 }: {
   item: VeilleItem
   onToggleRead: (id: string, read: boolean) => void
+  onToggleRelevant: (id: string, relevant: boolean | null) => void
 }) {
   const [authorsOpen, setAuthorsOpen] = useState(false);
   const [refsOpen, setRefsOpen]       = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toggling, setToggling]       = useState(false);
+  const [togglingRelevant, setTogglingRelevant] = useState(false);
 
   const href    = item.doi ? `https://doi.org/${item.doi}` : item.url;
   const authors = item.authors ?? [];
@@ -225,6 +229,21 @@ function ArticleCard({
       if (res.ok) onToggleRead(item.id, !isRead);
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function handleRelevantToggle() {
+    setTogglingRelevant(true);
+    try {
+      const newValue = item.is_relevant ? null : true;
+      const res = await fetch(`/api/veille/items/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ relevant: newValue }),
+      });
+      if (res.ok) onToggleRelevant(item.id, newValue);
+    } finally {
+      setTogglingRelevant(false);
     }
   }
 
@@ -256,6 +275,17 @@ function ArticleCard({
             }`}
           >
             {isRead ? "✓ Lu" : "Marquer comme lu"}
+          </button>
+          <button
+            onClick={handleRelevantToggle}
+            disabled={togglingRelevant}
+            className={`text-xs px-3 py-1 rounded-full border transition-colors disabled:opacity-40 ${
+              item.is_relevant === true
+                ? "border-emerald-400 bg-emerald-50 text-emerald-800 hover:border-muted-foreground/30 hover:bg-transparent hover:text-muted-foreground"
+                : "border-emerald-400/50 text-emerald-700 hover:bg-emerald-50"
+            }`}
+          >
+            {item.is_relevant === true ? "✓ Pertinent" : "Pertinent ?"}
           </button>
         </div>
       </div>
@@ -394,6 +424,12 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
     ));
   }, []);
 
+  const handleToggleRelevant = useCallback((id: string, relevant: boolean | null) => {
+    setItems(prev => prev.map(it =>
+      it.id === id ? { ...it, is_relevant: relevant } : it
+    ));
+  }, []);
+
   const pertinentItems  = items.filter(it => (it.similarity_score ?? 0) >= SCORE_THRESHOLD);
   const aiAnalysedItems = items.filter(it => it.ai_analysis != null);
   const summary         = run?.ai_summary ? parseSummary(run.ai_summary) : null;
@@ -440,7 +476,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
 
       {/* KPIs */}
       {!loading && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <Card>
             <CardContent className="pt-5">
               <p className="text-sm text-muted-foreground">Articles extraits</p>
@@ -449,7 +485,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
           </Card>
           <Card>
             <CardContent className="pt-5">
-              <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 75%)</span></p>
+              <p className="text-sm text-muted-foreground">En lien avec vos documents <span className="text-xs">(≥ 75%)</span></p>
               <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">
                 {pertinentItems.length > 0 ? pertinentItems.length : "—"}
               </p>
@@ -460,6 +496,16 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
               <p className="text-sm text-muted-foreground">Analysés par IA</p>
               <p className="text-3xl font-semibold tabular-nums mt-1 text-violet-700">
                 {aiAnalysedItems.length > 0 ? aiAnalysedItems.length : "—"}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">Pertinents confirmés</p>
+              <p className="text-3xl font-semibold tabular-nums mt-1 text-emerald-700">
+                {items.filter(it => it.is_relevant === true).length > 0
+                  ? items.filter(it => it.is_relevant === true).length
+                  : "—"}
               </p>
             </CardContent>
           </Card>
@@ -493,14 +539,14 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
       {!loading && (
         <div className="space-y-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Articles pertinents ≥ 75%{pertinentItems.length > 0 ? ` (${pertinentItems.length})` : ""}
+            Articles en lien avec vos documents ≥ 75%{pertinentItems.length > 0 ? ` (${pertinentItems.length})` : ""}
           </p>
           {pertinentItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucun article au-dessus de 75% pour cette run.</p>
+            <p className="text-sm text-muted-foreground">Aucun article en lien avec vos documents (≥ 75%) pour cette run.</p>
           ) : (
             <div className="flex flex-col gap-4">
               {pertinentItems.map(item => (
-                <ArticleCard key={item.id} item={item} onToggleRead={handleToggleRead} />
+                <ArticleCard key={item.id} item={item} onToggleRead={handleToggleRead} onToggleRelevant={handleToggleRelevant} />
               ))}
             </div>
           )}
