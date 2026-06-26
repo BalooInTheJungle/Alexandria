@@ -355,7 +355,7 @@ const THEME_COLORS = [
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-const SCORE_THRESHOLD = 0.80;
+const SCORE_THRESHOLD = 0.75;
 
 export default function HistoriqueRunPage({ params }: { params: { runId: string } }) {
   const { runId } = params;
@@ -449,7 +449,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
           </Card>
           <Card>
             <CardContent className="pt-5">
-              <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 80%)</span></p>
+              <p className="text-sm text-muted-foreground">Pertinents <span className="text-xs">(≥ 75%)</span></p>
               <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">
                 {pertinentItems.length > 0 ? pertinentItems.length : "—"}
               </p>
@@ -493,10 +493,10 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
       {!loading && (
         <div className="space-y-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Articles pertinents ≥ 80%{pertinentItems.length > 0 ? ` (${pertinentItems.length})` : ""}
+            Articles pertinents ≥ 75%{pertinentItems.length > 0 ? ` (${pertinentItems.length})` : ""}
           </p>
           {pertinentItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucun article au-dessus de 80% pour cette run.</p>
+            <p className="text-sm text-muted-foreground">Aucun article au-dessus de 75% pour cette run.</p>
           ) : (
             <div className="flex flex-col gap-4">
               {pertinentItems.map(item => (
