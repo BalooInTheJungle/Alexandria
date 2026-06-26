@@ -232,10 +232,11 @@ function ArticleCard({
     }
   }
 
-  async function handleRelevantToggle() {
+  async function handleRelevantChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const raw = e.target.value;
+    const newValue = raw === "true" ? true : raw === "false" ? false : null;
     setTogglingRelevant(true);
     try {
-      const newValue = item.is_relevant ? null : true;
       const res = await fetch(`/api/veille/items/${item.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -276,17 +277,20 @@ function ArticleCard({
           >
             {isRead ? "✓ Lu" : "Marquer comme lu"}
           </button>
-          <button
-            onClick={handleRelevantToggle}
+          <select
+            value={item.is_relevant === true ? "true" : item.is_relevant === false ? "false" : ""}
+            onChange={handleRelevantChange}
             disabled={togglingRelevant}
-            className={`text-xs px-3 py-1 rounded-full border transition-colors disabled:opacity-40 ${
-              item.is_relevant === true
-                ? "border-emerald-400 bg-emerald-50 text-emerald-800 hover:border-muted-foreground/30 hover:bg-transparent hover:text-muted-foreground"
-                : "border-emerald-400/50 text-emerald-700 hover:bg-emerald-50"
+            className={`text-xs px-2 py-1 rounded-md border transition-colors disabled:opacity-40 cursor-pointer focus:outline-none ${
+              item.is_relevant === true  ? "border-emerald-400 bg-emerald-50 text-emerald-800" :
+              item.is_relevant === false ? "border-red-400 bg-red-50 text-red-800" :
+              "border-muted-foreground/30 text-muted-foreground"
             }`}
           >
-            {item.is_relevant === true ? "✓ Pertinent" : "Pertinent ?"}
-          </button>
+            <option value="">Indiquer la pertinence</option>
+            <option value="true">✓ Pertinent</option>
+            <option value="false">✗ Non pertinent</option>
+          </select>
         </div>
       </div>
 
@@ -476,7 +480,7 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
 
       {/* KPIs */}
       {!loading && (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-5 gap-4">
           <Card>
             <CardContent className="pt-5">
               <p className="text-sm text-muted-foreground">Articles extraits</p>
@@ -501,11 +505,17 @@ export default function HistoriqueRunPage({ params }: { params: { runId: string 
           </Card>
           <Card>
             <CardContent className="pt-5">
-              <p className="text-sm text-muted-foreground">Pertinents confirmés</p>
+              <p className="text-sm text-muted-foreground">✓ Pertinents</p>
               <p className="text-3xl font-semibold tabular-nums mt-1 text-emerald-700">
-                {items.filter(it => it.is_relevant === true).length > 0
-                  ? items.filter(it => it.is_relevant === true).length
-                  : "—"}
+                {items.filter(it => it.is_relevant === true).length || "—"}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5">
+              <p className="text-sm text-muted-foreground">✗ Non pertinents</p>
+              <p className="text-3xl font-semibold tabular-nums mt-1 text-red-600">
+                {items.filter(it => it.is_relevant === false).length || "—"}
               </p>
             </CardContent>
           </Card>

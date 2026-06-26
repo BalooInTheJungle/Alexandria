@@ -532,8 +532,6 @@ function VeilleItemCard({ item, onReadToggle, onRelevantToggle }: {
   const [toggling, setToggling] = useState(false);
   const [togglingRelevant, setTogglingRelevant] = useState(false);
 
-  const isRelevant = item.is_relevant === true;
-
   const href    = item.doi ? `https://doi.org/${item.doi}` : item.url;
   const authors = item.authors ?? [];
   const refs    = (item.corpus_refs ?? []).filter((r): r is CorpusRef => r != null && typeof r === "object");
@@ -556,9 +554,10 @@ function VeilleItemCard({ item, onReadToggle, onRelevantToggle }: {
     }
   };
 
-  const handleRelevantToggle = async () => {
+  const handleRelevantChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const raw = e.target.value;
+    const newValue = raw === "true" ? true : raw === "false" ? false : null;
     setTogglingRelevant(true);
-    const newValue = isRelevant ? null : true;
     try {
       const res = await fetch(`/api/veille/items/${item.id}`, {
         method: "PATCH",
@@ -599,17 +598,20 @@ function VeilleItemCard({ item, onReadToggle, onRelevantToggle }: {
           >
             {isRead ? "✓ Lu" : "Marquer comme lu"}
           </button>
-          <button
-            onClick={handleRelevantToggle}
+          <select
+            value={item.is_relevant === true ? "true" : item.is_relevant === false ? "false" : ""}
+            onChange={handleRelevantChange}
             disabled={togglingRelevant}
-            className={`text-xs px-3 py-1 rounded-full border transition-colors disabled:opacity-40 ${
-              isRelevant
-                ? "border-emerald-400 bg-emerald-50 text-emerald-800 hover:border-muted-foreground/30 hover:bg-transparent hover:text-muted-foreground"
-                : "border-emerald-400/50 text-emerald-700 hover:bg-emerald-50"
+            className={`text-xs px-2 py-1 rounded-md border transition-colors disabled:opacity-40 cursor-pointer focus:outline-none ${
+              item.is_relevant === true  ? "border-emerald-400 bg-emerald-50 text-emerald-800" :
+              item.is_relevant === false ? "border-red-400 bg-red-50 text-red-800" :
+              "border-muted-foreground/30 text-muted-foreground"
             }`}
           >
-            {isRelevant ? "✓ Pertinent" : "Pertinent ?"}
-          </button>
+            <option value="">Indiquer la pertinence</option>
+            <option value="true">✓ Pertinent</option>
+            <option value="false">✗ Non pertinent</option>
+          </select>
         </div>
       </div>
       <div className="h-px bg-border" />
@@ -708,7 +710,7 @@ export default function BibliographiePage() {
   const [topTotal, setTopTotal] = useState(0);
   const [topTotalPages, setTopTotalPages] = useState(1);
   const [loadingTop, setLoadingTop] = useState(false);
-  const [veilleStats, setVeilleStats] = useState<{ total: number; scored: number; pertinent: number; read: number; relevant: number } | null>(null);
+  const [veilleStats, setVeilleStats] = useState<{ total: number; scored: number; pertinent: number; read: number; relevant: number; not_relevant: number } | null>(null);
   const [search, setSearch] = useState("");
   const [showRead, setShowRead] = useState<"all" | "unread" | "read">("all");
   const [showRelevant, setShowRelevant] = useState<"all" | "relevant" | "not-relevant">("all");
@@ -787,7 +789,7 @@ export default function BibliographiePage() {
     setLoadingTop(true);
     try {
       const filter = relevantFilter ?? showRelevant;
-      const relevantParam = filter === "relevant" ? "&relevant=true" : "";
+      const relevantParam = filter === "relevant" ? "&relevant=true" : filter === "not-relevant" ? "&relevant=false" : "";
       const res = await fetch(`/api/veille/items/top?page=${page}${relevantParam}`);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -855,7 +857,7 @@ export default function BibliographiePage() {
         <div className="space-y-4">
 
           {/* KPIs globaux */}
-          <div className="grid grid-cols-5 gap-4">
+          <div className="grid grid-cols-6 gap-4">
             <Card>
               <CardContent className="pt-5">
                 <p className="text-sm text-muted-foreground">Articles extraits</p>
@@ -874,7 +876,7 @@ export default function BibliographiePage() {
             </Card>
             <Card>
               <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">En lien avec vos documents <span className="text-xs">(≥ 75%)</span></p>
+                <p className="text-sm text-muted-foreground">En lien <span className="text-xs">(≥ 75%)</span></p>
                 <p className="text-3xl font-semibold tabular-nums mt-1 text-green-700">
                   {veilleStats ? veilleStats.pertinent.toLocaleString("fr-FR") : "—"}
                 </p>
@@ -890,9 +892,17 @@ export default function BibliographiePage() {
             </Card>
             <Card>
               <CardContent className="pt-5">
-                <p className="text-sm text-muted-foreground">Pertinents confirmés</p>
+                <p className="text-sm text-muted-foreground">✓ Pertinents</p>
                 <p className="text-3xl font-semibold tabular-nums mt-1 text-emerald-700">
                   {veilleStats ? veilleStats.relevant.toLocaleString("fr-FR") : "—"}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-5">
+                <p className="text-sm text-muted-foreground">✗ Non pertinents</p>
+                <p className="text-3xl font-semibold tabular-nums mt-1 text-red-600">
+                  {veilleStats ? veilleStats.not_relevant.toLocaleString("fr-FR") : "—"}
                 </p>
               </CardContent>
             </Card>
@@ -925,7 +935,7 @@ export default function BibliographiePage() {
                   onClick={() => setShowRelevant(v)}
                   className={`px-3 h-9 transition-colors ${showRelevant === v ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted"} ${i > 0 ? "border-l border-input" : ""}`}
                 >
-                  {v === "all" ? "Tous" : v === "relevant" ? "Pertinents" : "Non évalués"}
+                  {v === "all" ? "Tous" : v === "relevant" ? "✓ Pertinents" : "✗ Non pertinents"}
                 </button>
               ))}
             </div>
@@ -957,8 +967,14 @@ export default function BibliographiePage() {
                     setVeilleStats(prev => prev ? { ...prev, read: prev.read + (read ? 1 : -1) } : prev);
                   }}
                   onRelevantToggle={(id, relevant) => {
+                    const prev_relevant = topItems.find(i => i.id === id)?.is_relevant ?? null;
                     setTopItems(prev => prev.map(i => i.id === id ? { ...i, is_relevant: relevant } : i));
-                    setVeilleStats(prev => prev ? { ...prev, relevant: prev.relevant + (relevant ? 1 : -1) } : prev);
+                    setVeilleStats(prev => {
+                      if (!prev) return prev;
+                      const deltaRelevant = (relevant === true ? 1 : 0) - (prev_relevant === true ? 1 : 0);
+                      const deltaNotRelevant = (relevant === false ? 1 : 0) - (prev_relevant === false ? 1 : 0);
+                      return { ...prev, relevant: prev.relevant + deltaRelevant, not_relevant: prev.not_relevant + deltaNotRelevant };
+                    });
                   }}
                 />
               ))}
