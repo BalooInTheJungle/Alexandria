@@ -39,7 +39,7 @@ Scripts Python (manuels, hors Vercel)
     scripts/compute_umap.py        → coordonnées UMAP 2D sur les chunks
     scripts/veille/extract.ts      → Job 1 pipeline veille (GitHub Actions)
     scripts/veille/score.ts        → Job 2 scoring sémantique
-    scripts/veille/recap-articles.ts → Job 3 analyse IA par article ≥ 80%
+    scripts/veille/recap-articles.ts → Job 3 analyse IA par article ≥ 75%
     scripts/veille/recap-global.ts   → Job 4 synthèse globale
     scripts/compute-ss-representatives.ts → calcul articles représentatifs pour Semantic Scholar
 ```
@@ -121,7 +121,8 @@ veille_items (
   source_type text,         -- 'rss' | 'openalex' | 'semantic_scholar'
   similarity_score float,   -- 0 si scoré sans match, null si pas encore scoré
   corpus_refs jsonb,        -- [{ doc_title, excerpt, page, similarity }] passages ≥ 75%
-  ai_analysis jsonb,        -- { contribution, relevance, corpus_link } pour ≥ 80%
+  ai_analysis jsonb,        -- { contribution, relevance, corpus_link } pour ≥ 75%
+  is_relevant boolean,      -- null=non évalué, true=pertinent (chercheur), false=non pertinent
   read_at timestamptz       -- null si non lu
 )
 ```
@@ -256,7 +257,7 @@ Job 2 — scripts/veille/score.ts
     └── Batch save 50
 
 Job 3 — scripts/veille/recap-articles.ts
-    ├── Articles similarity_score ≥ 80%
+    ├── Articles similarity_score ≥ 75%
     └── GPT-4o-mini → ai_analysis { contribution, relevance, corpus_link }
 
 Job 4 — scripts/veille/recap-global.ts

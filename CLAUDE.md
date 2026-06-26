@@ -203,7 +203,7 @@ scripts/
     extract-semanticscholar.ts  # Job 1b — recs SS (si ENABLE_SEMANTIC_SCHOLAR=true)
     score.ts               # Job 2 — embed abstracts → match_chunks + match_author_chunks → similarity_score + author_score
     score-author.ts        # Script rétroactif — calcule author_score sur items existants
-    recap-articles.ts      # Job 3 — GPT analyse individuelle ≥80%
+    recap-articles.ts      # Job 3 — GPT analyse individuelle ≥75%
     recap-global.ts        # Job 4 — GPT synthèse globale, marque run completed
 
 supabase/migrations/       # 50 migrations SQL (ordre chronologique)
@@ -246,15 +246,15 @@ Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentie
 3. Timeout `match_chunks` : 30s — si timeout → `similarity_score = 0` (jamais NULL après scoring)
 4. `match_author_chunks` : `SET LOCAL statement_timeout = 0` dans le RPC (plpgsql volatile) — bypass timeout
 5. Sauvegarde en batch de 50
-5. Résultat typique : ~637 scorés | ~20 ≥75% | ~3-8 ≥80%
+5. Résultat typique : ~637 scorés | ~20 ≥75% | ~5-10 ≥75%
 
 #### Job 3 — `scripts/veille/recap-articles.ts`
-1. Charge les articles avec `similarity_score ≥ 80%` (tous, pas de cap)
+1. Charge les articles avec `similarity_score ≥ 75%` (tous, pas de cap)
 2. GPT-4o-mini → `ai_analysis` par article : `{ contribution, relevance, corpus_link }`
 3. Sauvegarde dans `veille_items.ai_analysis` pour chaque article
 
 #### Job 4 — `scripts/veille/recap-global.ts`
-1. Charge les articles avec `ai_analysis IS NOT NULL` et `similarity_score ≥ 80%`
+1. Charge les articles avec `ai_analysis IS NOT NULL` et `similarity_score ≥ 75%`
 2. GPT-4o-mini → `{ themes[], synthesis }` — synthèse en vouvoiement, ton direct
 3. Fusionne avec les `ai_analysis` déjà en base → `ai_summary` complet dans `veille_runs`
 4. Marque le run `status=completed`, `phase=done`
@@ -267,8 +267,8 @@ Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentie
 | Scoring corpus | ≥ 0% | Tous les articles avec abstract sont scorés |
 | `corpus_refs` | ≥ 75% | Passages corpus affichés dans les cards |
 | Affichage "top" | ≥ 75% | Page `/bibliographie` tab Veille |
-| Analyse IA | **≥ 80%** | Articles envoyés à GPT pour ai_analysis |
-| Stats "pertinents" | ≥ 75% | KPI global de la page |
+| Analyse IA | **≥ 75%** | Articles envoyés à GPT pour ai_analysis |
+| Stats "en lien" | ≥ 75% | KPI global de la page |
 
 #### Job 1b — `scripts/veille/extract-semanticscholar.ts` (optionnel)
 Activé si variable repo GitHub `ENABLE_SEMANTIC_SCHOLAR=true`. Tourne en parallèle du Job 1.
@@ -324,13 +324,13 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 |---------------|------|
 | Pipeline veille GitHub Actions (4 jobs séquentiels) | ✅ ~7min/run, 638 articles/jour |
 | Filtre finalisation (OpenAlex + CrossRef) | ✅ exclut ASAP/preprints |
-| Scoring sémantique (Xenova 384D) | ✅ ~637 scorés, ~3-8 ≥80%/jour |
+| Scoring sémantique (Xenova 384D) | ✅ ~637 scorés, ~5-10 ≥75%/jour |
 | **Double scoring : similarity_score + author_score** | ✅ parallèle, juin 2026 |
 | Script rétroactif `score-author.ts` | ✅ 22/1204 scorés (partiel) |
-| Analyse IA articles ≥80% (ai_analysis jsonb) | ✅ tous analysés |
+| Analyse IA articles ≥75% (ai_analysis jsonb) | ✅ tous analysés |
 | Synthèse globale du jour (ai_summary) | ✅ thèmes + synthèse directe |
 | Cron veille automatique (GitHub Actions, 9h Paris) | ✅ 7h UTC |
-| Page Veille — articles ≥75%, paginés, lu/non lu | ✅ |
+| Page Veille — articles ≥75%, paginés, lu/non lu, pertinence | ✅ |
 | Badge "auteur XX%" orange sur les cards veille | ✅ |
 | Page Historique — 1 ligne/run, KPIs | ✅ |
 | Page détail run — thèmes, articles, logs modal | ✅ |
@@ -355,13 +355,14 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 - **Titres nettoyés** : `fix_spaced_text()` à l'ingestion + `fix_author_titles.py` sur 521 articles auteur
 
 ### Veille — état en base (juin 2026)
-- `veille_items` : colonnes `read_at` + `ai_analysis` + `similarity_score` + `corpus_refs` + **`author_score float`** (ajouté juin 2026)
+- `veille_items` : colonnes `read_at` + `ai_analysis` + `similarity_score` + `corpus_refs` + **`author_score float`** + **`is_relevant boolean`** (ajoutés juin 2026)
 - `ai_analysis` structure : `{ contribution: string, relevance: string, corpus_link: string }`
 - `corpus_refs` structure : `[{ doc_title, excerpt, page, similarity }]` — passages corpus ≥75% ayant déclenché le score
+- `is_relevant` : `NULL` = non évalué, `true` = pertinent (chercheur), `false` = non pertinent — évaluation manuelle via select dropdown sur les cards
 - `similarity_score = 0` si scoring tenté mais aucun match (jamais NULL après scoring, NULL = pas encore scoré)
 - `author_score` : similarité top-1 vs chunks `is_author_article=true` — NULL si non encore calculé
-- `ai_analysis` rempli uniquement pour les articles ≥80% par `recap-articles.ts`
-- **DB nettoyée le 09/06/2026** — runs propres avec nouvelle pipeline : ~638 extraits, ~637 scorés, ~3-8 ≥80%, tous analysés IA
+- `ai_analysis` rempli uniquement pour les articles ≥75% par `recap-articles.ts`
+- **DB nettoyée le 09/06/2026** — runs propres avec nouvelle pipeline : ~638 extraits, ~637 scorés, ~5-10 ≥75%, tous analysés IA
 
 ### Structure PDFs
 - `data/pdfs/YEAR/` — organisation par année d'acquisition (original)
