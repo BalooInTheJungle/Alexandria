@@ -21,8 +21,8 @@ import type { RunLogEntry, RunLogLevel, CorpusRef } from '../../lib/db/types'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const SCORE_THRESHOLD = 0.80  // seuil minimum pour être analysé par GPT
-const MAX_ARTICLES    = 50   // cap de sécurité (normalement ~5 articles ≥80%)
+const SCORE_THRESHOLD = 0.75  // seuil minimum pour être analysé par GPT
+const MAX_ARTICLES    = 50   // cap de sécurité (normalement ~10-15 articles ≥75%)
 
 // ── DB admin client ───────────────────────────────────────────────────────────
 
