@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <title>Alexandria — Architecture Pipeline Veille</title>
+  <title>Alexandria — Architecture Pipeline Veille (GitHub Actions)</title>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <style>
     body {
@@ -21,6 +21,11 @@
     p.subtitle {
       color: #64748b;
       font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+    p.updated {
+      color: #4b5563;
+      font-size: 0.72rem;
       margin-bottom: 2rem;
     }
     .diagram-container {
@@ -52,113 +57,166 @@
       height: 12px;
       border-radius: 3px;
     }
+    .note {
+      margin-top: 1.5rem;
+      max-width: 900px;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: #94a3b8;
+      background: #161a26;
+      border: 1px solid #2d3148;
+      border-left: 3px solid #6366f1;
+      border-radius: 8px;
+      padding: 0.9rem 1.1rem;
+    }
+    .note strong { color: #c7d2fe; }
   </style>
 </head>
 <body>
   <h1>Alexandria — Pipeline de Veille Scientifique</h1>
-  <p class="subtitle">Flux d'information entre les modules — vue macro</p>
+  <p class="subtitle">Flux d'information entre les modules — vue macro (architecture GitHub Actions, 4 jobs)</p>
+  <p class="updated">Régénéré le 06/07/2026 — remplace une version antérieure décrivant le pipeline Vercel monolithique (`lib/veille/pipeline.ts`), abandonné depuis pour timeout serverless.</p>
 
   <div class="diagram-container">
     <div class="mermaid">
 flowchart TD
-    UI([UI - Bouton Lancer la veille])
-    CRON([Cron Vercel - GET /api/cron/veille - 6h UTC])
+    CRON([GitHub Actions cron - 7h UTC quotidien])
 
-    SCRAPE[POST /api/veille/scrape\nAuth user + createRun]
-    CRON_ROUTE[GET /api/cron/veille\nVerifie CRON_SECRET + createRun]
-
-    RUNS[(veille_runs\nid / status / item_count)]
-    KNOWN[(veille_items\nDOIs connus pour dedup)]
-
-    PIPELINE[lib/veille/pipeline.ts\nrunVeillePipeline]
+    JOB1[Job 1 - scripts/veille/extract.ts]
+    JOB1B[Job 1b optionnel - extract-semanticscholar.ts\nsi ENABLE_SEMANTIC_SCHOLAR=true]
 
     SOURCES[lib/veille/sources.ts\ngetRssSources + getOpenAlexSources]
-    SOURCES_DB[(sources\n43 journaux RSS + OpenAlex)]
+    SOURCES_DB[(sources\n49 actives: 46 rss + 2 openalex + 1 ss)]
 
-    RSS[lib/veille/fetch-rss.ts\nfetchRssFeed x43 en parallele]
-    RSS_FEEDS[[Flux RSS journaux\nACS / RSC / Wiley / Nature / Elsevier]]
+    RSS[lib/veille/fetch-rss.ts\nfetch parallele, concurrence 5, fenetre 3 jours]
+    RSS_FEEDS[[Flux RSS journaux\nACS / RSC / Wiley / Nature / Elsevier / MDPI]]
 
-    OPENALEX[lib/veille/openalex.ts\nfetchAbstractsByDois batch50\nfetchDoiByTitle\nfetchRecentByIssn]
+    OPENALEX[lib/veille/openalex.ts\nabstracts batch 50 DOIs + is_final + fetch ISSN]
     OPENALEX_API[[API OpenAlex - externe]]
 
-    INSERT[lib/db/veille.ts\ninsertVeilleItemsWithIds - batch 50]
-    ITEMS_DB[(veille_items\ntitre / DOI / abstract / auteurs / score)]
+    CROSSREF[lib/veille/crossref.ts\nfallback is_final si OpenAlex ne confirme pas]
+    CROSSREF_API[[API CrossRef - externe]]
 
-    SCORE[lib/veille/score.ts\nscoreVeilleItems]
+    SS_SCRIPT[ss_representative_papers\npre-calcules par compute-ss-representatives.ts]
+    SS_API[[API Semantic Scholar - externe]]
+
+    KNOWN[(veille_items\nDOIs connus, dedup)]
+    INSERT[insert batch 50\nveille_items status extracted]
+    ITEMS_DB[(veille_items\ntitre / DOI / abstract / auteurs)]
+
+    JOB2[Job 2 - scripts/veille/score.ts]
+    CHUNKIT[abstract decoupe en chunks ~150 mots\nlib/veille/score.ts]
     EMBED[lib/rag/embed.ts\nembedQuery - Xenova 384D]
-    CHUNKS_DB[(chunks\ncorpus RAG - embeddings 384D)]
-    UPDATE[lib/db/veille.ts\nupdateVeilleItemScores]
+    MATCH_CORPUS[RPC match_chunks\nexclut is_temp=true]
+    MATCH_AUTHOR[RPC match_author_chunks\nis_author_article=true seulement]
+    CHUNKS_DB[(chunks\ncorpus 384D + articles auteur)]
+    SCORES_DB[(veille_items\nsimilarity_score + author_score + corpus_refs)]
 
-    STATUS[GET /api/veille/status/runId\nstatus + item_count + scored_count]
-    LIST[GET /api/veille/list\narticles tries par similarity_score DESC]
-    DASHBOARD[VeilleDashboard.tsx\nPolling + Affichage articles]
+    JOB3[Job 3 - scripts/veille/recap-articles.ts]
+    SUMMARIZE[lib/veille/summarize.ts\ntop 8 articles ge 75pct]
+    GPT1[[GPT-4o-mini - externe]]
+    AI_ANALYSIS[(veille_items.ai_analysis\ncontribution / relevance / corpus_link)]
 
-    UI -->|POST| SCRAPE
-    CRON -->|GET + CRON_SECRET| CRON_ROUTE
+    JOB4[Job 4 - scripts/veille/recap-global.ts]
+    GPT2[[GPT-4o-mini - externe]]
+    AI_SUMMARY[(veille_runs.ai_summary\nthemes + synthesis, articles ge 80pct)]
 
-    SCRAPE -->|createRun| RUNS
-    CRON_ROUTE -->|createRun| RUNS
-    SCRAPE -->|run_id| PIPELINE
-    CRON_ROUTE -->|run_id| PIPELINE
+    FRONT_LIST[GET /api/veille/items/top\narticles ge 75pct pagines]
+    FRONT_RUNS[GET /api/veille/runs\nhistorique + logs]
+    DASHBOARD[/bibliographie - page.tsx\nlecture seule, filtres lu/pertinence]
 
-    PIPELINE -->|getKnownDois| KNOWN
-    PIPELINE -->|getSources| SOURCES
-    SOURCES -->|SELECT actifs| SOURCES_DB
+    CRON -->|workflow_dispatch ou cron| JOB1
+    JOB1 -.->|parallele, si active| JOB1B
 
-    PIPELINE -->|fetchRssFeed x43| RSS
+    JOB1 -->|getKnownDois| KNOWN
+    JOB1 -->|getRssSources + getOpenAlexSources| SOURCES
+    SOURCES -->|SELECT active=true| SOURCES_DB
+
+    JOB1 -->|fetchRssFeed x46| RSS
     RSS -->|HTTP GET| RSS_FEEDS
     RSS_FEEDS -->|titre / DOI / abstract / auteurs / date| RSS
-    RSS -->|articles bruts| PIPELINE
+    RSS -->|articles frais| JOB1
 
-    PIPELINE -->|DOIs sans abstract| OPENALEX
-    PIPELINE -->|titres sans DOI| OPENALEX
-    PIPELINE -->|ISSN sources OpenAlex| OPENALEX
-    OPENALEX -->|REST API| OPENALEX_API
-    OPENALEX_API -->|abstracts + DOIs| OPENALEX
-    OPENALEX -->|articles enrichis| PIPELINE
+    JOB1 -->|DOIs sans abstract, resolution titre| OPENALEX
+    OPENALEX -->|REST API batch| OPENALEX_API
+    OPENALEX_API -->|abstracts + is_final| OPENALEX
+    OPENALEX -->|articles enrichis| JOB1
 
-    PIPELINE -->|VeilleItemInsert array| INSERT
-    INSERT -->|batch INSERT| ITEMS_DB
-    INSERT -->|ids inseres| PIPELINE
+    JOB1 -->|is_final=false chez OpenAlex| CROSSREF
+    CROSSREF -->|REST API| CROSSREF_API
+    CROSSREF_API -->|is_final confirme ou non| CROSSREF
+    CROSSREF -->|verdict finalisation| JOB1
 
-    PIPELINE -->|items + abstracts| SCORE
-    SCORE -->|abstract text| EMBED
-    EMBED -->|vector 384D| SCORE
-    SCORE -->|match_chunks RPC| CHUNKS_DB
-    CHUNKS_DB -->|similarity score| SCORE
-    SCORE -->|Map id to score| UPDATE
-    UPDATE -->|UPDATE similarity_score| ITEMS_DB
+    JOB1B -->|charge| SS_SCRIPT
+    JOB1B -->|POST recommendations| SS_API
+    SS_API -->|papers recents 60j| JOB1B
+    JOB1B -->|insert source_type=semantic_scholar| INSERT
 
-    PIPELINE -->|completeRun| RUNS
+    JOB1 -->|articles finalises| INSERT
+    INSERT --> ITEMS_DB
 
-    DASHBOARD -->|polling run_id| STATUS
-    STATUS -->|status + counts| DASHBOARD
-    DASHBOARD -->|GET| LIST
-    LIST -->|articles scores| DASHBOARD
+    JOB2 -->|charge similarity_score IS NULL| ITEMS_DB
+    JOB2 --> CHUNKIT
+    CHUNKIT --> EMBED
+    EMBED -->|vecteur 384D par chunk abstract| MATCH_CORPUS
+    EMBED -->|meme vecteur, en parallele| MATCH_AUTHOR
+    MATCH_CORPUS --> CHUNKS_DB
+    MATCH_AUTHOR --> CHUNKS_DB
+    CHUNKS_DB -->|similarite cosinus| MATCH_CORPUS
+    CHUNKS_DB -->|similarite cosinus| MATCH_AUTHOR
+    MATCH_CORPUS -->|similarity_score + corpus_refs ge 75pct| SCORES_DB
+    MATCH_AUTHOR -->|author_score| SCORES_DB
+
+    JOB3 -->|charge ge 75pct, cap 50| SCORES_DB
+    JOB3 --> SUMMARIZE
+    SUMMARIZE -->|top 8 seulement| GPT1
+    GPT1 -->|contribution/relevance/corpus_link| SUMMARIZE
+    SUMMARIZE --> AI_ANALYSIS
+
+    JOB4 -->|charge ai_analysis IS NOT NULL et ge 80pct| AI_ANALYSIS
+    JOB4 --> GPT2
+    GPT2 -->|themes + synthesis| JOB4
+    JOB4 --> AI_SUMMARY
+    JOB4 -->|status=completed| ITEMS_DB
+
+    DASHBOARD --> FRONT_LIST
+    DASHBOARD --> FRONT_RUNS
+    FRONT_LIST -->|lecture seule| SCORES_DB
+    FRONT_RUNS -->|lecture seule| AI_SUMMARY
 
     classDef trigger    fill:#312e81,stroke:#6366f1,color:#c7d2fe
-    classDef api        fill:#1e3a5f,stroke:#3b82f6,color:#bfdbfe
+    classDef job        fill:#1e3a5f,stroke:#3b82f6,color:#bfdbfe
     classDef lib        fill:#14532d,stroke:#22c55e,color:#bbf7d0
     classDef db         fill:#3b1f0a,stroke:#f97316,color:#fed7aa
     classDef external   fill:#1c1917,stroke:#78716c,color:#d6d3d1
     classDef ui         fill:#2d1b69,stroke:#a78bfa,color:#ede9fe
 
-    class UI,CRON trigger
-    class SCRAPE,CRON_ROUTE,STATUS,LIST api
-    class PIPELINE,RSS,OPENALEX,INSERT,SCORE,EMBED,SOURCES,UPDATE lib
-    class RUNS,KNOWN,ITEMS_DB,CHUNKS_DB,SOURCES_DB db
-    class RSS_FEEDS,OPENALEX_API external
-    class DASHBOARD ui
+    class CRON trigger
+    class JOB1,JOB1B,JOB2,JOB3,JOB4 job
+    class SOURCES,RSS,OPENALEX,CROSSREF,SUMMARIZE,CHUNKIT,INSERT,EMBED,SS_SCRIPT lib
+    class SOURCES_DB,KNOWN,ITEMS_DB,CHUNKS_DB,SCORES_DB,AI_ANALYSIS,AI_SUMMARY,MATCH_CORPUS,MATCH_AUTHOR db
+    class RSS_FEEDS,OPENALEX_API,CROSSREF_API,SS_API,GPT1,GPT2 external
+    class DASHBOARD,FRONT_LIST,FRONT_RUNS ui
     </div>
   </div>
 
   <div class="legend">
-    <div class="legend-item"><div class="dot" style="background:#6366f1"></div> Triggers (UI / Cron)</div>
-    <div class="legend-item"><div class="dot" style="background:#3b82f6"></div> API Routes (Next.js)</div>
+    <div class="legend-item"><div class="dot" style="background:#6366f1"></div> Déclencheur (GitHub Actions)</div>
+    <div class="legend-item"><div class="dot" style="background:#3b82f6"></div> Jobs (scripts/veille/*.ts)</div>
     <div class="legend-item"><div class="dot" style="background:#22c55e"></div> Modules lib/ (logique)</div>
-    <div class="legend-item"><div class="dot" style="background:#f97316"></div> Tables Supabase</div>
+    <div class="legend-item"><div class="dot" style="background:#f97316"></div> Tables / RPC Supabase</div>
     <div class="legend-item"><div class="dot" style="background:#78716c"></div> APIs externes</div>
-    <div class="legend-item"><div class="dot" style="background:#a78bfa"></div> Composants UI</div>
+    <div class="legend-item"><div class="dot" style="background:#a78bfa"></div> Front (lecture seule)</div>
+  </div>
+
+  <div class="note">
+    <strong>Ce qui a changé vs l'ancienne version de ce diagramme</strong> : plus de déclenchement UI/Vercel cron
+    en chemin principal (repli legacy uniquement, <code>lib/veille/pipeline.ts</code>) ; le pipeline est découpé
+    en <strong>4 jobs indépendants</strong> qui se passent un <code>run_id</code> via les outputs GitHub Actions,
+    au lieu d'un orchestrateur monolithique ; ajout du <strong>double scoring</strong> (corpus + articles auteur),
+    du <strong>fallback CrossRef</strong>, de la source <strong>Semantic Scholar</strong> optionnelle, et d'un
+    <strong>seuil à deux vitesses</strong> (75% pour l'analyse individuelle plafonnée à 8 articles/jour, 80% pour
+    la synthèse globale). Détail complet : <code>documentation/PIPELINE_VEILLE_CONSOLIDE.md</code>.
   </div>
 
   <script>

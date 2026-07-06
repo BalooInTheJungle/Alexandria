@@ -154,17 +154,17 @@ Plan d'évolution. Mettre à jour à chaque jalon atteint.
 
 ---
 
-## État corpus (juin 2026)
+## État corpus (juin 2026 ; revérifié en base le 06/07/2026)
 
-| Élément | Valeur |
-|---------|--------|
-| Documents corpus | ~3 700 (2024-2026) |
-| Articles auteur (`is_author_article=true`) | 521 |
-| Total chunks | 848 857 |
-| Dimension embeddings | 384D (all-MiniLM-L6-v2) |
-| Index IVFFlat | `idx_chunks_embedding` (lists=100) — 1.3 Go, valid=t |
-| DB Supabase | ~7 Go (plan Pro 25$/mois, limite 8 Go) |
-| UMAP | Non recalculé sur ce corpus (à faire : `compute_umap.py`) |
+| Élément | Valeur (juin 2026) | Valeur vérifiée (06/07/2026) |
+|---------|--------|--------|
+| Documents corpus | ~3 700 (2024-2026) | 3 887 (dont 3 798 réellement 2024-2026, reste = bruit métadonnées/nulls) |
+| Articles auteur (`is_author_article=true`) | 521 | 521 (inchangé) |
+| Total chunks | 848 857 | 849 454 |
+| Dimension embeddings | 384D (all-MiniLM-L6-v2) | inchangé |
+| Index IVFFlat | `idx_chunks_embedding` (lists=100) — 1.3 Go, valid=t | à revérifier si besoin de citer une taille exacte |
+| DB Supabase | ~7 Go (plan Pro 25$/mois, limite 8 Go) | à revérifier |
+| UMAP | Non recalculé sur ce corpus (à faire : `compute_umap.py`) | toujours pertinent — voir `documentation/CARTE_CORPUS.md` pour la distinction mode par défaut (~30 min) vs `--all` (10-20 min, 848k points) |
 
 ---
 
@@ -184,10 +184,10 @@ Stratégie de scoring enrichie : les articles de veille sont maintenant scorés 
 | Page Database — carte UMAP "auteur vs corpus" | ✅ | AuthorVsCorpusMap (orange=auteur, gris=corpus) |
 | `compute_umap.py` réécriture psycopg2 | ✅ | Bypass statement_timeout, flag `--all` |
 
-### Seuils double scoring (juin 2026)
+### Seuils double scoring (mis à jour 06/07/2026, vérifié en base réelle)
 - `author_score` ≥ 75% = très proche des thématiques du chercheur
-- `author_above_75` observé : 0/1204 (score auteur = critère plus exigeant que corpus)
-- 22/1204 articles ont un `author_score` calculé (script rétroactif partiel)
+- État initial (juin 2026) : 22/1204 articles scorés, 0 au-dessus de 75%
+- **État actuel** : 3024/3210 articles ont un `author_score` calculé (94%, le script rétroactif a largement progressé depuis), dont **8 articles ≥ 75%** — le seuil auteur n'est donc plus un cas théorique, quelques articles le franchissent réellement
 
 ---
 

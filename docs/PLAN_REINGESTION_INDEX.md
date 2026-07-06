@@ -3,6 +3,8 @@
 > Session suivante. Contexte : l'index pgvector ne peut pas être créé a posteriori
 > (Supabase timeout). Solution : le créer directement dans `ingest.py` via psycopg2
 > après tous les inserts, sans passer par l'API REST.
+>
+> **Statut (06/07/2026) : plan exécuté**, avec deux ajustements par rapport à ce qui est décrit ci-dessous — `scripts/ingest.py` crée l'index avec `lists=100` (pas `lists=10`), et la source des PDFs est aujourd'hui `data/pdfs2/YEAR/` (pas `data/pdfs/YEAR/`, réorganisé par année de publication depuis). Conservé comme référence historique de la procédure, pas comme description du script actuel — voir `documentation/STACK_ET_TECHNOLOGIES.md` §5.3 pour l'état à jour.
 
 ---
 
@@ -92,8 +94,10 @@ Juste avant le `print("=== Done ===")` final :
 Dans `.env.local` (et variables Vercel si besoin) :
 
 ```
-SUPABASE_DB_URL=postgresql://postgres:kodgos-9xajqe-Wodvac@db.whxnsqlrqjdrpjqlshvu.supabase.co:5432/postgres
+SUPABASE_DB_URL=postgresql://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres
 ```
+
+> ⚠️ **Sécurité** : cette ligne contenait auparavant un mot de passe Supabase en clair, committé dans git (voir commit `e0774ac`). Retiré le 06/07/2026 du fichier courant — **mais il reste visible dans l'historique git** (`git log -p -- docs/PLAN_REINGESTION_INDEX.md`). Si ce mot de passe n'a pas été changé depuis, le considérer comme compromis et le faire tourner dans Supabase Dashboard → Settings → Database. Une purge complète de l'historique git (`git filter-repo` / BFG + force-push) serait nécessaire pour l'effacer réellement, mais c'est une opération destructive à ne faire qu'après décision explicite.
 
 Installer psycopg2 si pas déjà là :
 ```bash

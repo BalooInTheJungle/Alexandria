@@ -50,9 +50,8 @@ Dernière mise à jour : juin 2026.
 ## Module Analyse — améliorations
 
 ### Historique des analyses
-- La page `/analyse` n'affiche que le formulaire d'upload
-- Ajouter la liste des analyses passées (titre, date, statut, bouton "Rouvrir")
-- La table `document_analyses` stocke déjà tout — c'est uniquement une question d'UI
+- **Précision (06/07/2026)** : la page `/analyse` affiche en réalité le formulaire d'upload **et** une liste des articles de veille suggérés à analyser (`GET /api/veille/items/top`) — ce n'est donc pas un simple formulaire nu. Mais ce qui manque vraiment est confirmé : aucune liste des **analyses déjà réalisées par l'utilisateur** (titre, date, statut, bouton "Rouvrir") n'est affichée.
+- La table `document_analyses` stocke déjà tout — c'est uniquement une question d'UI (`SELECT * FROM document_analyses WHERE user_id = ... ORDER BY created_at DESC`)
 
 ### Analyse depuis un abstract (sans PDF)
 - Pour les articles identifiés en veille dont le PDF n'est pas accessible librement
@@ -76,9 +75,10 @@ Dernière mise à jour : juin 2026.
 - ~13 000 PDFs supplémentaires disponibles
 - Contrainte : DB actuellement à ~7 Go sur plan Pro (limite 8 Go) — nécessite upgrade ou nettoyage
 - Si upgrade : ~50$/mois (plan Pro 8 Go → 16 Go)
+- **⚠️ Pas vraiment une évolution "nouvelle"** : selon `docs/DECISIONS.md` (D13) et les notes de session, une ingestion bulk 2015-2026 (~15 477 PDFs) avait déjà été lancée le 14/05/2026. Vérifié en base le 06/07/2026 : le corpus réel ne contient que 4 408 documents (quasi tous 2024-2026), pas 15 477 — cette extension a donc probablement déjà été tentée puis annulée/réduite, sans que la raison soit tracée dans les docs. À clarifier avec le porteur avant de la relancer.
 
 ### Index UMAP incrémental
-- Actuellement : recalcul complet à chaque fois (lent sur 848k chunks)
+- Actuellement : recalcul complet à chaque fois — rapide en mode par défaut (1 chunk/document, `position=0`, ~4400 points), lent seulement en mode `--all` (848k chunks). Voir `documentation/CARTE_CORPUS.md` pour la nuance entre les deux modes.
 - Amélioration : UMAP incrémental ou recalcul seulement sur les nouveaux chunks
 
 ---
@@ -91,8 +91,8 @@ Dernière mise à jour : juin 2026.
 - Nécessite : UI de gestion des accès, corpus partagé vs corpus personnel
 
 ### Feedback utilisateur sur les scores veille
-- Marquer un article comme "pertinent" ou "non pertinent" depuis l'UI
-- Utiliser ce signal pour affiner le scoring (fine-tuning du seuil ou pondération par journal/auteur)
+- ✅ **Partiellement fait** : marquer un article "pertinent"/"non pertinent" depuis l'UI existe déjà (`veille_items.is_relevant`, select 3 états sur chaque card `/bibliographie`, voir `documentation/FONCTIONNALITES_FRONT.md`).
+- ⏳ **Reste à faire** : utiliser ce signal pour affiner le scoring (fine-tuning du seuil ou pondération par journal/auteur) — le feedback est stocké mais n'influence rien automatiquement pour l'instant.
 
 ### Tableau de bord qualité pipeline
 - Taux de réussite/échec par job GitHub Actions

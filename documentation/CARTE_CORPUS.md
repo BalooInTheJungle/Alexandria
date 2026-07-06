@@ -1,160 +1,95 @@
-# Carte du corpus — spécification
+# Carte du corpus — implémentation réelle
 
-**Référence unique** pour la fonctionnalité « Carte du corpus » : objectif, données, design, architecture technique. Document de base pour guider le développement.
+**Rôle** : référence de la fonctionnalité « Carte du corpus » — ce qui est effectivement construit, page Database.
+
+> Réécrit le 06/07/2026. L'ancienne version était une **spécification pré-développement** ("structure des fichiers à créer", "ordre de développement suggéré"). La fonctionnalité est **implémentée depuis**, mais différemment de la spec sur plusieurs points importants : stockage des coordonnées, niveau d'agrégation, clustering, interactivité. Le detail ci-dessous reflète le code réel (`scripts/compute_umap.py`, `app/api/corpus/map/route.ts`, `app/(dashboard)/database/page.tsx`).
 
 ---
 
 ## 1. Vue d'ensemble
 
-La **Carte du corpus** est une visualisation 2D interactive des documents indexés. Elle permet aux **utilisateurs finaux** d'explorer leur corpus, de repérer des **clusters thématiques** et de mieux comprendre leurs documents accumulés au fil des années.
-
-- **Emplacement** : page **Database** de l'app (section dédiée ou onglet).
-- **Données** : projection 2D des embeddings des documents (agrégation par document).
-- **Mise à jour** : recalcul à chaque ingestion de documents.
-
----
-
-## 2. Objectifs et utilisateurs
-
-| Élément | Détail |
-|--------|--------|
-| **Utilisateurs** | Utilisateurs finaux de l'app (chercheurs, étudiants, etc.) |
-| **Objectif principal** | Explorer le corpus et repérer les clusters pour mieux comprendre l'accumulation de documents |
-| **Contexte** | Corpus de PDFs scientifiques indexés (RAG, veille) ; embeddings 384D (all-MiniLM-L6-v2) |
+- **Emplacement** : page `/database`, deux visualisations distinctes (pas une seule carte) :
+  1. **"Carte du corpus — clusters thématiques"** : scatter coloré par cluster k-means.
+  2. **"Articles auteur dans l'espace vectoriel"** : même nuage de points, coloré par corpus (gris) vs articles auteur (orange).
+- **Calcul UMAP** : offline, script Python (`scripts/compute_umap.py`), **pas de recalcul automatique après ingestion** — à relancer manuellement (`cd scripts && python3 compute_umap.py`).
 
 ---
 
-## 3. Données à afficher
+## 2. Niveau d'agrégation réel (différent de la spec)
 
-### 3.1 Niveau d'agrégation
+La spec prévoyait "un point = un document" via un **centroïde** (moyenne des embeddings de tous les chunks du document). **Ce n'est pas ce qui est implémenté** :
 
-- **Un point = un document** (pas un chunk).
-- **Raison** : lisibilité et pertinence pour l'utilisateur (il pense en « documents », pas en « passages »).
-- **Calcul** : vecteur représentatif du document = moyenne des embeddings de ses chunks (ou centroid). Si un document n'a qu'un chunk, ce chunk = le point.
+- **Mode par défaut** (`python3 compute_umap.py`) : prend le chunk à **`position = 0`** de chaque document (le premier chunk, typiquement l'abstract/l'intro) comme représentant du document — **pas une moyenne**. Environ 3 700 points (1 par document).
+- **Mode `--all`** (`python3 compute_umap.py --all`) : UMAP sur **tous les chunks** (848k), niveau chunk et non document — beaucoup plus lourd, mentionné dans le script mais pas confirmé comme utilisé en routine.
+- Les deux modes excluent les chunks `is_temp=true` (analyses non intégrées).
 
-### 3.2 Corpus
-
-- **Périmètre** : tous les documents en base (`documents` avec `status = 'done'`).
-- **Filtrage** : à prévoir en v2 (par date, journal, etc.) si besoin.
-
-### 3.3 Métadonnées affichées
-
-| Contexte | Données |
-|----------|---------|
-| **Au survol (tooltip)** | Titre du document, DOI |
-| **Couleur des points** | Par document (chaque document = une couleur distincte pour le différencier) |
-| **Labels** | Titre du document, DOI (affichés au survol ; pas de labels permanents sur la carte pour éviter le bruit) |
+> Pour le mémoire : dire "la carte représente un centroïde par document" serait inexact. Le point représentatif par défaut est le **premier chunk**, pas une moyenne.
 
 ---
 
-## 4. Interactivité
+## 3. Stockage des coordonnées
 
-| Fonctionnalité | Spécification |
-|----------------|---------------|
-| **Clic sur un point** | Afficher le document (modal ou redirection vers une vue détail / PDF) |
-| **Zoom / pan** | Oui — navigation libre dans la carte |
-| **Survol** | Tooltip avec titre + DOI |
-| **Filtres** | Non en v1 ; à envisager en v2 (par date, journal, etc.) |
-| **Recherche** | Non en v1 ; à envisager en v2 (afficher la requête + voisins sur la carte) |
+- **Pas de table dédiée** `corpus_map_points` comme prévu par la spec.
+- Les coordonnées sont écrites directement sur `chunks.umap_x` / `chunks.umap_y` (migration `20260505140000_chunks_umap.sql`), avec un index partiel `WHERE umap_x IS NOT NULL`.
+- Conséquence : la "carte" est en réalité une projection de **chunks** (dont un sous-ensemble représente les documents en mode par défaut), pas d'une table de documents dédiée.
 
 ---
 
-## 5. Design
+## 4. API réelle
 
-| Élément | Choix |
-|---------|------|
-| **Couleurs** | Par document (une couleur par point) |
-| **Labels** | Titre document + DOI au survol uniquement |
-| **Style** | Scatter plot 2D, points cliquables, tooltip au survol |
-
----
-
-## 6. Architecture technique (proposition)
-
-### 6.1 Réduction de dimension
-
-- **Algorithme** : **UMAP** (recommandé pour la préservation des voisinages et la lisibilité des clusters).
-- **Alternative** : t-SNE si UMAP pose des problèmes (plus lent, résultats parfois moins stables).
-- **Entrée** : vecteurs 384D (moyenne des embeddings des chunks par document).
-- **Sortie** : coordonnées (x, y) par document.
-
-### 6.2 Stockage des coordonnées
-
-- **Table** : `corpus_map_points` (ou colonnes ajoutées à `documents`).
-- **Colonnes** : `document_id`, `x`, `y`, `updated_at`.
-- **Mise à jour** : recalcul à chaque ingestion (ou via job dédié déclenché après ingestion).
-
-### 6.3 Flux proposé
-
-```
-Ingestion document terminée
-         │
-         ▼  Trigger ou appel explicite : recalcul carte
-         │
-         ▼  1. Récupérer tous les documents (status = done) avec leurs chunks
-         │  2. Pour chaque document : centroid = moyenne(embeddings des chunks)
-         │  3. UMAP sur la matrice [documents × 384] → [documents × 2]
-         │  4. Écrire (document_id, x, y) dans corpus_map_points
-         │
-         ▼  Front : GET /api/corpus-map → { points: [{ document_id, x, y, title, doi }] }
-         │
-         ▼  Scatter plot (Recharts ou Plotly) avec zoom/pan, tooltip, clic
-```
-
-### 6.4 Où exécuter la réduction
-
-| Option | Avantages | Inconvénients |
-|--------|-----------|---------------|
-| **Script Python** (ingest ou dédié) | UMAP/t-SNE natifs, rapide | Nécessite Python dans le pipeline |
-| **API Next.js + lib JS** (tsne-js, umap-js) | Tout en JS | UMAP/t-SNE en JS moins matures, peut être lent |
-| **API Next.js + subprocess Python** | Flexibilité | Complexité déploiement |
-
-**Recommandation** : **script Python** appelé après ingestion (comme `ingest.py`), ou **job/cron** si ingestion asynchrone. Le script écrit les coordonnées en base ; le front ne fait que les afficher.
-
-### 6.5 Visualisation front
-
-- **Librairie** : **Recharts** (déjà dans le stack) pour un scatter simple, ou **Plotly.js** si besoin de zoom/pan avancé.
-- **Données** : API `GET /api/corpus-map` retourne `{ points: [{ document_id, x, y, title, doi }] }`.
+- **Route** : `GET /api/corpus/map` (et non `GET /api/corpus-map` comme prévu par la spec).
+- **Implémentation** : lit `chunks` (jointure `documents`), filtre `umap_x`/`umap_y` non nuls, limite à **5000 points** (`SAMPLE_SIZE`).
+- **Réponse** : `{ points: [{ id, x, y, doc_id, doc_title, year, is_author }], computed: boolean }` — `is_author` vient de `documents.is_author_article`, utilisé pour la seconde visualisation (auteur vs corpus).
+- Pas de DOI renvoyé par cette route (contrairement à la spec qui prévoyait DOI au survol).
 
 ---
 
-## 7. Structure des fichiers (à créer)
+## 5. Clustering — calculé côté front, pas en base
+
+- **Aucun clustering n'est stocké en base.** Le composant `CorpusMap` (`app/(dashboard)/database/page.tsx`) applique un **k-means en JavaScript** (`kmeansCluster`) directement sur les coordonnées `(x, y)` reçues de l'API, à chaque rendu.
+- **Nombre de clusters** : fixe, `K_CLUSTERS = 8` dans le composant — pas adaptatif au volume de documents.
+- **Label de cluster** : dérivé heuristiquement des mots les plus fréquents dans les titres des documents du cluster (`clusterLabel()`), pas par LLM ni par `get_corpus_top_terms`.
+- **Fraîcheur** : chaque cluster affiche une pastille de fraîcheur basée sur l'année médiane des documents du cluster (`medianYear`, `freshnessInfo`).
+
+---
+
+## 6. Interactivité réelle (moins riche que la spec)
+
+| Fonctionnalité prévue (spec) | Réalité |
+|---|---|
+| Clic sur un point → afficher le document | ❌ **Non implémenté** — aucun `onClick` sur les points `Scatter` |
+| Zoom / pan libre | ❌ **Non implémenté** — axes cachés (`hide`), pas de zoom Recharts configuré |
+| Survol → tooltip titre + DOI | ⚠️ Partiel — tooltip affiche **titre + année**, **pas de DOI** (l'API ne le renvoie pas) |
+| Couleur par document | ❌ Couleur par **cluster** (plusieurs documents partagent une couleur), pas par document individuel |
+| Filtres (date, journal) | ❌ Non implémenté |
+| Recherche (requête + voisins) | ❌ Non implémenté |
+
+La seconde visualisation ("Articles auteur vs Corpus") a le même niveau d'interactivité (tooltip titre+année uniquement), sans clustering — juste une distinction de couleur binaire (gris = corpus, orange = auteur).
+
+---
+
+## 7. Fichiers réels (remplace la section "à créer" de la spec)
 
 | Fichier | Rôle |
 |---------|------|
-| `scripts/corpus_map.py` | Script : lit chunks, calcule centroids, UMAP, écrit `corpus_map_points` |
-| `supabase/migrations/XXXXXX_corpus_map_points.sql` | Table `corpus_map_points` (document_id, x, y, updated_at) |
-| `app/api/corpus-map/route.ts` | GET : retourne les points pour le front |
-| `app/(dashboard)/database/page.tsx` | Intégration : section ou onglet « Carte du corpus » avec scatter |
-| `components/corpus-map-scatter.tsx` | Composant scatter réutilisable |
+| `scripts/compute_umap.py` | Lit les embeddings (1/doc ou tous), calcule UMAP (`umap-learn`), écrit `chunks.umap_x`/`umap_y` via `psycopg2` |
+| `supabase/migrations/20260505140000_chunks_umap.sql` | Colonnes `umap_x`, `umap_y` sur `chunks` (pas de table séparée) |
+| `app/api/corpus/map/route.ts` | `GET` — retourne jusqu'à 5000 points (chunks + métadonnées document) |
+| `app/(dashboard)/database/page.tsx` | Contient `CorpusMap` (clusters k-means) et `AuthorVsCorpusMap` (comparaison) |
+| `recharts` (`ScatterChart`, `Scatter`) | Librairie de rendu — conforme à la recommandation d'origine |
 
 ---
 
-## 8. Contraintes et choix
+## 8. Contraintes réelles
 
-| Contrainte | Choix |
-|------------|-------|
-| **Volume** | Gérer jusqu'à ~1000–2000 documents (UMAP/t-SNE raisonnable). Au-delà, envisager sous-échantillonnage ou indexation incrémentale. |
-| **Embedding** | Utiliser `embedding` (EN) ou `embedding_fr` selon préférence ; cohérent avec le reste de l'app. |
-| **Documents sans chunks** | Exclure (ou point à part si besoin). |
-| **Mise à jour** | Déclencher le recalcul à la fin de l'ingestion (dans le flow upload ou après le script ingest). |
+- **Volume** : 5000 points max renvoyés par l'API (`SAMPLE_SIZE`), pas de sous-échantillonnage adaptatif documenté au-delà.
+- **Documents sans chunk `position=0`** (ou dont ce chunk n'a pas d'embedding) : absents de la carte en mode par défaut.
+- **Mise à jour** : entièrement manuelle — pas de trigger, pas de job automatique après ingestion. Le `CLAUDE.md` liste d'ailleurs "UMAP recalculé sur corpus actuel — ⏳ à relancer" comme tâche en attente à la date de rédaction.
 
 ---
 
-## 9. Ordre de développement suggéré
+## 9. Références
 
-1. **Migration** : table `corpus_map_points`.
-2. **Script Python** : `corpus_map.py` (centroids + UMAP + écriture).
-3. **API** : `GET /api/corpus-map`.
-4. **Front** : composant scatter + intégration page Database.
-5. **Intégration** : déclencher le script après ingestion (ou bouton « Recalculer la carte » en v1).
-
----
-
-## 10. Références
-
-- **UMAP** : [umap-learn](https://github.com/lmcinnes/umap) (Python)
-- **Recharts Scatter** : [Recharts ScatterChart](https://recharts.org/en-US/api/ScatterChart)
-- **Plotly** : [Plotly.js Scatter](https://plotly.com/javascript/line-and-scatter/) (zoom/pan natif)
-- **Schéma DB** : `documentation/SCHEMA_DB_ET_DONNEES.md`
-- **Tables sources** : `documents`, `chunks` (embedding, embedding_fr)
+- `documentation/SCHEMA_DB_ET_DONNEES.md` — colonnes `chunks.umap_x`/`umap_y`
+- `documentation/STRUCTURE_ET_ARCHITECTURE.md` — page Database dans l'arborescence
+- `CLAUDE.md` — commande `compute_umap.py`, état d'avancement

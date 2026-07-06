@@ -2,6 +2,8 @@
 
 **Rôle** : document de référence pour la stratégie d'extraction automatique des publications scientifiques. Contexte, pistes explorées, problèmes rencontrés, stratégie retenue.
 
+> Mis à jour le 06/07/2026 : les §1-10 (rationale RSS/CrossRef/OpenAlex, décisions de fond) restent valides et décrivent bien la stratégie effectivement en place. En revanche les §11-12 (infra Vercel Pro + cron Vercel) sont **obsolètes** : le pipeline a depuis été migré vers **GitHub Actions** (voir `docs/VEILLE_PIPELINE_REFACTOR.md` et `documentation/PIPELINE_VEILLE_CONSOLIDE.md`), Vercel ne portant plus que l'UI. Le §9 (fenêtre 7 jours) est également à nuancer : le pipeline actif utilise **3 jours**.
+
 ---
 
 ## 1. Contexte et contraintes
@@ -171,6 +173,8 @@ Les ISSNs de chaque journal sont à stocker dans la table `sources` en base (col
 
 ## 8. Prochaines étapes
 
+> Checklist historique de la première implémentation. Les routes `POST /api/veille/scrape`, `GET /api/veille/list`, `GET /api/veille/status/[runId]` existent toujours dans le code mais ne sont plus le chemin principal — voir §11-12 et `documentation/PIPELINE_VEILLE_CONSOLIDE.md` pour l'architecture actuelle (GitHub Actions).
+
 | Étape | Statut | Détail |
 |---|---|---|
 | Mettre à jour le schéma DB (`issn`, `rss_url`, `source_type`) | ✅ Fait | Migration `20260207100000_sources_rss.sql` |
@@ -199,7 +203,7 @@ Les ISSNs de chaque journal sont à stocker dans la table `sources` en base (col
 | Inclure les ASAP/Online First ? | **Oui** — peer-reviewed, DOI éditeur, publication finale |
 | Open Access uniquement ? | **Non** — tous les articles, abstract suffit (pas besoin du PDF) |
 | Objectif | Récupérer uniquement **titre + auteurs + DOI + abstract + date** |
-| Fenêtre temporelle | **7 jours** — évite de backfiller tout l'historique RSS |
+| Fenêtre temporelle | **7 jours** décidé ici à l'origine ; le pipeline actif (`scripts/veille/extract.ts`, GitHub Actions) utilise en réalité **3 jours** (`LOOKBACK_DAYS`). Le pipeline legacy (`lib/veille/pipeline.ts`, repli manuel Vercel) est resté à 7 jours. |
 | Enrichissement OpenAlex | **Batch 50 DOIs/requête** — réduit ~200 appels individuels à ~4 requêtes pour ACS |
 
 ---
@@ -216,7 +220,9 @@ Les ISSNs de chaque journal sont à stocker dans la table `sources` en base (col
 
 ---
 
-## 11. Analyse technique : choix d'infrastructure
+## 11. Analyse technique : choix d'infrastructure (⚠️ obsolète — voir note ci-dessous)
+
+> **Ce choix a été abandonné.** L'analyse ci-dessous a conduit au choix "Vercel Pro + maxDuration=300s", mais en pratique le pipeline a continué à timeout (`waitUntil` ne survit pas de façon fiable au-delà d'~150s en usage réel, cf. règles §7 de `PIPELINE_VEILLE_CONSOLIDE.md`), produisant des `similarity_score = null` en production. La solution retenue depuis (voir `docs/VEILLE_PIPELINE_REFACTOR.md`) est **GitHub Actions** exécutant directement les scripts Node.js (`scripts/veille/*.ts`), sans limite de durée serverless. Vercel ne sert plus que l'UI et le cron de rétention (`vercel.json` ne contient plus de cron veille). Section conservée pour l'historique du raisonnement.
 
 ### Besoins réels du pipeline quotidien
 
@@ -253,7 +259,7 @@ Les ISSNs de chaque journal sont à stocker dans la table `sources` en base (col
 - Batch OpenAlex cross-sources : tous les DOIs sans abstract en un seul appel
 - Réduction : 88s → 28s
 
-## 12. Architecture cron (Vercel Pro requis)
+## 12. Architecture cron (⚠️ obsolète, remplacée par GitHub Actions — voir §11)
 
 ```
 Vercel Cron — 6h00 UTC chaque matin

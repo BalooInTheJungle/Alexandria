@@ -1,232 +1,199 @@
-# Back RAG — API, ingestion, génération, paramétrage, multilingue, conversation
+# Back RAG — API, ingestion, génération, paramétrage, conversation
 
-**Rôle** : référence consolidée du **côté back** du RAG : ce qui est en place, ce qui reste à faire, **par thème** avec un **niveau de priorité** (P1, P2, P3).
+**Rôle** : référence consolidée du **côté back** du RAG : ce qui est en place, par thème.
 
----
-
-## 1. Récapitulatif par thème et priorité
-
-| Thème | Fait | À faire | Priorité |
-|-------|------|---------|----------|
-| **Recherche hybride (FTS + vector + RRF)** | FTS + vector + RRF ; selon lang : match_chunks/search_chunks_fts (EN) ou match_chunks_fr/search_chunks_fts_fr (FR). | — | — (en place) |
-| **API Chat** | POST /api/rag/chat ; détection langue ; garde-fou ; N derniers messages ; persistance ; streaming SSE. | — | — (en place) |
-| **Garde-fou hors domaine** | Seuil (similarity_threshold), message (guard_message) ; pas d’appel LLM si best_similarity < seuil. Modifiable via PATCH /api/rag/settings. | — | — (en place) |
-| **Ingestion PDF** | **Deux modes** : (1) API upload (page Database) : pdf-parse, chunk 400/50, embed Xenova, dédup DOI ; (2) Script Python (data/pdfs/) : PyMuPDF, OCR, chunk 600/100, traduction EN→FR, embedding_fr. | — | — (en place) |
-| **Bilingue FR/EN** | Détection heuristique (detect-lang.ts) ; colonnes + RPC FR ; pipeline EN/FR (search.ts) ; instruction langue (openai.ts). | — | — (en place) |
-| **Génération (LLM)** | OpenAI (gpt-4o-mini), contexte + historique + question ; citations [1], [2] ; streaming ; instruction FR/EN selon lang. | — | — (en place) |
-| **Conversations et messages** | Tables + getOrCreateConversation, insertMessage, getLastMessages ; **GET /api/rag/conversations** (liste) ; **GET /api/rag/conversations/[id]/messages** (pagination cursor) ; **PATCH /api/rag/conversations/[id]** (titre) ; **DELETE /api/rag/conversations/[id]** (cascade messages). | — | — (en place) |
-| **Paramétrage dynamique (admin)** | Lecture rag_settings ; **GET /api/rag/settings** (toutes les clés) ; **PATCH /api/rag/settings** (body partiel, validation des bornes ; 400 si invalide, aucune modification en base). | Page admin pour afficher/éditer (optionnel). | — (en place) |
-| **Rétention 30 jours** | GET /api/cron/retention (CRON_SECRET) ; vercel.json cron 4 h UTC ; suppression conversations + cascade. | — | — (en place) |
+> Réécrit le 06/07/2026. Le changement le plus important par rapport à l'ancienne version : **le pipeline bilingue FR/EN a été abandonné**. Il n'y a plus de détection de langue, plus de colonnes FR actives, plus de RPC `_fr` appelées. La recherche est **monolingue anglaise** (embeddings EN uniquement) ; c'est le LLM qui reçoit l'instruction générique "réponds dans la langue de la question" et gère la traduction à la volée. Ce module RAG (`lib/rag/`, `app/api/rag/`) est aujourd'hui **réutilisé par le module Analyse** — il n'a plus de page dédiée dans le dashboard (`/rag` retirée en juin 2026).
 
 ---
 
-## 2. API Chat (flux et comportement)
+## 1. Récapitulatif par thème
 
-### 2.1 Flux actuel (un message utilisateur)
+| Thème | État réel |
+|-------|------|
+| **Recherche hybride (FTS + vector + RRF)** | FTS anglais + vector EN + fusion RRF. Une seule paire de RPC (`match_chunks`, `search_chunks_fts`), pas de variante `_fr` appelée. |
+| **API Chat** | `POST /api/rag/chat` ; garde-fou configurable ; N derniers messages ; persistance ; streaming SSE ; log analytique (`query_logs`). |
+| **Garde-fou hors domaine** | Activable/désactivable (`use_similarity_guard`) ; seuil (`similarity_threshold`) ; message (`guard_message`) ; **mode "connaissances générales"** si le garde-fou est désactivé et qu'aucun chunk n'est assez proche (voir §2.3). |
+| **Ingestion PDF** | **Trois chemins** distincts (pas deux) : (1) `POST /api/documents/upload` — corpus direct, page `/database` ; (2) `POST /api/analyse/upload` — chunks temporaires (`is_temp=true`), module Analyse ; (3) script Python `scripts/ingest.py` — ingestion bulk `data/pdfs2/`. |
+| **Bilingue FR/EN** | **Abandonné.** Colonnes `content_fr`/`embedding_fr`/`content_fr_tsv` toujours en base (legacy, non alimentées), aucune détection de langue côté recherche. |
+| **Génération (LLM)** | OpenAI `gpt-4o-mini`, contexte + historique + question ; citations `[1]`, `[2]` ; streaming ; instruction "réponds dans la langue de la question" (pas de pipeline séparé par langue). |
+| **Conversations et messages** | Tables + `getOrCreateConversation`, `insertMessage`, `getLastMessages` ; CRUD complet sur `/api/rag/conversations`. |
+| **Paramétrage dynamique (admin)** | `GET`/`PATCH /api/rag/settings`, bornes validées côté back, 10 clés (dont `use_similarity_guard`, absente de l'ancienne doc). |
+| **Rétention 30 jours** | `GET /api/cron/retention` (CRON_SECRET) ; `vercel.json` cron 4h UTC. |
+| **Logs analytiques** | `query_logs` — une ligne par requête chat, alimente `/database` (heatmap). `lang` toujours `'en'` en pratique (jamais détecté). |
 
-1. Réception **query** (+ optionnel **conversationId**, **stream**).  
-2. **Détection de langue** : heuristique sur la requête → `lang = 'fr' | 'en'` (lib/rag/detect-lang.ts).  
-3. **Chargement** des N derniers messages (si conversationId) ; N = `rag_settings.context_turns`.  
-4. **Recherche** : embedding → selon lang, match_chunks + search_chunks_fts (EN) ou match_chunks_fr + search_chunks_fts_fr (FR) → fusion RRF → top-K chunks ; **bestVectorSimilarity**.  
-5. **Garde-fou** : si bestVectorSimilarity < `similarity_threshold` → retour du **guard_message** (pas d’appel OpenAI) ; enregistrement message user + message assistant (garde-fou) en base.  
-6. **Sinon** : prompt (system + instruction « Réponds en français » / « Réponds en anglais » selon lang + N messages + contexte + question) → OpenAI (stream ou non) ; enregistrement message assistant (content + sources) en base.
+---
+
+## 2. API Chat (flux réel)
+
+### 2.1 Flux
+
+1. Réception `query` (+ `conversationId`, `stream` optionnels).
+2. Lecture `rag_settings` (`getRagSettings()`).
+3. **Recherche** : `searchChunks(query, { matchThreshold: 0.01, matchCount: settings.match_count, settings })` → `match_chunks` + `search_chunks_fts` (anglais uniquement) → fusion RRF → `bestVectorSimilarity`.
+4. **Garde-fou** (`isOutOfDomain`) : actif seulement si `use_similarity_guard=true` **et** (`chunks.length === 0` **ou** `bestVectorSimilarity < similarity_threshold`).
+5. Si garde-fou déclenché → réponse = `guard_message`, **pas d'appel LLM**, message user + assistant insérés.
+6. Sinon → historique (N derniers tours, `context_turns`) + chunks → LLM (stream ou non) → citations `[N]` construites depuis les chunks (`chunksToSources`).
+7. `insertQueryLog()` (fire-and-forget, n'attend pas la réponse) enregistre la requête dans `query_logs` (analytique `/database`).
 
 ### 2.2 Route et paramètres
 
-- **Route** : `POST /api/rag/chat`.  
-- **Body** : `{ "query": string, "conversationId"?: string, "stream"?: boolean }`.  
-- **Réponse (stream: false)** : `{ answer, sources, conversationId, messageId }`.  
-- **Réponse (stream: true)** : flux SSE (`data: {"text":"..."}` puis `data: {"done":true, conversationId, messageId, sources}`).
+- **Route** : `POST /api/rag/chat`.
+- **Body** : `{ query: string, conversationId?: string, stream?: boolean }` (stream par défaut `true`).
+- **Réponse non-stream** : `{ answer, sources, conversationId, messageId }`.
+- **Réponse stream** : SSE (`data: {"text":"..."}` puis `data: {"done":true, conversationId, messageId, sources}`).
+
+### 2.3 Mode "connaissances générales" (non documenté auparavant)
+
+Si `use_similarity_guard = false` (garde-fou désactivé par l'admin), le garde-fou classique ne bloque jamais. Mais pour éviter qu'une similarité faible ne produise quand même une réponse "je ne trouve rien dans le contexte" avec des chunks non pertinents comme sources, le back calcule un second indicateur :
+- `contextRelevant` = vrai si la meilleure similarité parmi les chunks retournés dépasse `similarity_threshold` (garde-fou actif) ou **0.5** fixe (`MIN_SIMILARITY_FOR_STRICT_RAG`, garde-fou désactivé).
+- Si le garde-fou est désactivé **et** `contextRelevant` est faux → `allowGeneralKnowledge = true` : le LLM répond sans s'appuyer sur le contexte (`sources: []`), en mode connaissances générales du modèle.
 
 ---
 
-## 3. Recherche hybride (détail)
+## 3. Recherche hybride (détail réel)
 
-- **Détection langue** : `lib/rag/detect-lang.ts` → `detectQueryLanguage(query)` retourne `'fr'` ou `'en'`.  
-- **Vector** : selon `lang`, RPC `match_chunks` (EN, sur `chunks.embedding`) ou `match_chunks_fr` (FR, sur `chunks.embedding_fr`) ; même signature (query_embedding 384D, match_threshold, match_count).  
-- **FTS** : selon `lang`, RPC `search_chunks_fts` (EN, `content_tsv`, config english) ou `search_chunks_fts_fr` (FR, `content_fr_tsv`, `plainto_tsquery('french', query_text)`).  
-- **Fusion** : RRF dans `lib/rag/search.ts` ; paramètres `fts_weight`, `vector_weight`, `rrf_k`, `hybrid_top_k` (rag_settings). Les chunks retournés ont le bon champ texte (content ou content_fr) pour contexte et citations.  
-- **Fallback FR → EN** : si `lang === 'fr'` et `match_chunks_fr` renvoie 0 chunks, le back refait la recherche avec `match_chunks` + `search_chunks_fts` (EN) pour éviter un « hors domaine » quand la base n’a pas encore d’embedding_fr.  
-- **Garde-fou** : on utilise la **meilleure similarité vectorielle** (avant fusion) pour comparer au `similarity_threshold`.
-
----
-
-## 4. Bilingue FR/EN (implémenté)
-
-### 4.1 Détection de la langue
-
-- **Fichier** : `lib/rag/detect-lang.ts`.  
-- **Fonction** : `detectQueryLanguage(query)` → `'fr' | 'en'`. Heuristique : accents français, mots-outils FR vs EN ; défaut `'en'`. Appelée dans la route chat avant la recherche.  
-- **Implémentation recommandée** : heuristique (accents, mots courants FR vs EN) ; défaut en cas d’ambiguïté : `'en'`.
-
-### 4.2 Deux pipelines
-
-- **Requête EN** : recherche sur `content`, `embedding`, `content_tsv` (english) ; contexte envoyé au LLM = `content` ; instruction « Réponds en anglais ».  
-- **Requête FR** : recherche sur `content_fr`, `embedding_fr`, `content_fr_tsv` (french) ; RPC `match_chunks_fr`, `search_chunks_fts_fr` ; contexte = `content_fr` ; instruction « Réponds en français ».  
-- **Citations** : excerpt = `content` ou `content_fr` selon la langue.
-
-### 4.3 Ingestion (bilingue)
-
-- **Script Python** : `scripts/ingest.py`. Traduction EN→FR (Helsinki-NLP/opus-mt-en-fr, batches) ; **embedding_fr** = même modèle sentence-transformers sur content_fr. Insertion content_fr, embedding_fr ; triggers remplissent content_fr_tsv. **Migration** : `20260206100000_chunks_bilingue_fr.sql`. Ré-ingestion des PDF après migration pour remplir content_fr / embedding_fr.
-- **API upload** : pas de traduction ; `content_fr` = copie de `content`, `embedding_fr` = copie de `embedding`. La recherche FR fonctionne mais avec le contenu EN.
+- **Pas de détection de langue.** `lib/rag/search.ts` interroge uniquement les RPC anglaises.
+- **Vector** : RPC `match_chunks` (embedding 384D, exclut `is_temp=true` depuis juin 2026).
+- **FTS** : RPC `search_chunks_fts` (`content_tsv`, config `english`).
+- **Fusion** : RRF dans `lib/rag/search.ts`, paramètres `fts_weight`, `vector_weight`, `rrf_k`, `hybrid_top_k` (`rag_settings`).
+- **Garde-fou** : basé sur la **meilleure similarité vectorielle** (avant fusion RRF).
+- **Rerank** : `lib/rag/rerank.ts` existe dans le code mais n'est importé nulle part (`grep` sur `search.ts`, la route chat et les routes Analyse : aucun résultat) — **code mort**, ne pas le citer comme actif dans le mémoire.
 
 ---
 
-## 5. Ingestion des données (deux modes)
+## 4. Bilingue FR/EN — état réel (abandonné)
 
-Alexandria propose **deux pipelines d'ingestion** : l'**API upload** (usage principal via la page Database) et le **script Python** (ingestion en lot depuis data/pdfs/).
+- Il **n'existe plus** de `lib/rag/detect-lang.ts` dans le code principal, ni de logique de langue dans `app/api/rag/chat/route.ts`.
+- Les colonnes `content_fr`, `embedding_fr`, `content_fr_tsv` et les RPC `match_chunks_fr`/`search_chunks_fts_fr` existent toujours en base (migration `20260206100000_chunks_bilingue_fr.sql`, jamais `DROP`), mais **aucun code applicatif actuel ne les lit ni ne les écrit**.
+- **Gestion de la langue de réponse** : le prompt système de `lib/rag/openai.ts` contient l'instruction *"Reply in the same language as the question"* — c'est le LLM qui adapte sa réponse à la langue de la requête, sans pipeline de recherche séparé par langue.
+- `query_logs.lang` est toujours inséré à `'en'` en dur (`insertQueryLog` dans `lib/db/query-logs.ts`) — la colonne existe mais n'est jamais réellement détectée.
 
-### 5.1 Mode API upload (page Database)
+---
 
-- **Route** : `POST /api/documents/upload` (multipart/form-data, champs `file` ou `files`).
-- **UI** : page `/database` → glisser-déposer ou sélection de PDF (max 10, 20 Mo chacun).
-- **Pipeline** : `lib/ingestion/index.ts` → `parsePdfBuffer` (pdf-parse) → `chunkText` (paragraphes, 400 car., overlap 50) → `embedQuery` (Xenova/all-MiniLM-L6-v2) → insert documents + chunks.
-- **Dédup** : extraction du DOI depuis le texte ; si DOI déjà en base (status = done) → skip, retour `skipped: true`.
-- **Stockage** : PDF traités en mémoire, **non conservés** ; `storage_path` = `upload/{uuid}.pdf` (chemin logique).
-- **Bilingue** : `content_fr` = `content` (copie EN), `embedding_fr` = `embedding` (même vecteur). Pas de traduction côté API.
-- **ingestion_log** : `{ numpages, chunks_count, ingested_at }` ou `{ error }`.
+## 5. Ingestion des données (trois chemins, pas deux)
 
-### 5.2 Mode script Python (data/pdfs/)
+### 5.1 `POST /api/documents/upload` — corpus direct (page `/database`)
 
-**Flow actuel (scripts/ingest.py)** :
+- **Pipeline** : `lib/ingestion/index.ts` (`ingestPdfBuffer`) → `parsePdfBuffer` (pdf-parse) → `chunkText` (paragraphes, ~400 caractères, overlap 50) → `embedQuery` (Xenova) → insert `documents` + `chunks`.
+- **Dédup** : DOI extrait du texte ; si DOI déjà en base avec `status=done` → skip (`skipped: true`).
+- **Pas de bilingue** : aucune colonne `content_fr`/`embedding_fr` écrite (contrairement à l'ancienne doc qui décrivait une copie EN→FR).
+- **Stockage** : PDF non conservé, traité en mémoire ; `storage_path = upload/{uuid}.pdf`.
+- Max 10 fichiers, 20 Mo chacun.
 
-1. Liste des PDF dans **data/pdfs/** ; skip si storage_path déjà en base avec status = done.  
-2. **Extraction texte** : PyMuPDF par page ; si caractères < MIN_TEXT_PER_PAGE (50) → OCR (Tesseract + pdf2image).  
-3. **Métadonnées** : titre (XMP ou première grosse ligne), DOI (regex sur les 10k premiers caractères).  
-4. Insert **document** (status = processing).  
-5. **Chunking** : sections (Abstract, Introduction, Methods, Results, Discussion, Conclusion, References, Acknowledgments) ; à l’intérieur d’une section, blocs CHUNK_SIZE (600) avec CHUNK_OVERLAP (100). Fallback : 1 chunk = texte tronqué à 8000 caractères. **Nettoyage** : `clean_text_for_db` (remplace `\x00` et `\u0000` par un espace) sur full_text, métadonnées, content et section_title avant insertion.  
-6. **Embeddings EN** : sentence-transformers all-MiniLM-L6-v2, batch ; dimension 384.  
-7. **Traduction EN→FR** : modèle **MarianMT** (Helsinki-NLP/opus-mt-en-fr) via `MarianMTModel` + `MarianTokenizer` (sans pipeline) ; device MPS (Apple Silicon) ou CUDA ou CPU ; batches de 24 ; troncature ~512 tokens ; décodage greedy (num_beams=1) pour la vitesse. Dépendances : `transformers`, `sentencepiece`, `torch`.  
-8. **Embeddings FR** : même modèle sentence-transformers sur les textes français → embedding_fr.  
-9. **Écriture** : insert chunks par **batch de 50** (content, embedding, content_fr, embedding_fr, document_id, position, page, section_title) ; content_tsv et content_fr_tsv par triggers ; update document (status = done, ingestion_log). En fin de run : log récap (nombre de documents done, chunks total, chunks avec content_fr).  
-- **Stockage PDF** : **data/pdfs/** ; `documents.storage_path` = chemin relatif. Pas de Supabase Storage en POC.
+### 5.2 `POST /api/analyse/upload` — module Analyse (chunks temporaires)
 
-### 5.3 Comparaison des deux modes
+- Distinct du chemin corpus : crée `document_analyses` + chunks avec `is_temp=true`, `analysis_id` renseigné.
+- Même parsing/chunking (`parsePdfBuffer`, `chunkText`) mais **n'insère jamais dans le corpus permanent** tant que l'utilisateur n'a pas cliqué "intégrer" (`POST /api/analyse/[id]/integrate` → `is_temp=false`).
+- Un seul fichier par appel (`file`, pas `files`).
 
-| Aspect | API upload | Script Python |
-|--------|------------|---------------|
-| **Source** | Upload UI (page Database) | data/pdfs/ |
-| **Parse PDF** | pdf-parse (Node) | PyMuPDF |
-| **OCR** | Non | Oui (Tesseract si page peu textuelle) |
-| **Chunk** | Paragraphes, 400 car., overlap 50 | Sections + taille 600, overlap 100 ; page, section_title |
-| **Embedding** | Xenova (Node, all-MiniLM-L6-v2) | sentence-transformers (Python, même modèle) |
-| **Traduction EN→FR** | Non (content_fr = content) | Oui (opus-mt-en-fr) |
-| **Dédup** | Par DOI | Par storage_path |
-| **Stockage fichier** | Aucun (buffer en mémoire) | data/pdfs/ ; storage_path = data/pdfs/{nom}.pdf |
+### 5.3 Script Python `scripts/ingest.py` (ingestion bulk)
 
-### 5.4 Paramètres (ingest.py)
+1. Source : `data/pdfs2/YEAR/` (organisation par année de publication, **pas** `data/pdfs/`), filtré par `YEAR_MIN`/`YEAR_MAX` dans `main()`. Flag `--author` pour `data/Articles auteur/`.
+2. Skip si `storage_path` déjà en base avec `status=done`.
+3. Extraction texte : PyMuPDF par page ; OCR (Tesseract + pdf2image) si texte < `MIN_TEXT_PER_PAGE` (50 caractères).
+4. Chunking par sections (Abstract, Introduction, Methods…) puis blocs de `CHUNK_SIZE=600` caractères, overlap `CHUNK_OVERLAP=100`.
+5. Embeddings EN (sentence-transformers all-MiniLM-L6-v2, 384D).
+6. **Pas de traduction FR** : contrairement à l'ancienne version de ce document (qui décrivait MarianMT / opus-mt-en-fr), le script actuel **n'a aucune trace de traduction** — recherche `translat|Marian|content_fr|embedding_fr` dans `scripts/ingest.py` : zéro résultat.
+7. Insert par batch (`INSERT_BATCH=50`, `INSERT_PAUSE=0.1s` — augmenté depuis 5/0.3s pour accélérer les gros runs).
+8. Rebuild automatique de l'index IVFFlat en fin de script.
+
+### 5.4 Comparaison des trois modes
+
+| Aspect | `/api/documents/upload` | `/api/analyse/upload` | `scripts/ingest.py` |
+|--------|--------------------------|------------------------|----------------------|
+| Usage | Corpus direct, page Database | Analyse ponctuelle, temporaire | Ingestion bulk |
+| Parse PDF | pdf-parse (Node) | pdf-parse (Node) | PyMuPDF (Python) |
+| OCR | Non | Non | Oui |
+| Chunk | ~400 car., overlap 50 | ~400 car., overlap 50 | 600 car., overlap 100, par section |
+| Cible DB | `documents` + `chunks` (`is_temp=false`) | `document_analyses` + `chunks` (`is_temp=true`) | `documents` + `chunks` |
+| Dédup | DOI | — (analyse individuelle) | storage_path |
+| Traduction FR | Non | Non | Non |
+
+### 5.5 Paramètres actuels (`ingest.py`)
 
 | Paramètre | Valeur | Rôle |
 |-----------|--------|------|
-| PDF_DIR | data/pdfs | Dossier des PDF. |
-| EMBED_DIM | 384 | Dimension des vecteurs. |
-| CHUNK_SIZE | 600 | Taille cible d’un bloc (caractères). |
-| CHUNK_OVERLAP | 100 | Recouvrement entre deux chunks. |
-| MIN_TEXT_PER_PAGE | 50 | Seuil en dessous duquel on tente l’OCR. |
-| TRANSLATE_BATCH_SIZE | 24 | Nombre de textes par batch de traduction (MarianMT). |
-| TRANSLATE_NUM_BEAMS | 1 | 1 = greedy (rapide), 5 = beam (meilleure qualité). |
-
-### 5.5 Log d’ingestion (documents.ingestion_log)
-
-- **Script Python** : title_extracted, doi_extracted, authors_extracted, journal_extracted, published_at_extracted, chunks_count, ocr_pages_count, ingested_at. En cas d'erreur : `{ "error": "message", "ingested_at": "..." }`.
-- **API upload** : numpages, chunks_count, ingested_at. En cas d'erreur : `{ "error": "message" }`.'
-
-### 5.6 Points à surveiller (script Python, extraction massive)
-
-- **Migrations** : exécuter `20260204100006_chunks_embedding_384.sql`, `20260205100000_documents_ingestion_log.sql`, `20260206100000_chunks_bilingue_fr.sql`.  
-- **Environnement** : `.env.local` avec **NEXT_PUBLIC_SUPABASE_URL** (URL projet `https://xxx.supabase.co`) et **SUPABASE_SERVICE_ROLE_KEY**. Le script Python lit ce fichier sans lancer Next.js.  
-- **Python / OCR** : `python3 -m pip install -r scripts/requirements.txt` ; **Poppler** (pour pdf2image) et **Tesseract** installés (macOS : brew ; Linux : apt).  
-- **Idempotence** : PDF déjà en base avec **status = done** et même **storage_path** → ignorés. Documents en **error** ou **processing** → supprimés (doc + chunks) puis **ré-ingérés** au prochain run.  
-- **Volume** : vérifier quotas Supabase (~10k docs × ~100–200 chunks = ordre de grandeur 1–2 M lignes dans `chunks`). Pour gros volume : lancer en **screen** / **tmux** ou en arrière-plan ; en cas de Ctrl+C, le document en cours reste en processing et sera ré-ingéré au prochain run.  
-- **Contrôle** : après le run, vérifier en base `documents` (status, ingestion_log) et `chunks` (nombre, embedding non nul).
+| PDF_DIR | `data/pdfs2` | Dossier des PDF (organisé par année de **publication**) |
+| EMBED_DIM | 384 | Dimension des vecteurs |
+| CHUNK_SIZE | 600 | Taille cible d'un bloc (caractères) |
+| CHUNK_OVERLAP | 100 | Recouvrement entre deux chunks |
+| MIN_TEXT_PER_PAGE | 50 | Seuil OCR |
+| INSERT_BATCH | 50 | Chunks par requête (index droppé pendant l'ingestion) |
+| INSERT_PAUSE | 0.1s | Pause entre batchs |
 
 ---
 
 ## 6. Génération (LLM) et contexte
 
-- **Modèle** : OpenAI gpt-4o-mini ; variable d’env **OPENAI_API_KEY** (côté serveur ; voir `.env.local.example`).  
-- **Message système** : s’appuyer uniquement sur le contexte, citer [1], [2]…, ne pas inventer.  
-- **Contexte** : chunks numérotés avec (document, section) ; **à adapter** : ajouter instruction « Réponds en français » ou « Réponds en anglais » selon la langue détectée.  
-- **Historique** : N derniers échanges (user + assistant) ; N = context_turns (défaut 3). En V1 on envoie les N derniers messages **bruts** (pas de récapitulatif par IA ; évolution possible avec un appel supplémentaire pour résumer le fil).  
-- **Streaming** : stream: true ; sauvegarde du message assistant complète à la fin du stream. **Rerank** : optionnel (cross-encoder sur le top-K) ; pour le POC, FTS + vector + RRF → top-K direct au LLM. **Filtres métadonnées** (auteur, journal, période) : possibles en amont ou en aval de la recherche hybride (requêtes Supabase filtrées).
+- **Modèle** : `gpt-4o-mini`, `OPENAI_API_KEY`.
+- **Prompt système** : s'appuyer sur le contexte, citer `[1]`, `[2]`… ; **"Reply in the same language as the question"** (pas d'instruction FR/EN séparée par pipeline).
+- **Historique** : N derniers tours (`context_turns`, défaut 3), envoyés bruts (pas de résumé IA du fil).
+- **Streaming** : `stream: true` par défaut ; sauvegarde du message assistant à la fin du stream.
 
 ---
 
 ## 7. Garde-fou
 
-- **Règle** : après recherche, si **bestVectorSimilarity < similarity_threshold** → requête hors domaine.  
-- **Comportement** : pas d’appel OpenAI ; retour du **guard_message** ; enregistrement message user + message assistant (garde-fou) en base. Pour garder la même UX que les réponses normales, on peut renvoyer le message en « faux stream » (un seul chunk) au lieu d’un JSON unique.  
-- **Paramètres** (rag_settings) : similarity_threshold, guard_message. Modifiables via **PATCH /api/rag/settings** (voir §9).
+- Voir §2.1 et §2.3 pour le détail (garde-fou classique + mode connaissances générales, ce dernier absent de l'ancienne doc).
+- Paramètres : `use_similarity_guard`, `similarity_threshold`, `guard_message` — modifiables via `PATCH /api/rag/settings`.
 
 ---
 
 ## 8. Conversations et messages (APIs en place)
 
-Toutes les routes ci‑dessous sont implémentées. Le client Supabase serveur (cookies) + RLS **authenticated** s’appliquent.
+Inchangé par rapport à l'ancienne version — toujours d'actualité :
 
-### 8.1 GET liste des conversations
-
-- **Route** : `GET /api/rag/conversations`.  
-- **Query** : `?limit=50` (optionnel, max 100).  
-- **Réponse** : tableau `{ id, title, created_at, updated_at }[]` ; ordre **updated_at** décroissant.
-
-### 8.2 GET messages d’une conversation
-
-- **Route** : `GET /api/rag/conversations/[id]/messages`.  
-- **Query** : `?cursor=message_id&limit=20`. **Curseur** = id du dernier message de la page précédente ; page suivante = messages avec `created_at` strictement après ce message ; ordre **created_at** croissant.  
-- **Réponse** : tableau `{ id, role, content, sources?, created_at }[]`.
-
-### 8.3 PATCH titre
-
-- **Route** : `PATCH /api/rag/conversations/[id]`.  
-- **Body** : `{ "title": "Nouveau titre" }`. Titre tronqué à 255 caractères. Réponse : `{ id, title }` ou 404.
-
-### 8.4 DELETE conversation
-
-- **Route** : `DELETE /api/rag/conversations/[id]`.  
-- **Comportement** : suppression en base ; messages supprimés en **cascade**. Réponse : **204** ou 404.
+| Route | Rôle |
+|---|---|
+| `GET /api/rag/conversations` | Liste (`?limit=50`), tri `updated_at` desc |
+| `GET /api/rag/conversations/[id]/messages` | Pagination curseur (`?cursor=...&limit=20`) |
+| `PATCH /api/rag/conversations/[id]` | Renommage (titre tronqué 255 car.) |
+| `DELETE /api/rag/conversations/[id]` | Suppression + cascade messages |
 
 ---
 
-## 9. Paramétrage dynamique (rag_settings)
+## 9. Paramétrage dynamique (`rag_settings`)
 
-### 9.1 Clés existantes
+### 9.1 Clés réelles (10, pas 8 — `use_similarity_guard` manquait dans l'ancienne doc)
 
-| Clé | Description | Défaut / exemple |
-|-----|-------------|-------------------|
-| context_turns | Nombre de tours (paires user+assistant) envoyés au LLM. | 3 |
-| similarity_threshold | Seuil garde-fou (en dessous : pas d’appel LLM). | 0.5 |
-| guard_message | Message affiché quand requête hors domaine. | « Requête trop éloignée… » |
-| match_count | Nombre max de chunks retournés par la recherche vectorielle. | 20 |
-| match_threshold | Seuil minimal de similarité pour inclure un chunk (RPC). | 0.3 |
-| fts_weight, vector_weight | Poids FTS et vector dans la fusion RRF. | 1, 1 |
-| rrf_k | Paramètre k de la formule RRF. | 60 |
-| hybrid_top_k | Nombre de chunks après fusion RRF (envoyés au LLM). | 20 |
+| Clé | Description | Défaut |
+|-----|-------------|--------|
+| `use_similarity_guard` | Active/désactive le garde-fou (voir §2.3) | `true` |
+| `context_turns` | Tours d'historique envoyés au LLM | 3 |
+| `similarity_threshold` | Seuil garde-fou | 0.5 |
+| `guard_message` | Message hors-domaine | "Requête trop éloignée…" |
+| `match_count` | Chunks max retournés par la recherche vectorielle | 20 |
+| `match_threshold` | Seuil minimal RPC | 0.3 |
+| `fts_weight`, `vector_weight` | Poids RRF | 1, 1 |
+| `rrf_k` | Paramètre k RRF | 60 |
+| `hybrid_top_k` | Chunks après fusion, envoyés au LLM | 20 |
 
-### 9.2 API admin (en place)
+### 9.2 API admin
 
-- **GET /api/rag/settings** : retourne toutes les clés avec valeurs parsées (même structure que celle utilisée par le chat). Utilisable pour pré-remplir le panneau admin.  
-- **PATCH /api/rag/settings** : body = objet partiel (ex. `{ "similarity_threshold": 0.4 }`). Seules les clés connues sont prises en compte. **Validation côté back** : si une valeur est hors bornes → **400** avec `{ "error": "message" }` et **aucune modification en base**. Réponse en succès : objet settings complet (après mise à jour).  
-- **Bornes appliquées** (dans `lib/rag/settings.ts`, `RAG_SETTINGS_BOUNDS`) : context_turns 1–10 ; similarity_threshold 0.1–0.9 ; guard_message longueur max 1000 ; match_count 5–100 ; match_threshold 0–1 ; fts_weight, vector_weight 0–10 ; rrf_k 1–200 ; hybrid_top_k 5–100.  
-- **Accès** : même authentification que le reste (RLS authenticated sur rag_settings). Page admin au front optionnelle (affichage + formulaire qui appelle GET puis PATCH).
-
----
-
-## 10. Rétention 30 jours (en place)
-
-- **Règle** : supprimer les conversations (et messages en cascade) où **updated_at < now() - 30 days** (pas d’activité depuis 30 jours). On s’appuie sur **updated_at**, pas sur created_at. **Pas de notification** utilisateur.  
-- **Route** : **GET /api/cron/retention**. Protégée par **CRON_SECRET** (variable d’env) : accepter uniquement si `Authorization: Bearer <CRON_SECRET>` ou `?secret=<CRON_SECRET>`. Réponse : `{ deleted: number }` ou 401/500.  
-- **Vercel Cron** : dans `vercel.json`, crons `path: "/api/cron/retention"`, `schedule: "0 4 * * *"` (tous les jours à 4 h UTC). Définir **CRON_SECRET** dans les env du projet Vercel ; Vercel envoie ce secret en `Authorization: Bearer` lors de l’appel.  
-- **Script manuel** : `curl -H "Authorization: Bearer $CRON_SECRET" "https://<ton-domaine>/api/cron/retention"` ou `"?secret=$CRON_SECRET"`.  
-- **Fichier** : `app/api/cron/retention/route.ts` (client Supabase **admin** pour la suppression, sans session utilisateur).
+- `GET /api/rag/settings` : toutes les clés, valeurs parsées.
+- `PATCH /api/rag/settings` : body partiel, validation des bornes (`RAG_SETTINGS_BOUNDS` dans `lib/rag/settings.ts`) — 400 + aucune écriture si hors bornes.
+- **Bornes** : `context_turns` 1–10 ; `similarity_threshold` 0.1–0.9 ; `guard_message` max 1000 car. ; `match_count` 5–100 ; `match_threshold` 0–1 ; `fts_weight`/`vector_weight` 0–10 ; `rrf_k` 1–200 ; `hybrid_top_k` 5–100 ; `use_similarity_guard` booléen sans borne numérique.
 
 ---
 
-## 11. Références vers les autres documents
+## 10. Logs analytiques (`query_logs`)
+
+Non documenté dans l'ancienne version. Chaque appel à `/api/rag/chat` insère une ligne (fire-and-forget) : `query_text`, `lang` (toujours `'en'` en pratique), `chunks_retrieved`, `best_similarity`, `was_guardrailed`, `conversation_id`. Alimente la RPC `get_query_stats_daily` utilisée par la page `/database` (heatmap d'activité).
+
+---
+
+## 11. Rétention 30 jours (en place, inchangé)
+
+- Supprime `conversations` (+ `messages` cascade) où `updated_at < now() - 30 jours`.
+- `GET /api/cron/retention`, protégé `CRON_SECRET`, cron Vercel `vercel.json` (4h UTC).
+
+---
+
+## 12. Références
 
 | Document | Contenu |
 |----------|---------|
-| **Vue d’ensemble projet** | Besoins, flows, structure. |
-| **Stack et technologies** | Rôle de chaque techno (embeddings, FTS, RRF, OpenAI, etc.). |
-| **Fonctionnalités Front** | Sidebar, scroll infini, streaming, citations, langue, garde-fou, admin. Fichier : `FONCTIONNALITES_FRONT.md`. |
-| **Schéma DB et données** | Tables chunks (content_fr, embedding_fr, content_fr_tsv), conversations, messages, rag_settings ; migrations ; flows back ↔ DB. Fichier : `SCHEMA_DB_ET_DONNEES.md`. |
+| `STRUCTURE_ET_ARCHITECTURE.md` | Vue d'ensemble modules, dossiers |
+| `SCHEMA_DB_ET_DONNEES.md` | Tables chunks, conversations, messages, rag_settings, query_logs |
+| `PIPELINE_VEILLE_CONSOLIDE.md` | Réutilisation de `match_chunks`/`match_author_chunks` côté veille |
+| `CLAUDE.md` | Pipeline Analyse (upload → insights → chat → intégration) |

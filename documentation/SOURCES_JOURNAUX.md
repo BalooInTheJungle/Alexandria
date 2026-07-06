@@ -1,6 +1,15 @@
 # Sources journaux — Alexandria Veille
 
-**Rôle** : liste de référence des 47 journaux à surveiller, avec ISSN, URL RSS et stratégie d'extraction. Ce fichier sert à alimenter la table `sources` en base.
+**Rôle** : liste de référence des journaux surveillés, avec ISSN, URL RSS et stratégie d'extraction. Ce fichier a servi à peupler la table `sources` en base via `scripts/import-sources.ts`.
+
+> Vérifié en base réelle le 06/07/2026 (requête directe Supabase, projet `whxnsqlrqjdrpjqlshvu`) : **49 sources actives**, pas 47 — `scripts/import-sources.ts` (45 entrées) est **désynchronisé** de la base, qui a été complétée manuellement depuis (UI "Ajouter une source" + modifications directes). Détail des écarts trouvés :
+> - **RSC compte 11 journaux, pas 10** : *Physical Chemistry Chemical Physics* (ISSN 1463-9084) a été ajouté le 2026-05-06, absent du script d'import.
+> - **Wiley compte 7 journaux, pas 8** : *Materials Today* listé ci-dessous sous Wiley est une erreur de cette doc — en base il n'existe que sous Elsevier (RSS ScienceDirect), pas en doublon Wiley.
+> - **MDPI (Magnetochemistry, Inorganics)** : `source_type = 'openalex'` en base (fetch par ISSN via `getOpenAlexSources()`), **pas** `'rss'` comme les insère `scripts/import-sources.ts` — ce champ a été changé manuellement après le seed initial.
+> - **2 sources orphelines** ajoutées via l'UI le 2026-04-08, `publisher = NULL`, **`rss_url = NULL`** : *"Science Direct"* et *"Chemistry Europe"*. Comme `getRssSources()` filtre `.not('rss_url', 'is', null)`, ces deux sources sont `active = true` en base mais **ne remontent jamais aucun article** — mortes silencieusement, sans erreur visible dans le pipeline.
+> - Il existe aussi 1 source `source_type = 'semantic_scholar'` (Job 1b), sans ISSN ni RSS, non listée dans les tableaux ci-dessous.
+>
+> **Total réel** : 46 `rss` (44 "normales" + 2 orphelines mortes) + 2 `openalex` (MDPI) + 1 `semantic_scholar` = **49**, dont **47 effectivement fonctionnelles**.
 
 **Légende statut RSS :**
 - ✅ URL RSS confirmée (pattern éditeur documenté)
@@ -46,12 +55,15 @@ Pattern RSS RSC : `https://pubs.rsc.org/en/rss/journal/CODE`
 | CrystEngComm | 1466-8033 | https://pubs.rsc.org/en/rss/journal/ce | ✅ |
 | New Journal of Chemistry | 1369-9261 | https://pubs.rsc.org/en/rss/journal/nj | ✅ |
 | Chemical Society Reviews | 1460-4744 | https://pubs.rsc.org/en/rss/journal/cs | ✅ |
+| Physical Chemistry Chemical Physics *(ajouté 2026-05-06, absent du script d'import)* | 1463-9084 | http://feeds.rsc.org/rss/cp | ✅ |
 
 ---
 
-## Wiley / Chemistry Europe (8 journaux)
+## Wiley / Chemistry Europe (7 journaux — pas 8)
 
 Pattern RSS Wiley : `https://onlinelibrary.wiley.com/action/showFeed?jc=CODE&type=etoc&feed=rss`
+
+> "Materials Today" a été retiré de cette liste : en base il n'existe que sous **Elsevier** (RSS ScienceDirect), il n'y a pas d'entrée Wiley dupliquée pour ce journal.
 
 | Journal | ISSN (e) | RSS URL | Statut |
 |---|---|---|---|
@@ -62,7 +74,6 @@ Pattern RSS Wiley : `https://onlinelibrary.wiley.com/action/showFeed?jc=CODE&typ
 | Advanced Functional Materials | 1616-3028 | https://onlinelibrary.wiley.com/action/showFeed?jc=16163028&type=etoc&feed=rss | ✅ |
 | Small | 1613-6829 | https://onlinelibrary.wiley.com/action/showFeed?jc=16136829&type=etoc&feed=rss | ✅ |
 | ChemistryEurope | 2751-4765 | https://onlinelibrary.wiley.com/action/showFeed?jc=27514765&type=etoc&feed=rss | ⚠️ |
-| Materials Today | 1369-7021 | https://onlinelibrary.wiley.com/action/showFeed?jc=13697021&type=etoc&feed=rss | ⚠️ |
 
 ---
 
@@ -101,12 +112,14 @@ Pattern RSS Elsevier : `https://rss.sciencedirect.com/publication/science/ISSN_P
 
 ---
 
-## MDPI (2 journaux — Open Access)
+## MDPI (2 journaux — Open Access, fetch OpenAlex par ISSN, pas RSS)
 
-| Journal | ISSN (e) | RSS URL | Statut |
+> En base, `source_type = 'openalex'` pour ces 2 sources : le pipeline les récupère via `getOpenAlexSources()` + `fetchRecentByIssn()` (fetch direct par ISSN), **pas** en parsant le flux RSS ci-dessous — même si l'URL RSS reste renseignée en base (probablement conservée pour référence/fallback manuel).
+
+| Journal | ISSN (e) | RSS URL (non utilisée par le pipeline) | Statut |
 |---|---|---|---|
-| Magnetochemistry | 2312-7481 | https://www.mdpi.com/rss/journal/magnetochemistry | ✅ |
-| Inorganics | 2304-6740 | https://www.mdpi.com/rss/journal/inorganics | ✅ |
+| Magnetochemistry | 2312-7481 | https://www.mdpi.com/rss/journal/magnetochemistry | ✅ (via OpenAlex) |
+| Inorganics | 2304-6740 | https://www.mdpi.com/rss/journal/inorganics | ✅ (via OpenAlex) |
 
 ---
 
@@ -119,25 +132,24 @@ Pattern RSS Elsevier : `https://rss.sciencedirect.com/publication/science/ISSN_P
 
 ---
 
-## Récapitulatif
+## Récapitulatif (base réelle, 06/07/2026)
 
 | Éditeur | Nb journaux | Stratégie | Statut |
 |---|---|---|---|
 | ACS | 12 | RSS | ✅ confirmé |
-| RSC | 10 | RSS | ✅ confirmé |
-| Wiley | 8 | RSS | ✅ / ⚠️ à vérifier |
+| RSC | **11** (dont PCCP, hors script d'import) | RSS | ✅ confirmé |
+| Wiley | **7** | RSS | ✅ / ⚠️ à vérifier |
 | Nature | 4 | RSS | ✅ confirmé |
 | APS | 3 | RSS | ✅ confirmé |
 | Elsevier | 5 | RSS (ScienceDirect) | ✅ confirmé |
-| MDPI | 2 | RSS | ✅ confirmé |
+| MDPI | 2 | **OpenAlex** (pas RSS) | ✅ confirmé |
 | AAAS/NAS | 2 | RSS | ⚠️ à vérifier |
-| **Total** | **46** | | |
+| *(orphelines, `publisher` NULL)* | **2** | RSS **cassées** (`rss_url` NULL) | ❌ ne remontent jamais rien |
+| Semantic Scholar | 1 | API recommandations (Job 1b) | ✅ (non listé ci-dessus) |
+| **Total en base** | **49** | | **47 réellement fonctionnelles** |
 
 ---
 
-## Prochaine étape : import en base
+## Import initial (historique)
 
-Ces données sont à insérer dans la table `sources` (Supabase).
-Colonnes à ajouter : `issn`, `rss_url`, `source_type` (`rss` ou `openalex`), `publisher`.
-
-Script d'import à créer : `scripts/import-sources.ts`
+Le script `scripts/import-sources.ts` (45 entrées) a servi au peuplement initial de la table `sources`. La base a ensuite divergé (ajouts UI, corrections manuelles de `source_type`) — voir l'encart en tête de document. **Ne pas considérer ce script comme reflétant l'état actuel de la table `sources`** ; pour un état à jour, interroger directement la base (`select * from sources`).

@@ -225,7 +225,7 @@ Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentie
 
 #### Job 1 — `scripts/veille/extract.ts`
 1. `createRun()` → `veille_runs` avec `status=running`
-2. **44 sources RSS** → fetch parallèle (concurrence=5) — fenêtre **7 jours**
+2. **44 sources RSS** → fetch parallèle (concurrence=5) — fenêtre **3 jours** (`LOOKBACK_DAYS` dans `scripts/veille/extract.ts` ; le pipeline legacy `lib/veille/pipeline.ts`, repli manuel UI, est resté à 7 jours)
 3. **Filtre de finalisation** : seuls les articles publiés définitivement sont gardés
    - DOI requis → vérification `is_final` via **OpenAlex batch** (1 requête pour tous les DOIs)
    - CrossRef fallback si OpenAlex ne confirme pas
@@ -249,12 +249,13 @@ Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentie
 5. Résultat typique : ~637 scorés | ~20 ≥75% | ~5-10 ≥75%
 
 #### Job 3 — `scripts/veille/recap-articles.ts`
-1. Charge les articles avec `similarity_score ≥ 75%` (tous, pas de cap)
-2. GPT-4o-mini → `ai_analysis` par article : `{ contribution, relevance, corpus_link }`
-3. Sauvegarde dans `veille_items.ai_analysis` pour chaque article
+1. Charge jusqu'à 50 articles avec `similarity_score ≥ 75%` (cap de sécurité, généralement 5-10/jour en pratique)
+2. Ne traite que le **top 8** de ces articles (`MAX_ARTICLES=8` dans `lib/veille/summarize.ts`) — au-delà de 8 articles ≥75% le même jour, les suivants restent sans `ai_analysis`
+3. GPT-4o-mini → `ai_analysis` par article : `{ contribution, relevance, corpus_link }`
+4. Sauvegarde dans `veille_items.ai_analysis` pour chaque article traité
 
 #### Job 4 — `scripts/veille/recap-global.ts`
-1. Charge les articles avec `ai_analysis IS NOT NULL` et `similarity_score ≥ 75%`
+1. Charge les articles avec `ai_analysis IS NOT NULL` et `similarity_score ≥ 80%` (seuil différent du reste du pipeline — `SCORE_THRESHOLD=0.80` dans ce script)
 2. GPT-4o-mini → `{ themes[], synthesis }` — synthèse en vouvoiement, ton direct
 3. Fusionne avec les `ai_analysis` déjà en base → `ai_summary` complet dans `veille_runs`
 4. Marque le run `status=completed`, `phase=done`
@@ -262,12 +263,13 @@ Déclenchée par cron GitHub Actions **7h UTC (9h Paris)** — 4 jobs séquentie
 #### Seuils importants
 | Seuil | Valeur | Usage |
 |-------|--------|-------|
-| Lookback RSS | 7 jours | Fenêtre de recherche articles récents |
+| Lookback RSS | **3 jours** (pipeline actif) / 7 jours (pipeline legacy manuel) | Fenêtre de recherche articles récents |
 | Finalisation | `is_final=true` | Filtre ASAP/preprints (OpenAlex + CrossRef) |
 | Scoring corpus | ≥ 0% | Tous les articles avec abstract sont scorés |
 | `corpus_refs` | ≥ 75% | Passages corpus affichés dans les cards |
 | Affichage "top" | ≥ 75% | Page `/bibliographie` tab Veille |
-| Analyse IA | **≥ 75%** | Articles envoyés à GPT pour ai_analysis |
+| Analyse IA individuelle | ≥ 75%, top 8/jour max | `ai_analysis` par article |
+| Synthèse globale du jour | **≥ 80%** | `ai_summary.themes` + `ai_summary.synthesis` |
 | Stats "en lien" | ≥ 75% | KPI global de la page |
 
 #### Job 1b — `scripts/veille/extract-semanticscholar.ts` (optionnel)
@@ -327,8 +329,8 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 | Scoring sémantique (Xenova 384D) | ✅ ~637 scorés, ~5-10 ≥75%/jour |
 | **Double scoring : similarity_score + author_score** | ✅ parallèle, juin 2026 |
 | Script rétroactif `score-author.ts` | ✅ 22/1204 scorés (partiel) |
-| Analyse IA articles ≥75% (ai_analysis jsonb) | ✅ tous analysés |
-| Synthèse globale du jour (ai_summary) | ✅ thèmes + synthèse directe |
+| Analyse IA articles ≥75% (ai_analysis jsonb) | ✅ top 8/jour analysés (cap `MAX_ARTICLES` dans `summarize.ts`) |
+| Synthèse globale du jour (ai_summary) | ✅ thèmes + synthèse directe — sur articles ≥80% uniquement |
 | Cron veille automatique (GitHub Actions, 9h Paris) | ✅ 7h UTC |
 | Page Veille — articles ≥75%, paginés, lu/non lu, pertinence | ✅ |
 | Badge "auteur XX%" orange sur les cards veille | ✅ |
@@ -361,8 +363,8 @@ Le workflow supporte deux stratégies via `VEILLE_STRATEGY` (secret GitHub) :
 - `is_relevant` : `NULL` = non évalué, `true` = pertinent (chercheur), `false` = non pertinent — évaluation manuelle via select dropdown sur les cards
 - `similarity_score = 0` si scoring tenté mais aucun match (jamais NULL après scoring, NULL = pas encore scoré)
 - `author_score` : similarité top-1 vs chunks `is_author_article=true` — NULL si non encore calculé
-- `ai_analysis` rempli uniquement pour les articles ≥75% par `recap-articles.ts`
-- **DB nettoyée le 09/06/2026** — runs propres avec nouvelle pipeline : ~638 extraits, ~637 scorés, ~5-10 ≥75%, tous analysés IA
+- `ai_analysis` rempli pour le top 8/jour des articles ≥75% par `recap-articles.ts` (au-delà de 8, pas d'analyse même si ≥75%)
+- **DB nettoyée le 09/06/2026** — runs propres avec nouvelle pipeline : ~638 extraits, ~637 scorés, ~5-10 ≥75%, généralement tous analysés IA (sous le cap de 8/jour)
 
 ### Structure PDFs
 - `data/pdfs/YEAR/` — organisation par année d'acquisition (original)

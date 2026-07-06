@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <title>Alexandria — Pipeline Veille : Guide complet</title>
+  <title>Alexandria — Pipeline Veille : Guide complet (GitHub Actions)</title>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
@@ -30,6 +30,11 @@
     .hero .tagline {
       font-size: 1rem;
       color: #64748b;
+      margin: 0 0 0.5rem;
+    }
+    .hero .updated {
+      font-size: 0.7rem;
+      color: #4b5563;
       margin: 0 0 1.5rem;
     }
     .hero .intro {
@@ -152,6 +157,26 @@
       letter-spacing: 0.06em;
     }
 
+    .warn-box {
+      background: #2a1206;
+      border: 1px solid #431407;
+      border-left: 3px solid #f97316;
+      border-radius: 6px;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: #fdba74;
+      margin-top: 0.6rem;
+    }
+    .warn-box .why-label {
+      font-weight: 700;
+      color: #fdba74;
+      margin-bottom: 0.2rem;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
     .data-flow {
       margin-top: 0.75rem;
       display: flex;
@@ -177,20 +202,20 @@
     .c-trigger .phase-number { background: #312e81; color: #c7d2fe; }
     .c-trigger .duration     { background: #312e81; color: #c7d2fe; }
 
-    .c-init .phase-number    { background: #1e3a5f; color: #93c5fd; }
-    .c-init .duration        { background: #1e3a5f; color: #93c5fd; }
+    .c-extract .phase-number { background: #14532d; color: #86efac; }
+    .c-extract .duration     { background: #14532d; color: #86efac; }
 
-    .c-rss .phase-number     { background: #14532d; color: #86efac; }
-    .c-rss .duration         { background: #14532d; color: #86efac; }
-
-    .c-enrich .phase-number  { background: #431407; color: #fdba74; }
-    .c-enrich .duration      { background: #431407; color: #fdba74; }
-
-    .c-insert .phase-number  { background: #1e3a5f; color: #93c5fd; }
-    .c-insert .duration      { background: #1e3a5f; color: #93c5fd; }
+    .c-ss .phase-number      { background: #431407; color: #fdba74; }
+    .c-ss .duration          { background: #431407; color: #fdba74; }
 
     .c-score .phase-number   { background: #2d1b69; color: #ddd6fe; }
     .c-score .duration       { background: #2d1b69; color: #ddd6fe; }
+
+    .c-recap .phase-number   { background: #1e3a5f; color: #93c5fd; }
+    .c-recap .duration       { background: #1e3a5f; color: #93c5fd; }
+
+    .c-global .phase-number  { background: #4a1d1d; color: #fca5a5; }
+    .c-global .duration      { background: #4a1d1d; color: #fca5a5; }
 
     .c-ui .phase-number      { background: #1c3527; color: #6ee7b7; }
     .c-ui .duration          { background: #1c3527; color: #6ee7b7; }
@@ -306,9 +331,10 @@
 <div class="hero">
   <h1>Pipeline de Veille Scientifique — Guide complet</h1>
   <p class="tagline">Alexandria · Comment fonctionne la veille, étape par étape</p>
+  <p class="updated">Régénéré le 06/07/2026 — remplace une version antérieure décrivant un déclenchement manuel/Vercel avec polling en temps réel (~20s), abandonné pour timeout serverless.</p>
   <div class="intro">
-    <strong>Objectif :</strong> Chaque jour, Alexandria surveille automatiquement des dizaines de revues scientifiques pour en extraire les articles récents. Chaque article est ensuite <strong>comparé au corpus documentaire</strong> de l'application (les PDF déjà indexés) pour obtenir un <em>score de pertinence</em> — plus un article ressemble aux documents de la bibliothèque, plus il remonte en haut de la liste.<br><br>
-    Ce processus dure environ <strong>20 secondes</strong> et peut être déclenché manuellement depuis l'interface ou automatiquement chaque matin à 6h UTC.
+    <strong>Objectif :</strong> Chaque jour, Alexandria surveille automatiquement des dizaines de revues scientifiques pour en extraire les articles récents. Chaque article est ensuite <strong>comparé au corpus documentaire</strong> de l'application (les PDF déjà indexés) — et depuis juin 2026, également comparé aux seules publications du chercheur — pour obtenir un <em>score de pertinence</em>. Les articles les mieux notés reçoivent en plus une <strong>analyse IA individuelle</strong>, et le run se termine par une <strong>synthèse globale du jour</strong>.<br><br>
+    Ce processus dure environ <strong>6 à 8 minutes</strong> et se déclenche <strong>automatiquement chaque matin à 7h UTC (9h Paris)</strong> via GitHub Actions — pas de bouton, pas d'attente côté utilisateur : le chercheur consulte les résultats déjà calculés en visitant <code>/bibliographie</code>, à son rythme.
   </div>
 </div>
 
@@ -320,330 +346,295 @@
     <div class="mermaid">
 sequenceDiagram
     autonumber
-    actor User as Utilisateur
-    participant UI as Interface Web
-    participant API as Serveur Next.js
-    participant DB as Base de donnees Supabase
-    participant PIPE as Orchestrateur Pipeline
+    participant GHA as GitHub Actions cron
+    participant J1 as Job 1 - extract.ts
+    participant DB as Supabase
     participant RSS as Lecteur RSS
     participant FEEDS as Journaux scientifiques
     participant OA as Module OpenAlex
-    participant OAAPI as OpenAlex catalogue ouvert
-    participant SCORE as Module de scoring
+    participant OAAPI as OpenAlex API
+    participant CR as Module CrossRef
+    participant CRAPI as CrossRef API
+    participant J2 as Job 2 - score.ts
     participant EMBED as Moteur embedding
+    participant J3 as Job 3 - recap-articles.ts
+    participant J4 as Job 4 - recap-global.ts
+    participant GPT as GPT-4o-mini
+    actor User as Chercheur
 
     rect rgb(30, 28, 70)
-        Note over User,API: DECLENCHEMENT — instantane
-        User->>UI: Clic sur Lancer la veille
-        UI->>API: Demande de demarrage
-        API->>DB: Creation du run — statut en cours
-        DB-->>API: Identifiant du run
-        API-->>UI: Confirmation + identifiant run
-        Note over API,PIPE: Le serveur repond immediatement. Le pipeline continue en arriere-plan sans bloquer l'interface.
-        API--)PIPE: Demarrage pipeline en arriere-plan
-    end
-
-    rect rgb(20, 40, 28)
-        Note over PIPE,DB: PHASE 1 — Preparation (~1s)
-        PIPE->>DB: Chargement des articles deja connus
-        DB-->>PIPE: Liste des DOIs deja en base
-        PIPE->>DB: Chargement de la liste des sources
-        DB-->>PIPE: 43 journaux RSS + sources OpenAlex
+        Note over GHA,DB: DECLENCHEMENT — automatique, sans utilisateur
+        GHA->>J1: Demarrage quotidien 7h UTC ou reprise manuelle
+        J1->>DB: Creation du run — statut running
+        DB-->>J1: run_id
+        Note over J1,J4: Le run_id est transmis aux jobs suivants via les outputs GitHub Actions — pas de session utilisateur, pas de polling en temps reel
     end
 
     rect rgb(20, 42, 28)
-        Note over PIPE,FEEDS: PHASE 2 — Lecture des flux RSS (~16s)
-        loop 9 vagues de 5 journaux en parallele
-            PIPE->>RSS: Lire le flux de ce journal
+        Note over J1,FEEDS: JOB 1 — Extraction (~1 min)
+        J1->>DB: Chargement des DOIs deja connus
+        DB-->>J1: Set de DOIs
+        J1->>DB: Chargement des sources actives
+        DB-->>J1: 46 sources RSS + 2 OpenAlex MDPI
+        loop 9 vagues de 5 journaux en parallele, fenetre 3 jours
+            J1->>RSS: Lire le flux de ce journal
             RSS->>FEEDS: Telechargement du flux RSS
             FEEDS-->>RSS: Titre / DOI / resume / auteurs / date
-            RSS-->>PIPE: Articles bruts
+            RSS-->>J1: Articles bruts
         end
-        Note over PIPE: Elimination des articles de plus de 7 jours et des doublons par DOI
+        Note over J1: Filtre editorial (corrections, errata) + filtre fraicheur 3 jours + dedup DOI
     end
 
     rect rgb(50, 25, 10)
-        Note over PIPE,OAAPI: PHASE 3 — Enrichissement des metadonnees (~2s)
-        Note over PIPE,OAAPI: Certains journaux ne fournissent pas tout dans leur RSS. OpenAlex comble les manques.
-        PIPE->>OA: Articles sans resume — envoyer les DOIs
-        OA->>OAAPI: Recherche des resumes par DOI en lot de 50
-        OAAPI-->>OA: Resumes recuperes
-        OA-->>PIPE: Resumes completes
-
+        Note over J1,OAAPI: JOB 1 — Enrichissement OpenAlex
+        J1->>OA: DOIs sans resume — lot de 50
+        OA->>OAAPI: Recherche batch
+        OAAPI-->>OA: Resumes + statut is_final
+        OA-->>J1: Articles enrichis
         loop Articles sans DOI ex Elsevier
-            PIPE->>OA: Titre de l'article + ISSN du journal
+            J1->>OA: Titre + ISSN du journal
             OA->>OAAPI: Recherche du DOI par titre
-            OAAPI-->>OA: DOI trouve
-            OA-->>PIPE: DOI associe a l'article
+            OAAPI-->>OA: DOI trouve ou non
+            OA-->>J1: DOI associe si trouve
+        end
+        loop Sources OpenAlex directes ex MDPI
+            J1->>OA: ISSN du journal, 3 derniers jours
+            OA->>OAAPI: Recherche par ISSN
+            OAAPI-->>OA: Articles complets
+            OA-->>J1: Articles avec is_final
         end
     end
 
     rect rgb(50, 25, 10)
-        Note over PIPE,OAAPI: PHASE 4 — Journaux sans flux RSS ex MDPI
-        loop Pour chaque source OpenAlex uniquement
-            PIPE->>OA: Chercher articles recents de ce journal
-            OA->>OAAPI: Recherche par identifiant ISSN sur 7 jours
-            OAAPI-->>OA: Articles recents
-            OA-->>PIPE: Articles avec titre resume et DOI
-        end
-    end
-
-    rect rgb(20, 38, 58)
-        Note over PIPE,DB: PHASE 5 — Sauvegarde en base (~1s)
-        PIPE->>DB: Insertion de tous les nouveaux articles par lot de 50
-        DB-->>PIPE: Identifiants des articles inseres
+        Note over J1,CRAPI: JOB 1 — Fallback CrossRef
+        Note over J1,CRAPI: Si OpenAlex ne confirme pas is_final, seconde chance avant de rejeter l'article
+        J1->>CR: DOIs non confirmes finalises par OpenAlex
+        CR->>CRAPI: Verification volume + issue
+        CRAPI-->>CR: is_final confirme ou non
+        CR-->>J1: Verdict finalisation
+        J1->>DB: Insertion batch 50 — statut extracted, pas completed
     end
 
     rect rgb(35, 20, 60)
-        Note over PIPE,DB: PHASE 6 — Calcul du score de pertinence (~2s)
-        Note over PIPE,DB: Chaque resume est compare aux documents deja dans la bibliotheque Alexandria
-        loop Pour chaque article avec un resume
-            PIPE->>SCORE: Calculer la pertinence de cet article
-            SCORE->>EMBED: Convertir le resume en vecteur numerique
-            EMBED-->>SCORE: Vecteur 384 dimensions
-            SCORE->>DB: Comparer ce vecteur aux chunks du corpus
-            DB-->>SCORE: Score de similarite entre 0 et 1
+        Note over J2,DB: JOB 2 — Scoring double (~3 min)
+        J2->>DB: Charge les articles similarity_score IS NULL
+        loop Pour chaque article avec resume
+            J2->>J2: Decoupe l'abstract en chunks ~150 mots
+            J2->>EMBED: Convertir chaque chunk en vecteur
+            EMBED-->>J2: Vecteur 384 dimensions
+            J2->>DB: match_chunks - corpus complet
+            J2->>DB: match_author_chunks - articles auteur seulement, en parallele
+            DB-->>J2: similarity_score + author_score + corpus_refs ge 75pct
         end
-        SCORE-->>PIPE: Scores calcules pour tous les articles
-        PIPE->>DB: Mise a jour des scores dans la base
-        PIPE->>DB: Marquer le run comme termine
+        J2->>DB: Sauvegarde batch 50
+    end
+
+    rect rgb(20, 40, 58)
+        Note over J3,GPT: JOB 3 — Analyse IA individuelle (~1,5 min)
+        J3->>DB: Charge jusqu'a 50 articles ge 75pct
+        Note over J3: Ne retient que le top 8 - MAX_ARTICLES dans summarize.ts
+        J3->>GPT: Envoi des 8 meilleurs articles + passages corpus
+        GPT-->>J3: contribution / relevance / corpus_link par article
+        J3->>DB: Sauvegarde ai_analysis
+    end
+
+    rect rgb(70, 25, 25)
+        Note over J4,GPT: JOB 4 — Synthese globale (~30s)
+        J4->>DB: Charge articles avec ai_analysis ET similarity_score ge 80pct
+        Note over J4: Seuil different du reste du pipeline - plus strict
+        J4->>GPT: Construction du prompt global
+        GPT-->>J4: themes transversaux + synthese
+        J4->>DB: Sauvegarde ai_summary, marque le run completed
     end
 
     rect rgb(22, 40, 28)
-        Note over UI,DB: PENDANT TOUT LE PIPELINE — Suivi en temps reel
-        loop Verification toutes les 2 secondes
-            UI->>API: Quel est l'etat du run en cours
-            API->>DB: Lire le statut du run
-            DB-->>API: Statut + nombre d'articles traites
-            API-->>UI: Progression visible a l'ecran
-        end
-        UI->>API: Charger les resultats finaux
-        API->>DB: Articles tries par score de pertinence
-        DB-->>API: Liste complete
-        API-->>UI: Affichage des articles scores
-        UI->>User: Tableau de bord mis a jour
+        Note over User,DB: CONSULTATION — asynchrone, aucun lien temporel avec le run
+        User->>DB: Visite /bibliographie a son rythme, plus tard dans la journee
+        DB-->>User: Articles ge 75pct deja scores et analyses, pagines
+        Note over User: Aucune attente : tout a deja ete calcule par le cron de la nuit
     end
     </div>
   </div>
 
   <!-- ── BARRE DE TEMPS ── -->
-  <div class="section-title">Durée estimée par phase</div>
+  <div class="section-title">Durée estimée par job (typique, ~638 articles/jour)</div>
   <div class="timing-bar">
     <div class="timing-segment">
-      <div class="timing-bar-block" style="background:#312e81;color:#c7d2fe;width:70px">Démarrage</div>
-      <div class="timing-label">&lt; 1s</div>
+      <div class="timing-bar-block" style="background:#312e81;color:#c7d2fe;width:70px">Cron</div>
+      <div class="timing-label">instantané</div>
     </div>
     <div class="timing-segment">
-      <div class="timing-bar-block" style="background:#1e3a5f;color:#93c5fd;width:60px">Init</div>
-      <div class="timing-label">~1s</div>
+      <div class="timing-bar-block" style="background:#14532d;color:#86efac;width:150px">Job 1 — Extraction</div>
+      <div class="timing-label">~1 min</div>
     </div>
     <div class="timing-segment">
-      <div class="timing-bar-block" style="background:#14532d;color:#86efac;width:180px">Lecture RSS × 43</div>
-      <div class="timing-label">~16s — le plus long</div>
+      <div class="timing-bar-block" style="background:#431407;color:#fdba74;width:100px">Job 1b — SS</div>
+      <div class="timing-label">parallèle</div>
     </div>
     <div class="timing-segment">
-      <div class="timing-bar-block" style="background:#431407;color:#fdba74;width:90px">Enrichissement</div>
-      <div class="timing-label">~2s</div>
+      <div class="timing-bar-block" style="background:#2d1b69;color:#ddd6fe;width:170px">Job 2 — Scoring</div>
+      <div class="timing-label">~3 min — le plus long</div>
     </div>
     <div class="timing-segment">
-      <div class="timing-bar-block" style="background:#431407;color:#fdba74;width:60px">MDPI</div>
-      <div class="timing-label">~1s</div>
+      <div class="timing-bar-block" style="background:#1e3a5f;color:#93c5fd;width:150px">Job 3 — Analyse IA</div>
+      <div class="timing-label">~1,5 min</div>
     </div>
     <div class="timing-segment">
-      <div class="timing-bar-block" style="background:#1e3a5f;color:#93c5fd;width:60px">Insertion</div>
-      <div class="timing-label">~1s</div>
-    </div>
-    <div class="timing-segment">
-      <div class="timing-bar-block" style="background:#2d1b69;color:#ddd6fe;width:90px">Scoring</div>
-      <div class="timing-label">~2s</div>
+      <div class="timing-bar-block" style="background:#4a1d1d;color:#fca5a5;width:110px">Job 4 — Synthèse</div>
+      <div class="timing-label">~30s</div>
     </div>
     <div style="margin-left:auto;text-align:right">
-      <div style="font-size:1.1rem;font-weight:700;color:#e2e8f0">~23s</div>
-      <div style="font-size:0.72rem;color:#475569">total estimé</div>
+      <div style="font-size:1.1rem;font-weight:700;color:#e2e8f0">~6-8 min</div>
+      <div style="font-size:0.72rem;color:#475569">total estimé (CLAUDE.md)</div>
     </div>
   </div>
 
   <!-- ── PHASES DÉTAILLÉES ── -->
-  <div class="section-title">Détail de chaque phase</div>
+  <div class="section-title">Détail de chaque job</div>
   <div class="phases-grid">
 
     <!-- DÉCLENCHEMENT -->
     <div class="phase-card c-trigger">
       <div class="phase-card-header">
         <div class="phase-number">0</div>
-        <h3>Déclenchement</h3>
+        <h3>Déclenchement automatique</h3>
         <span class="duration">Instantané</span>
       </div>
       <div class="phase-card-body">
-        <p>L'utilisateur clique sur le bouton dans l'interface, ou le cron Vercel déclenche automatiquement la veille chaque matin à <strong>6h UTC</strong>.</p>
-        <p>Le serveur crée immédiatement une entrée dans la table <code>veille_runs</code> (statut <em>en cours</em>) et retourne son identifiant à l'interface. Le pipeline démarre ensuite <strong>en arrière-plan</strong> — l'interface n'attend pas et reste réactive.</p>
+        <p>Un workflow <strong>GitHub Actions</strong> se déclenche chaque matin à <strong>7h UTC</strong> (9h Paris), sans aucune action du chercheur. Un déclenchement manuel (<code>workflow_dispatch</code>) reste possible pour les tests ou pour reprendre un run interrompu (<code>run_id</code> existant).</p>
+        <p>Chacun des 4 jobs qui suivent est une exécution <strong>indépendante</strong> d'un script Node.js sur un runner GitHub — pas un process unique qui reste ouvert pendant 8 minutes.</p>
         <div class="why-box">
-          <div class="why-label">Pourquoi fire-and-forget ?</div>
-          Les serveurs Vercel ont une limite de temps de réponse. Si le pipeline bloquait la requête HTTP, il risquerait d'être tué à mi-chemin. En retournant immédiatement, on contourne cette contrainte.
+          <div class="why-label">Pourquoi GitHub Actions et pas Vercel ?</div>
+          Une ancienne version de ce pipeline tournait sur Vercel (fire-and-forget + <code>waitUntil</code>). Mais le plan Hobby limite les fonctions à 10s, et même en pratique <code>waitUntil</code> ne survit pas de façon fiable au-delà d'environ 150s. Résultat : des <code>similarity_score = null</code> en production. GitHub Actions n'a pas cette limite — voir <code>docs/VEILLE_PIPELINE_REFACTOR.md</code>.
         </div>
         <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : clic utilisateur ou appel cron</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : identifiant du run (<code>run_id</code>)</span></div>
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : cron GitHub Actions ou déclenchement manuel</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : <code>run_id</code> transmis via GITHUB_OUTPUT</span></div>
         </div>
       </div>
     </div>
 
-    <!-- PHASE 1 -->
-    <div class="phase-card c-init">
+    <!-- JOB 1 -->
+    <div class="phase-card c-extract">
       <div class="phase-card-header">
         <div class="phase-number">1</div>
-        <h3>Préparation — chargement de l'état</h3>
-        <span class="duration">~1s</span>
+        <h3>Job 1 — Extraction (RSS + OpenAlex + CrossRef)</h3>
+        <span class="duration">~1 min</span>
       </div>
       <div class="phase-card-body">
-        <p>Avant de faire quoi que ce soit, le pipeline charge deux informations essentielles depuis la base de données :</p>
-        <p><strong>① Les DOIs déjà connus</strong> — tous les identifiants d'articles déjà enregistrés dans <code>veille_items</code>. Cela permettra d'éviter d'insérer deux fois le même article lors de la phase de déduplication.</p>
-        <p><strong>② La liste des sources actives</strong> — les 43 journaux RSS et les sources OpenAlex configurées dans la table <code>sources</code> (gérée via le script <code>import-sources.ts</code>).</p>
-        <div class="why-box">
-          <div class="why-label">Pourquoi charger les DOIs en amont ?</div>
-          Vérifier chaque article un par un en base serait 50× plus lent. En chargeant tout d'un coup dans un <code>Set</code> JavaScript, la déduplication devient instantanée (O(1) par article).
+        <p><code>scripts/veille/extract.ts</code> fait tout en un seul job : lecture des <strong>46 flux RSS actifs</strong> (5 en parallèle, fenêtre de <strong>3 jours</strong> — pas 7, voir encadré), puis <strong>enrichissement OpenAlex</strong> par lot de 50 DOIs pour récupérer les résumés manquants (ACS, notamment, ne les met pas dans son RSS), résolution de DOI par titre pour les sources sans DOI (Elsevier), et fetch direct par ISSN pour les 2 sources <strong>MDPI</strong> qui n'ont pas de RSS fiable.</p>
+        <p>Un article n'est retenu que s'il est <strong>définitivement publié</strong> : OpenAlex doit confirmer <code>is_final=true</code>, sinon <strong>CrossRef</strong> prend le relais en vérification de secours (présence de volume/issue). Sans confirmation d'aucun des deux, l'article est rejeté (ASAP, preprint, correction).</p>
+        <div class="warn-box">
+          <div class="why-label">Incohérence connue</div>
+          Ce job utilise une fenêtre de <strong>3 jours</strong> (<code>LOOKBACK_DAYS</code>). Un pipeline de secours plus ancien, conservé pour un déclenchement manuel via l'UI (<code>lib/veille/pipeline.ts</code>), est resté à 7 jours — deux fenêtres différentes coexistent selon le chemin emprunté.
         </div>
         <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : run_id</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : Set de DOIs connus + liste de sources</span></div>
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : 46 sources RSS + 2 sources OpenAlex (ISSN)</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles finalisés insérés dans <code>veille_items</code></span></div>
         </div>
       </div>
     </div>
 
-    <!-- PHASE 2 -->
-    <div class="phase-card c-rss">
+    <!-- JOB 1B -->
+    <div class="phase-card c-ss">
       <div class="phase-card-header">
-        <div class="phase-number">2</div>
-        <h3>Lecture des flux RSS</h3>
-        <span class="duration">~16s</span>
+        <div class="phase-number">1b</div>
+        <h3>Job 1b (optionnel) — Semantic Scholar</h3>
+        <span class="duration">parallèle</span>
       </div>
       <div class="phase-card-body">
-        <p>C'est la phase la plus longue. Le pipeline télécharge le flux RSS de chacun des <strong>43 journaux scientifiques</strong> configurés.</p>
-        <p><strong>Qu'est-ce qu'un flux RSS ?</strong> C'est un fichier XML standardisé que chaque journal met à jour en temps réel à chaque nouvelle publication. Il contient le titre, l'URL, parfois le résumé, les auteurs et la date de chaque article récent.</p>
-        <p>Pour aller plus vite, les journaux sont traités <strong>5 par 5 en parallèle</strong> (9 vagues de 5). Après chaque vague, le pipeline respecte un délai de 300ms pour ne pas surcharger les serveurs des éditeurs.</p>
-        <p>Une fois les articles récupérés, deux filtres sont appliqués : <strong>filtre temporel</strong> (articles publiés dans les 7 derniers jours uniquement) et <strong>déduplication</strong> (articles dont le DOI est déjà connu ignorés).</p>
+        <p>Actif seulement si la variable repo <code>ENABLE_SEMANTIC_SCHOLAR=true</code>. Tourne <strong>en parallèle du Job 1</strong>, sans dépendre de lui. Utilise les articles auteur les plus représentatifs (<code>ss_representative_papers</code>, précalculés par <code>compute-ss-representatives.ts</code> après chaque ingestion <code>--author</code>) pour interroger l'API de recommandations Semantic Scholar : jusqu'à 100 papiers récents (60 jours) similaires au profil du chercheur.</p>
+        <p>Filtre abstract &lt; 50 caractères + dédup DOI, puis insertion avec <code>source_type='semantic_scholar'</code>.</p>
         <div class="why-box">
-          <div class="why-label">Pourquoi le RSS et pas le scraping web ?</div>
-          Le RSS est un format officiel fourni par les éditeurs eux-mêmes — fiable, stable, sans risque de bannissement IP. Le scraping HTML est fragile et souvent interdit par les conditions d'utilisation.
+          <div class="why-label">Pourquoi une source à part ?</div>
+          RSS et OpenAlex couvrent les journaux surveillés explicitement. Semantic Scholar élargit la couverture à des articles similaires au profil du chercheur, publiés ailleurs — sans avoir à ajouter manuellement chaque nouvelle source.
         </div>
         <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : liste de 43 sources (URL du flux + ISSN)</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles bruts filtrés et dédupliqués</span></div>
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : articles auteur représentatifs (centroïde embeddings)</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : recommandations insérées dans <code>veille_items</code></span></div>
         </div>
       </div>
     </div>
 
-    <!-- PHASE 3 -->
-    <div class="phase-card c-enrich">
-      <div class="phase-card-header">
-        <div class="phase-number">3</div>
-        <h3>Enrichissement OpenAlex — métadonnées manquantes</h3>
-        <span class="duration">~2s</span>
-      </div>
-      <div class="phase-card-body">
-        <p>Les flux RSS des éditeurs sont souvent incomplets. Par exemple :</p>
-        <p>— <strong>ACS (American Chemical Society)</strong> ne fournit pas les résumés dans son RSS.<br>— <strong>Elsevier</strong> ne fournit pas toujours le DOI directement.</p>
-        <p>OpenAlex est une <strong>base de données bibliographique ouverte et gratuite</strong> qui référence plus de 250 millions d'articles scientifiques. Cette phase l'interroge pour combler les manques :</p>
-        <p>① Pour les articles <strong>avec DOI mais sans résumé</strong> : envoi de tous les DOIs en une seule requête groupée (lot de 50) pour récupérer les résumés en masse.<br>② Pour les articles <strong>avec résumé mais sans DOI</strong> : recherche individuelle par titre + ISSN du journal pour trouver le DOI.</p>
-        <div class="why-box">
-          <div class="why-label">Pourquoi les résumés sont-ils indispensables ?</div>
-          Le score de pertinence (phase 6) est calculé à partir du résumé. Sans résumé, l'article ne peut pas être scoré et risque de ne jamais apparaître dans les résultats. Enrichir les métadonnées ici est donc critique.
-        </div>
-        <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : DOIs sans résumé + titres sans DOI</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : résumés et DOIs récupérés depuis OpenAlex</span></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PHASE 4 -->
-    <div class="phase-card c-enrich">
-      <div class="phase-card-header">
-        <div class="phase-number">4</div>
-        <h3>Sources sans flux RSS (ex : MDPI)</h3>
-        <span class="duration">~1s</span>
-      </div>
-      <div class="phase-card-body">
-        <p>Certains éditeurs comme <strong>MDPI</strong> ne proposent pas de flux RSS exploitable ou ne sont pas dans la liste des journaux RSS configurés. Pour ces sources, le pipeline interroge OpenAlex directement en utilisant l'<strong>ISSN du journal</strong> comme identifiant.</p>
-        <p>La requête demande tous les articles publiés dans ce journal au cours des <strong>7 derniers jours</strong>. OpenAlex retourne titre, résumé, auteurs, DOI et date — tout ce qu'il faut pour créer un article complet sans passer par un RSS.</p>
-        <div class="why-box">
-          <div class="why-label">Pourquoi deux sources différentes ?</div>
-          RSS et OpenAlex sont complémentaires : RSS est quasi-temps-réel mais incomplet, OpenAlex est exhaustif mais a un délai d'indexation de 1 à 3 jours. Combiner les deux maximise la couverture.
-        </div>
-        <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : liste des sources OpenAlex avec leur ISSN</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles complets des 7 derniers jours</span></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PHASE 5 -->
-    <div class="phase-card c-insert">
-      <div class="phase-card-header">
-        <div class="phase-number">5</div>
-        <h3>Sauvegarde en base de données</h3>
-        <span class="duration">~1s</span>
-      </div>
-      <div class="phase-card-body">
-        <p>Tous les articles collectés (RSS + OpenAlex) et enrichis sont maintenant insérés dans la table <code>veille_items</code> de Supabase. Chaque article est lié à son <code>run_id</code> (la session courante) et à son <code>source_id</code> (le journal d'origine).</p>
-        <p>L'insertion se fait <strong>par lot de 50 articles</strong> pour éviter de surcharger la base. En retour, la base renvoie les identifiants générés — indispensables pour la phase de scoring qui suit.</p>
-        <div class="why-box">
-          <div class="why-label">Pourquoi insérer avant de scorer ?</div>
-          Le scoring met à jour des lignes existantes en base. Il faut donc que les articles existent avant de leur attribuer un score. L'insertion d'abord, le scoring ensuite, c'est l'ordre naturel.
-        </div>
-        <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : liste complète des articles à insérer</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : identifiants UUID des articles insérés</span></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PHASE 6 -->
+    <!-- JOB 2 -->
     <div class="phase-card c-score">
       <div class="phase-card-header">
-        <div class="phase-number">6</div>
-        <h3>Calcul du score de pertinence</h3>
-        <span class="duration">~2s</span>
+        <div class="phase-number">2</div>
+        <h3>Job 2 — Scoring double (corpus + auteur)</h3>
+        <span class="duration">~3 min</span>
       </div>
       <div class="phase-card-body">
-        <p>C'est le cœur intellectuel de la veille. Chaque article reçoit un <strong>score entre 0 et 1</strong> qui indique à quel point il est proche des documents déjà dans la bibliothèque Alexandria.</p>
-        <p>Le processus en 3 temps :<br>
-        ① Le résumé de l'article est <strong>converti en vecteur numérique de 384 dimensions</strong> par le moteur d'embedding Xenova (le même modèle que celui utilisé pour indexer les PDF).<br>
-        ② Ce vecteur est comparé à tous les <em>chunks</em> du corpus via la fonction <code>match_chunks</code> de Supabase (comparaison cosinus en pgvector).<br>
-        ③ Le score du chunk le plus proche devient le <strong>score de pertinence</strong> de l'article.</p>
-        <p>Un score proche de <strong>1</strong> signifie que l'article parle de la même chose que vos documents. Un score proche de <strong>0</strong> signifie qu'il est hors sujet.</p>
+        <p><code>scripts/veille/score.ts</code> charge tous les articles sans <code>similarity_score</code> (reprise automatique si le job avait été interrompu). Chaque résumé est <strong>découpé en chunks d'environ 150 mots</strong> (pas embeddé d'un seul bloc — un résumé entier de ~400 mots perd trop d'information pour le modèle all-MiniLM-L6-v2, entraîné sur des phrases courtes).</p>
+        <p>Chaque chunk est comparé <strong>en parallèle</strong> à deux référentiels : le <strong>corpus complet</strong> (<code>match_chunks</code>) et les <strong>seuls articles publiés par le chercheur</strong> (<code>match_author_chunks</code>). Le meilleur score de chaque référentiel devient respectivement <code>similarity_score</code> et <code>author_score</code>. Les passages ≥75% sont conservés comme <code>corpus_refs</code> (jusqu'à 5, avec extrait et page).</p>
         <div class="why-box">
-          <div class="why-label">Pourquoi utiliser le même modèle que l'indexation ?</div>
-          Pour que la comparaison soit valide, les vecteurs de l'article et du corpus doivent être produits par le même modèle. Si on changeait de modèle pour la veille, les scores ne voudraient rien dire.
+          <div class="why-label">Pourquoi un double scoring ?</div>
+          Un article peut ressembler au corpus général sans toucher précisément au sujet du chercheur. <code>author_score</code> — plus exigeant — sert de signal complémentaire, affiché en badge orange séparé sur les cards de veille.
         </div>
         <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : articles avec résumé + corpus RAG en base</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : <code>similarity_score</code> entre 0 et 1 par article</span></div>
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : résumés + corpus (chunks non temporaires) + articles auteur</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : <code>similarity_score</code>, <code>author_score</code>, <code>corpus_refs</code></span></div>
         </div>
       </div>
     </div>
 
-    <!-- POLLING UI -->
+    <!-- JOB 3 -->
+    <div class="phase-card c-recap">
+      <div class="phase-card-header">
+        <div class="phase-number">3</div>
+        <h3>Job 3 — Analyse IA individuelle</h3>
+        <span class="duration">~1,5 min</span>
+      </div>
+      <div class="phase-card-body">
+        <p><code>scripts/veille/recap-articles.ts</code> charge jusqu'à 50 articles ≥75% (cap de sécurité — en pratique 5 à 10/jour dépassent ce seuil), mais n'envoie à GPT-4o-mini que le <strong>top 8</strong> par score décroissant (<code>MAX_ARTICLES=8</code> dans <code>lib/veille/summarize.ts</code>). Pour chacun : contribution scientifique, pertinence pour le chercheur, et lien précis avec le corpus (citant titres et pages).</p>
+        <div class="warn-box">
+          <div class="why-label">Point souvent mal compris</div>
+          Un article ≥75% n'a donc pas la garantie d'obtenir une analyse IA — seuls les 8 mieux classés du jour l'obtiennent. Au-delà de 8 articles ≥75% dans une même run, les suivants restent sans <code>ai_analysis</code>, même s'ils sont visibles sur <code>/bibliographie</code>.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : top 8 articles ≥75% + leurs <code>corpus_refs</code></span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : <code>ai_analysis</code> par article traité</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JOB 4 -->
+    <div class="phase-card c-global">
+      <div class="phase-card-header">
+        <div class="phase-number">4</div>
+        <h3>Job 4 — Synthèse globale &amp; clôture</h3>
+        <span class="duration">~30s</span>
+      </div>
+      <div class="phase-card-body">
+        <p><code>scripts/veille/recap-global.ts</code> charge les articles ayant un <code>ai_analysis</code> <strong>et</strong> un <code>similarity_score</code> ≥ <strong>80%</strong> — un seuil plus strict que celui de l'analyse individuelle. GPT-4o-mini produit 2 à 4 thèmes transversaux et une synthèse en vouvoiement, à partir des analyses déjà générées (pas des résumés bruts, pour limiter les tokens).</p>
+        <p>Le run est ensuite marqué <code>completed</code> — c'est ce job, et lui seul, qui clôture officiellement la run.</p>
+        <div class="warn-box">
+          <div class="why-label">Seuil à deux vitesses</div>
+          Un article à 76-79% peut apparaître sur <code>/bibliographie</code> avec son analyse individuelle détaillée, <strong>sans être mentionné</strong> dans la synthèse du jour — les deux seuils (75% et 80%) ne sont pas alignés dans le code actuel.
+        </div>
+        <div class="data-flow">
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : articles ≥80% avec <code>ai_analysis</code></span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : <code>ai_summary</code> (thèmes + synthèse), run <code>completed</code></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONSULTATION -->
     <div class="phase-card c-ui">
       <div class="phase-card-header">
         <div class="phase-number">∞</div>
-        <h3>Suivi en temps réel — interface</h3>
-        <span class="duration">En continu</span>
+        <h3>Consultation — asynchrone, sans polling</h3>
+        <span class="duration">À la demande</span>
       </div>
       <div class="phase-card-body">
-        <p>Pendant toute la durée du pipeline, l'interface web vérifie l'état du run <strong>toutes les 2 secondes</strong> en interrogeant l'API de statut. Cette technique s'appelle le <em>polling</em>.</p>
-        <p>La réponse de statut contient trois informations :<br>
-        — le statut global (<em>en cours</em>, <em>terminé</em>, <em>en erreur</em>)<br>
-        — le nombre d'articles insérés<br>
-        — le nombre d'articles scorés</p>
-        <p>Dès que le statut passe à <em>terminé</em>, le polling s'arrête et l'interface charge la liste finale des articles, triés du <strong>plus pertinent au moins pertinent</strong>.</p>
+        <p>Contrairement à l'ancienne version de ce pipeline (bouton "Lancer la veille" + polling toutes les 2s pendant ~20s), <strong>le front ne déclenche plus rien et n'attend plus rien</strong>. La page <code>/bibliographie</code> est en lecture seule : elle affiche les articles ≥75% déjà scorés et analysés par le run automatique de la nuit, avec pagination, filtres lu/non-lu et pertinence.</p>
+        <p>Il n'y a plus de lien temporel direct entre la visite du chercheur et l'exécution du pipeline — les deux sont totalement découplés.</p>
         <div class="why-box">
-          <div class="why-label">Pourquoi le polling et pas une notification push ?</div>
-          Le polling est simple, robuste, et ne nécessite pas de WebSocket ni de connexion persistante. Pour un processus de 20s, vérifier toutes les 2s (10 vérifications max) est parfaitement acceptable.
+          <div class="why-label">Pourquoi ce changement de modèle ?</div>
+          Le pipeline dure maintenant plusieurs minutes (scoring complet, sans cap), pas ~20 secondes. Un modèle batch nocturne + consultation différée est plus adapté qu'une interaction "clic → attente → résultat" en temps réel.
         </div>
         <div class="data-flow">
-          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : run_id retourné au déclenchement</span></div>
-          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles scorés triés par pertinence</span></div>
+          <div class="data-row"><span class="data-arrow">↓</span><span class="data-in">Entrée : visite de <code>/bibliographie</code>, à tout moment</span></div>
+          <div class="data-row"><span class="data-arrow">↑</span><span class="data-out">Sortie : articles déjà scorés, triés et paginés</span></div>
         </div>
       </div>
     </div>
@@ -657,37 +648,49 @@ sequenceDiagram
     <div class="tool-card">
       <div class="tool-name">Flux RSS</div>
       <div class="tool-type">Format standard — fourni par les éditeurs</div>
-      <p>Format XML que chaque journal met à jour à chaque publication. C'est le <strong>moyen officiel</strong> de suivre les nouvelles publications sans avoir à scraper les sites web. ACS, RSC, Wiley, Nature, Elsevier, APS l'utilisent tous. Gratuit, stable, légal.</p>
+      <p>Format XML que chaque journal met à jour à chaque publication. C'est le <strong>moyen officiel</strong> de suivre les nouvelles publications sans avoir à scraper les sites web. 44 des 46 sources RSS actives l'utilisent (les 2 restantes sont orphelines, sans URL RSS valide). Gratuit, stable, légal.</p>
     </div>
 
     <div class="tool-card">
       <div class="tool-name">OpenAlex</div>
       <div class="tool-type">Base de données bibliographique ouverte — API gratuite</div>
-      <p>Alternative ouverte à Scopus ou Web of Science. Référence <strong>250+ millions d'articles</strong> avec leurs métadonnées complètes (résumé, auteurs, DOI, ISSN…). Utilisé ici pour deux choses : combler les métadonnées manquantes des RSS et couvrir les journaux sans RSS (MDPI). <strong>Entièrement gratuit</strong>, sans clé API requise.</p>
+      <p>Référence <strong>250+ millions d'articles</strong> avec leurs métadonnées complètes. Utilisé pour trois choses : combler les métadonnées manquantes des RSS, couvrir les 2 journaux sans RSS (MDPI, <code>source_type='openalex'</code>), et vérifier <code>is_final</code> (publication vs preprint). <strong>Entièrement gratuit</strong>, sans clé API requise.</p>
+    </div>
+
+    <div class="tool-card">
+      <div class="tool-name">CrossRef</div>
+      <div class="tool-type">Registre mondial des DOIs — API gratuite</div>
+      <p>Utilisé en <strong>fallback</strong> uniquement : quand OpenAlex ne confirme pas qu'un article est définitivement publié (<code>is_final</code>), CrossRef vérifie la présence de volume/issue dans ses propres métadonnées avant de trancher.</p>
+    </div>
+
+    <div class="tool-card">
+      <div class="tool-name">Semantic Scholar</div>
+      <div class="tool-type">API de recommandations — optionnelle</div>
+      <p>Source de veille activable (<code>ENABLE_SEMANTIC_SCHOLAR=true</code>) qui suggère des articles récents similaires aux publications représentatives du chercheur, au-delà des journaux explicitement surveillés.</p>
     </div>
 
     <div class="tool-card">
       <div class="tool-name">Xenova / all-MiniLM-L6-v2</div>
-      <div class="tool-type">Modèle d'embedding — tourne localement sur le serveur</div>
-      <p>Modèle de Machine Learning qui transforme n'importe quel texte en un <strong>vecteur de 384 nombres</strong> capturant le sens sémantique. Deux textes qui parlent du même sujet auront des vecteurs proches. C'est la base du calcul de pertinence. Il tourne directement sur le serveur Node.js — <strong>aucun appel API payant</strong>, aucun coût.</p>
+      <div class="tool-type">Modèle d'embedding — tourne localement sur le runner</div>
+      <p>Transforme un texte en <strong>vecteur de 384 nombres</strong>. Chaque abstract est d'abord découpé en chunks de ~150 mots avant embedding, pour un meilleur signal sémantique. <strong>Aucun appel API payant</strong>.</p>
     </div>
 
     <div class="tool-card">
-      <div class="tool-name">pgvector + match_chunks RPC</div>
+      <div class="tool-name">pgvector — match_chunks / match_author_chunks</div>
       <div class="tool-type">Extension Postgres — comparaison de vecteurs en base</div>
-      <p>Extension de Supabase (Postgres) qui permet de stocker des vecteurs et de les comparer par <strong>similarité cosinus</strong>. La fonction <code>match_chunks</code> prend un vecteur en entrée et retourne les chunks du corpus les plus proches avec leur score. C'est l'infrastructure qui rend le scoring possible sans code complexe.</p>
+      <p>Deux RPC distinctes : <code>match_chunks</code> compare au corpus complet (en excluant les chunks temporaires d'analyses non intégrées), <code>match_author_chunks</code> restreint la comparaison aux seuls articles du chercheur. Index IVFFlat, pas HNSW (voir <code>docs/DECISIONS.md</code> D12).</p>
     </div>
 
     <div class="tool-card">
-      <div class="tool-name">Supabase — table veille_runs</div>
-      <div class="tool-type">Table de suivi des sessions de veille</div>
-      <p>Chaque exécution du pipeline crée une ligne dans <code>veille_runs</code> avec un statut (<em>running</em>, <em>completed</em>, <em>failed</em>), les compteurs d'articles, et les éventuels messages d'erreur. C'est ce que l'interface interroge toutes les 2s pour afficher la progression.</p>
+      <div class="tool-name">GPT-4o-mini (fetch natif)</div>
+      <div class="tool-type">Génération — analyse individuelle + synthèse globale</div>
+      <p>Appelé via <code>fetch</code> natif, jamais via le SDK <code>openai</code> officiel — le SDK utilise <code>undici</code> en interne, incompatible avec les contextes background de longue durée. Deux appels distincts : un par article (Job 3, top 8) et un pour la synthèse globale (Job 4, seuil 80%).</p>
     </div>
 
     <div class="tool-card">
-      <div class="tool-name">Supabase — table veille_items</div>
-      <div class="tool-type">Table de stockage des articles de veille</div>
-      <p>Stocke chaque article découvert avec son titre, DOI, résumé, auteurs, URL, date de publication, source d'origine, et le <code>similarity_score</code> calculé lors du scoring. La déduplication repose sur le DOI — un même article ne peut jamais apparaître deux fois.</p>
+      <div class="tool-name">GitHub Actions</div>
+      <div class="tool-type">Orchestrateur — 4 jobs séquentiels + 1 optionnel parallèle</div>
+      <p>Remplace Vercel comme runtime d'exécution de la veille. Chaque job est un script Node.js indépendant ; le <code>run_id</code> passe de l'un à l'autre via les <em>outputs</em> GitHub Actions. Pas de limite de durée serverless comme sur Vercel.</p>
     </div>
 
   </div>
@@ -697,7 +700,7 @@ sequenceDiagram
   <table class="data-table">
     <thead>
       <tr>
-        <th>Phase</th>
+        <th>Job</th>
         <th>Données en entrée</th>
         <th>Données en sortie</th>
         <th>Stockage</th>
@@ -706,51 +709,45 @@ sequenceDiagram
     <tbody>
       <tr>
         <td>Déclenchement</td>
-        <td>Action utilisateur ou appel cron</td>
-        <td><code>run_id</code> UUID</td>
+        <td>Cron GitHub Actions ou <code>workflow_dispatch</code></td>
+        <td><code>run_id</code> (UUID)</td>
         <td><code>veille_runs</code> — statut running</td>
       </tr>
       <tr>
-        <td>Préparation</td>
-        <td>—</td>
-        <td>Set de DOIs connus + 43+ sources</td>
-        <td>Mémoire JavaScript uniquement</td>
+        <td>Job 1 — Extraction</td>
+        <td>46 sources RSS + 2 ISSN OpenAlex, fenêtre 3 jours</td>
+        <td>Articles finalisés (titre, DOI, résumé, auteurs, date)</td>
+        <td><code>veille_items</code> — statut extracted</td>
       </tr>
       <tr>
-        <td>Lecture RSS</td>
-        <td>URL des flux RSS</td>
-        <td>Titre, DOI, résumé (parfois vide), auteurs, date</td>
-        <td>Mémoire JavaScript uniquement</td>
+        <td>Job 1b — Semantic Scholar</td>
+        <td>Articles auteur représentatifs (<code>ss_representative_papers</code>)</td>
+        <td>Recommandations récentes (60j)</td>
+        <td><code>veille_items</code> — source_type semantic_scholar</td>
       </tr>
       <tr>
-        <td>Enrichissement</td>
-        <td>DOIs sans résumé + titres sans DOI</td>
-        <td>Résumés et DOIs manquants complétés</td>
-        <td>Mémoire JavaScript uniquement</td>
+        <td>Job 2 — Scoring</td>
+        <td>Résumés (chunks ~150 mots) + corpus + articles auteur</td>
+        <td><code>similarity_score</code>, <code>author_score</code>, <code>corpus_refs</code></td>
+        <td><code>veille_items</code></td>
       </tr>
       <tr>
-        <td>Sources OpenAlex</td>
-        <td>ISSN des journaux sans RSS</td>
-        <td>Articles complets (titre, résumé, DOI, auteurs)</td>
-        <td>Mémoire JavaScript uniquement</td>
+        <td>Job 3 — Analyse IA</td>
+        <td>Top 8 articles ≥75%</td>
+        <td><code>ai_analysis</code> (contribution/relevance/corpus_link)</td>
+        <td><code>veille_items.ai_analysis</code></td>
       </tr>
       <tr>
-        <td>Insertion</td>
-        <td>Liste finale des articles enrichis</td>
-        <td>UUIDs des lignes créées</td>
-        <td><code>veille_items</code> — toutes les colonnes sauf score</td>
+        <td>Job 4 — Synthèse</td>
+        <td>Articles ≥80% avec <code>ai_analysis</code></td>
+        <td>Thèmes + synthèse globale</td>
+        <td><code>veille_runs.ai_summary</code> — statut completed</td>
       </tr>
       <tr>
-        <td>Scoring</td>
-        <td>Résumés + corpus RAG (chunks)</td>
-        <td>Score 0–1 par article</td>
-        <td><code>veille_items.similarity_score</code></td>
-      </tr>
-      <tr>
-        <td>Clôture</td>
-        <td>Statistiques du run</td>
-        <td>—</td>
-        <td><code>veille_runs</code> — statut completed/failed</td>
+        <td>Consultation</td>
+        <td>Visite de <code>/bibliographie</code> (asynchrone)</td>
+        <td>Articles ≥75%, paginés, filtrables</td>
+        <td>Lecture seule — aucune écriture</td>
       </tr>
     </tbody>
   </table>

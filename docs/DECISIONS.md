@@ -3,6 +3,8 @@
 Registre des décisions importantes : pourquoi tel choix, quelles alternatives écartées.
 Ne pas revenir sur ces décisions sans bonne raison et mise à jour de ce fichier.
 
+> Vérifié en base réelle le 06/07/2026 (requête directe Supabase). Quelques décisions enregistrées ici ne correspondent plus à l'état final — voir notes ⚠️ inline sur D4, D5, D9, D13.
+
 ---
 
 ## D1 — Cloud uniquement, pas d'on-prem
@@ -36,6 +38,8 @@ Ne pas revenir sur ces décisions sans bonne raison et mise à jour de ce fichie
 **Raison** : les modèles d'embedding et les configurations FTS sont différents selon la langue. Un seul jeu de colonnes avec détection automatique serait moins précis.
 **Coût** : ~2x l'espace de stockage pour les chunks + temps d'ingestion plus long (traduction MarianMT).
 
+**⚠️ Décision revenue depuis (voir D11)** : `scripts/ingest.py` ne contient aujourd'hui **plus aucune trace** de traduction (`grep` sur `translat|Marian|content_fr|embedding_fr` : zéro résultat) — pas seulement désactivée pour l'ingestion bulk comme le dit D11, mais retirée du script. Les colonnes `content_fr`/`embedding_fr`/`content_fr_tsv` existent toujours en base (legacy) mais ne sont plus écrites ni lues par aucun chemin de code actuel (`lib/rag/search.ts` ne fait pas de détection de langue). Voir `documentation/BACK_RAG.md` §4.
+
 ---
 
 ## D5 — Ingestion PDF en Python (pas en Node)
@@ -44,6 +48,8 @@ Ne pas revenir sur ces décisions sans bonne raison et mise à jour de ce fichie
 **Raison** : `PyMuPDF` + `sentence-transformers` + `MarianMT` sont des bibliothèques Python matures. Pas d'équivalent aussi performant en Node.
 **Conséquence** : l'ingestion n'est pas entièrement dans le flux Next.js. Upload via l'UI → stockage fichier → l'ingestion Node appelle un pipeline JS ou réutilise le script Python.
 **À surveiller** : la route `/api/ingestion` côté Node doit rester cohérente avec le script Python (même modèle, même dimension).
+
+**⚠️ Précision** : `app/api/ingestion/route.ts` est en réalité un **stub jamais implémenté** (`// TODO: post-upload — parse, chunk, embed`, retourne `{ ok: true }` sans rien faire). Les vrais chemins d'ingestion Node sont `POST /api/documents/upload` et `POST /api/analyse/upload`, qui appellent directement `lib/ingestion/` (pas cette route). Cette route morte peut être supprimée sans impact.
 
 ---
 
@@ -78,6 +84,8 @@ Ne pas revenir sur ces décisions sans bonne raison et mise à jour de ce fichie
 **Raison** : simplicité pour commencer. Le script Python lit directement depuis ce dossier.
 **À terme** : migration vers Supabase Storage pour les ~100 Go de PDFs (quand le volume le justifie).
 **Conséquence** : `data/pdfs/` est dans `.gitignore` et `.claudeignore` — ne jamais committer.
+
+**⚠️ Évolution depuis** : le corpus bulk a migré vers `data/pdfs2/` (organisation par année de **publication**, pas d'acquisition — voir `reorganize_pdfs.py`), avec `data/Articles auteur/` en plus pour les publications du chercheur. Et la migration "à terme" vers Supabase Storage a bien eu lieu, mais **seulement pour le module Analyse** (bucket `analyses`) — le corpus bulk reste sur fichiers locaux, pas sur Storage.
 
 ---
 
@@ -124,8 +132,9 @@ CREATE INDEX CONCURRENTLY idx_chunks_embedding
 **Détail stockage** :
 - 2000-2026 : ~13 Go → hors budget plan Pro (8 Go DB)
 - 2015-2026 : ~7,4 Go → compatible plan Pro
-- Choix retenu : **2015-2026 uniquement** (~15 477 PDFs)
-**À surveiller** : taille de la table `chunks` avec ~500k vecteurs 384D ≈ 750 MB supplémentaires.
+- Choix retenu (à l'époque) : **2015-2026** (~15 477 PDFs), ingestion lancée le 14/05/2026
+
+**⚠️ Ce n'est pas l'état final.** Vérifié en base le 06/07/2026 : la table `documents` contient **3 887 documents corpus** (dont 3 798 réellement datés 2024-2026, le reste étant du bruit métadonnées/placeholders) **+ 521 articles auteur** = 4 408 documents, **849 454 chunks**. Le plan "2015-2026, ~15 477 PDFs" décrit ici n'a donc pas été conservé tel quel — soit l'ingestion bulk a été interrompue et redémarrée sur un périmètre plus restreint (2024-2026), soit une purge/`TRUNCATE` a suivi ce run pour rester sous la limite Supabase Pro. **Cette décision est à mettre à jour** avec la raison réelle du changement de périmètre si elle est reconnue — actuellement cette doc et l'état réel de la base divergent sans explication tracée.
 
 ---
 
@@ -134,6 +143,8 @@ CREATE INDEX CONCURRENTLY idx_chunks_embedding
 **Décision** : le script `scripts/ingest.py` insère par batch de 5 chunks avec 3 tentatives (backoff exponentiel) et 0.3s de pause entre batches.
 **Raison** : les timeouts Supabase sont inévitables avec l'index HNSW actif. Le retry permet de ne pas crasher. Le batch petit réduit la probabilité de timeout.
 **Note** : cette décision est temporaire — avec le drop HNSW (D12), on pourra passer à batch=50 sans problème.
+
+**Confirmé appliqué** : `scripts/ingest.py` utilise aujourd'hui `INSERT_BATCH=50`, `INSERT_PAUSE=0.1s` (pas 5/0.3s) — la transition anticipée ici a bien eu lieu.
 
 ---
 

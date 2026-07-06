@@ -1,5 +1,7 @@
 # SPEC — Module Lecture Assistée
 
+> ⚠️ **Spec pré-implémentation, non représentative du module final.** Le module construit ("Analyse", `/analyse`) a pris une forme différente sur presque tous les points techniques ci-dessous : table `document_analyses` (pas de flag `is_reading_session`), routes `/api/analyse/*` (pas `/api/lecture/*`), page dédiée `/analyse/[id]` à 4 onglets (pas un panel latéral sur la page Veille), et **toujours** un upload PDF réel (pas de "Niveau 1" abstract-seul — cette idée reste d'ailleurs non implémentée, voir `docs/FUTURE_EVOLUTIONS.md` "Analyse depuis un abstract"). Le contexte (§ ci-dessous) reste valide. Pour l'implémentation réelle : `CLAUDE.md` (section Analyse), `documentation/BACK_RAG.md`, `documentation/STRUCTURE_ET_ARCHITECTURE.md`.
+
 ## Contexte
 
 Sondage mené auprès de 39 chercheurs (doctorants + enseignants-chercheurs) :

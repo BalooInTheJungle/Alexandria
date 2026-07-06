@@ -2,6 +2,8 @@
 
 Erreurs rencontrées sur Alexandria. Ajouter une entrée à chaque erreur résolue.
 
+> Note (06/07/2026) : les entrées "Pipeline veille — résumé IA" (waitUntil, undici, RLS silencieux) concernent le fichier **legacy** `lib/veille/pipeline.ts` (déclenchement manuel UI). Le pipeline actif en production (`scripts/veille/*.ts`, GitHub Actions) applique déjà ces correctifs nativement dès sa conception — voir `documentation/PIPELINE_VEILLE_CONSOLIDE.md` §7.
+
 ---
 
 ## Template

@@ -60,8 +60,8 @@ Scripts Python (manuels, hors Vercel)
 | `document_analyses` | Analyses de documents uploadés (summary, corpus_refs, cited_refs, ss_recs, is_integrated) |
 | `ss_representative_papers` | Articles auteur représentatifs pour les recommandations Semantic Scholar |
 | `rag_settings` | Paramètres dynamiques RAG (seuils, poids, k) — legacy, utilisé par /api/rag/* |
-| `conversations` | Sessions de chat RAG — vide (chatbot retiré) |
-| `messages` | Messages user + assistant — vide (chatbot retiré) |
+| `conversations` | Sessions de chat RAG — toujours écrites par l'onglet Discussion du module Analyse (0 lignes constatées en base au 06/07/2026, pas parce que la fonctionnalité est retirée, mais probablement peu utilisée / nettoyée) |
+| `messages` | Messages user + assistant — idem, table active mais vide au 06/07/2026 |
 
 ### Table chunks (critique)
 
@@ -76,7 +76,6 @@ chunks (
   page int,                 -- numéro de page source
   section_title text,       -- section détectée
   umap_x float, umap_y float, -- coordonnées UMAP 2D (compute_umap.py)
-  is_author_article bool,   -- chunk d'article auteur (ingest.py --author)
   analysis_id uuid,         -- lien vers document_analyses (nullable)
   is_temp bool              -- true si chunks d'analyse non intégrés
 )
@@ -120,8 +119,10 @@ veille_items (
   url text,
   source_type text,         -- 'rss' | 'openalex' | 'semantic_scholar'
   similarity_score float,   -- 0 si scoré sans match, null si pas encore scoré
+  author_score float,       -- similarité vs chunks is_author_article=true uniquement (match_author_chunks)
+  heuristic_score float,    -- fraction de termes corpus trouvés dans l'abstract — informatif, non affiché
   corpus_refs jsonb,        -- [{ doc_title, excerpt, page, similarity }] passages ≥ 75%
-  ai_analysis jsonb,        -- { contribution, relevance, corpus_link } pour ≥ 75%
+  ai_analysis jsonb,        -- { contribution, relevance, corpus_link } pour top 8/jour des articles ≥ 75%
   is_relevant boolean,      -- null=non évalué, true=pertinent (chercheur), false=non pertinent
   read_at timestamptz       -- null si non lu
 )
@@ -131,7 +132,8 @@ veille_items (
 
 | RPC | Usage |
 |-----|-------|
-| `match_chunks(query_embedding, match_count, match_threshold)` | Recherche vectorielle EN (cosinus) — utilisé par insights + chat Analyse |
+| `match_chunks(query_embedding, match_threshold, match_count)` | Recherche vectorielle EN (cosinus), exclut `is_temp=true` — utilisé par insights + chat Analyse + veille |
+| `match_author_chunks(query_embedding, match_threshold, match_count)` | Idem, restreint à `documents.is_author_article=true` — sert au calcul de `author_score` |
 | `search_chunks_fts(query_text, match_count)` | Recherche FTS EN |
 | `match_corpus_docs(...)` | Agrège les chunks par document pour les articles auteur |
 | `get_author_representative_titles()` | Retourne les articles auteur représentatifs (centroïde) |
@@ -139,7 +141,7 @@ veille_items (
 | `get_corpus_top_terms(...)` | Top termes du corpus (word cloud) |
 | `get_corpus_stats()` | KPIs globaux corpus |
 
-### Migrations (ordre chronologique, 50 au total)
+### Migrations (ordre chronologique, 52 au total)
 
 ```
 20260204100000_enable_pgvector.sql
@@ -161,6 +163,11 @@ veille_items (
 20260616110000_rpc_author_representative_titles.sql
 20260616120000_ss_representative_papers.sql
 20260617100000_document_analyses.sql        — table analyses + chunks.is_temp/analysis_id
+20260623100000_veille_author_score.sql       — author_score sur veille_items
+20260623110000_match_author_chunks_rpc.sql   — RPC match_author_chunks
+20260623120000_document_analyses_author_score.sql — author_score sur document_analyses
+20260626100000_match_chunks_exclude_temp.sql — match_chunks exclut is_temp=true
+20260626110000_veille_items_is_relevant.sql  — is_relevant (feedback chercheur)
 ```
 
 ---
@@ -236,7 +243,7 @@ POST /api/analyse/[id]/integrate
 ```
 Job 1 — scripts/veille/extract.ts
     ├── createRun() → veille_runs (status=running)
-    ├── 44 sources RSS → fetch parallèle (concurrence=5) → fenêtre 7 jours
+    ├── 44 sources RSS → fetch parallèle (concurrence=5) → fenêtre 3 jours (LOOKBACK_DAYS ; pipeline legacy manuel = 7 jours)
     ├── Filtre finalisation : DOI requis → OpenAlex batch is_final → CrossRef fallback
     ├── Rejet : ASAP, preprints, corrections, sans abstract
     ├── Sources OpenAlex directes (MDPI : Magnetochemistry, Inorganics…)
@@ -251,17 +258,18 @@ Job 1b — scripts/veille/extract-semanticscholar.ts (si ENABLE_SEMANTIC_SCHOLAR
 
 Job 2 — scripts/veille/score.ts
     ├── Charge veille_items avec similarity_score IS NULL
-    ├── embedQuery(abstract) → 384D
-    ├── match_chunks → top-3 → similarity_score (top-1)
-    ├── corpus_refs : chunks ≥ 75% sauvegardés
+    ├── abstract découpé en chunks ~150 mots → embedQuery() par chunk → 384D
+    ├── match_chunks (corpus) + match_author_chunks (auteur) en parallèle → similarity_score + author_score
+    ├── corpus_refs : chunks ≥ 75% sauvegardés (jusqu'à 5)
     └── Batch save 50
 
 Job 3 — scripts/veille/recap-articles.ts
-    ├── Articles similarity_score ≥ 75%
-    └── GPT-4o-mini → ai_analysis { contribution, relevance, corpus_link }
+    ├── Charge jusqu'à 50 articles similarity_score ≥ 75% (cap de sécurité)
+    ├── Ne traite que le top 8 (MAX_ARTICLES=8 dans lib/veille/summarize.ts)
+    └── GPT-4o-mini → ai_analysis { contribution, relevance, corpus_link } (par article traité seulement)
 
 Job 4 — scripts/veille/recap-global.ts
-    ├── Articles ai_analysis IS NOT NULL
+    ├── Articles ai_analysis IS NOT NULL ET similarity_score ≥ 80% (seuil différent du reste du pipeline)
     ├── GPT-4o-mini → { themes[], synthesis }
     └── update veille_runs : status=completed, ai_summary
 ```

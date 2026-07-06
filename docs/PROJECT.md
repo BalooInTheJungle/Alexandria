@@ -22,7 +22,7 @@ Surveiller la littérature mondiale et ne remonter que ce qui est pertinent pour
 - 44 sources RSS + Semantic Scholar (recommandations basées sur les articles de l'auteur)
 - Score de similarité sémantique abstract ↔ corpus (Xenova 384D)
 - Filtre de finalisation : articles définitivement publiés uniquement (pas de preprints/ASAP)
-- Synthèse IA quotidienne (thèmes + analyse individuelle des articles ≥ 80%)
+- Synthèse IA quotidienne (thèmes + analyse individuelle des articles ≥ 75%, top 8/jour max ; synthèse globale des thèmes ≥ 80%)
 - Lecture/non-lu par article, historique des runs
 
 ### Module 2 — Lecture assistée (sur upload PDF)
@@ -58,9 +58,9 @@ Login obligatoire (Supabase Auth) pour tout accès. Page publique `/` accessible
 1. GitHub Actions déclenche le pipeline à 7h UTC (9h Paris)
 2. Job 1 : fetch 44 sources RSS + OpenAlex MDPI → filtre finalisation → dédup DOI → insert `veille_items`
 3. Job 1b (optionnel) : Semantic Scholar recommandations basées sur `ss_representative_papers`
-4. Job 2 : embed abstract → `match_chunks` → `similarity_score`
-5. Job 3 : GPT analyse individuelle des articles ≥ 80% → `ai_analysis`
-6. Job 4 : GPT synthèse globale → `ai_summary` dans `veille_runs`
+4. Job 2 : abstract découpé en chunks ~150 mots → embed → `match_chunks` (corpus) + `match_author_chunks` (articles auteur) en parallèle → `similarity_score` + `author_score`
+5. Job 3 : GPT analyse individuelle du **top 8** des articles ≥ 75% (cap de sécurité à 50 candidats, généralement 5-10/jour) → `ai_analysis`
+6. Job 4 : GPT synthèse globale sur les articles ≥ **80%** ayant un `ai_analysis` → `ai_summary` dans `veille_runs` (seuil différent de l'analyse individuelle, voir `PIPELINE_VEILLE_CONSOLIDE.md`)
 7. Chercheur voit la liste `/bibliographie` → articles ≥ 75% → marque lu, consulte le détail run
 
 ### Flow Lecture assistée + Analyse
@@ -81,5 +81,5 @@ Login obligatoire (Supabase Auth) pour tout accès. Page publique `/` accessible
 - Proximité thématique avec les travaux du chercheur (similarité sémantique abstract ↔ corpus)
 - Filtre qualité : articles définitivement publiés (OpenAlex `is_final=true` + CrossRef fallback)
 - **Pas** d'impact factor ni de citations — objectif : identifier travaux incrémentaux ET ruptures
-- Seuil d'affichage : ≥ 75% de similarité (configurable)
-- Seuil d'analyse IA : ≥ 80%
+- Seuil d'affichage et d'analyse IA individuelle : ≥ 75% de similarité (top 8/jour analysés)
+- Seuil de la synthèse globale du jour (thèmes + texte de synthèse) : ≥ 80% — plus strict, un article à 76-79% peut apparaître sur `/bibliographie` sans être cité dans la synthèse

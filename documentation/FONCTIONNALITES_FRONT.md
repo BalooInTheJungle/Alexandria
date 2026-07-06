@@ -1,144 +1,113 @@
-# Fonctionnalités Front — RAG + Veille
+# Fonctionnalités Front — Bibliographie, Analyse, Database
 
-**Rôle** : référence des **fonctionnalités côté interface** (RAG et Veille), avec les subtilités : **langue** (FR/EN), **recherche** (hybride, garde-fou), **citations**, **streaming**, **admin**. Ce qui est en place et ce qui reste à faire.
+**Rôle** : référence des **fonctionnalités côté interface**, avec les subtilités : recherche, garde-fou, citations, streaming (module Analyse) ; affichage veille (module Bibliographie).
 
----
-
-## 1. Vue d’ensemble
-
-- **Périmètre** : **un seul utilisateur** (pas de multi-tenant ; pas de partage entre utilisateurs). Accès : projet déployé sur internet (Next.js hébergé) ; pas de serveur local 24/7. Historique des conversations lié à la session (Supabase Auth).  
-- **Deux zones principales** : **RAG** (une page : chat sur le corpus) et **Bibliographie** (une page : veille rankée + documents / upload).  
-- **Authentification** : login obligatoire (Supabase Auth) ; accès aux deux zones après connexion.  
-- **Une seule interface** : même layout, nav commune (RAG | Bibliographie).  
-- **Évolution possible** : proposer **deux modes** — (1) **Recherche** : requête → affichage des passages / chunks pertinents sans génération LLM ; (2) **Question (chatbot)** : même retrieval + LLM → réponse avec citations en streaming. En V1 seul le mode chatbot est implémenté.
+> Réécrit le 06/07/2026. Changements majeurs par rapport à l'ancienne version :
+> - Il n'y a **plus de page RAG autonome** (`/rag`, `/rag/settings`) — retirée du dashboard en juin 2026. Le chat RAG existe toujours mais **dans l'onglet Discussion du module Analyse**.
+> - **Plus de bilingue FR/EN** côté UI — pas de détection de langue, pas de sélecteur (voir `BACK_RAG.md`).
+> - La page Bibliographie n'a plus de bouton "Lancer la recherche" avec chronomètre : la veille tourne **automatiquement chaque jour via GitHub Actions**, le front est **100% lecture**.
+> - La gestion des Documents n'est plus une sous-page de Bibliographie : elle a été **fusionnée dans la page Database** (`app/(dashboard)/bibliographie/documents/page.tsx` redirige vers `/database`).
 
 ---
 
-## 2. RAG — Recherche et langue
+## 1. Vue d'ensemble
 
-### 2.1 Requête et langue
-
-- **Un seul champ de saisie** : l’utilisateur tape sa question **en français ou en anglais** sans choisir la langue dans l’UI.
-- **Détection côté back** : la langue est détectée **sur le texte de la requête** (avant toute recherche), via `lib/rag/detect-lang.ts` (heuristique FR/EN). Le front envoie simplement la requête ; il n’y a **pas de sélecteur de langue** à afficher.
-- **Réponse dans la même langue** : le back renvoie une réponse **toujours dans la langue de la requête** (FR ou EN). L’utilisateur voit donc sa question et la réponse dans la même langue, sans action de sa part.
-- **Sources (excerpts)** : les extraits affichés dans les citations sont **dans la même langue** que la réponse (contenu EN ou FR selon la détection). Les métadonnées (titre, DOI, section, page) restent celles du document.
-
-### 2.2 Recherche (ce que voit l’utilisateur)
-
-- L’utilisateur envoie **une requête** ; le back exécute la **recherche hybride** (FTS + vector + fusion RRF) sur le bon index (EN ou FR selon la langue détectée).
-- **Aucun mode « recherche seule » vs « chat »** à choisir dans l’UI pour l’instant : chaque envoi = recherche + génération de réponse (sauf garde-fou).
-- **Pas d’indication explicite** dans l’UI que la recherche est hybride ou bilingue ; le comportement est transparent.
-
-### 2.3 Garde-fou « hors domaine »
-
-- **Quand** : si la requête est jugée **trop éloignée** du corpus (similarité du meilleur chunk < seuil), le back **n’appelle pas** le LLM.
-- **Ce que voit l’utilisateur** : un **message fixe** (ex. « Requête trop éloignée de la recherche fondamentale. »), identique à une réponse assistant mais **sans citations** [1], [2] et **sans liste de sources**. Le message peut être renvoyé en une fois (pas de streaming) ou en « faux stream » pour garder la même UX.
-- **Stockage** : le message utilisateur et ce message garde-fou sont **enregistrés** en base comme un échange normal ; la conversation reste cohérente (l’utilisateur peut constater qu’il a posé une question hors domaine).
-- **Paramétrage** : le **texte du message** et le **seuil** sont modifiables depuis le **panneau admin** (pas d’indication dans l’UI chat que c’est un « message garde-fou » ; pour l’utilisateur c’est une réponse comme une autre).
+- **Périmètre** : utilisateur unique (chercheur), pas de multi-tenant. Login obligatoire (Supabase Auth).
+- **3 zones dans le dashboard** : **Bibliographie** (veille + historique + sources), **Analyse** (upload PDF + 4 onglets), **Database** (KPIs corpus, UMAP, comparaison auteur).
+- La route `/veille` existe encore mais **redirige** vers `/bibliographie` (compat liens existants).
 
 ---
 
-## 3. RAG — Conversation et affichage
+## 2. Bibliographie (`/bibliographie`) — 3 onglets
 
-### 3.1 Liste des conversations (sidebar) — en place
+### 2.1 Onglet "Veille" (défaut)
 
-- **Affichage** : **sidebar** avec la liste des conversations : **titre** + **date** (dernière activité).
-- **Ordre** : **date décroissante** (plus récent en haut). Appel à `GET /api/rag/conversations?limit=50`.
-- **Actions** : clic pour ouvrir la conversation ; **Nouvelle conversation** (bouton) ; **Renommer** (inline, PATCH) ; **Supprimer** (modal de confirmation, DELETE).
+- **KPIs globaux** (6 cards) : Articles extraits, Articles scorés, "En lien" (≥75%), Articles lus, ✓ Pertinents, ✗ Non pertinents — alimentés par `GET /api/veille/stats`.
+- **Filtres** : recherche par titre (client-side), filtre lu/non lu (Tous / Non lus / Lus), filtre pertinence (Tous / ✓ Pertinents / ✗ Non pertinents).
+- **Liste paginée** (`GET /api/veille/items/top?page=N&relevant=...`) : cards article avec
+  - badge score double : "Corpus" (`similarity_score`) + "Auteur" (`author_score`, si disponible, badge orange),
+  - auteurs repliables (3 premiers + "+N auteurs"),
+  - DOI cliquable, badge "Dans le corpus" si `document_id` renseigné,
+  - bouton "Marquer comme lu" (`PATCH /api/veille/items/[id]` `{ read: bool }`),
+  - **select pertinence à 3 états** (`PATCH /api/veille/items/[id]` `{ relevant: true|false|null }`) : "Indiquer la pertinence" / "✓ Pertinent" / "✗ Non pertinent",
+  - bloc "Analyse IA" repliable (`ai_analysis.contribution/relevance/corpus_link`), affiché seulement si présent (donc pas pour tous les articles ≥75%, voir `PIPELINE_VEILLE_CONSOLIDE.md` §2 — cap à 8/jour),
+  - références corpus repliables (`corpus_refs`, passages ≥75% avec extrait et page).
+- **Pas de bouton de déclenchement manuel** dans cet onglet — la veille est 100% automatique (cron GitHub Actions quotidien).
 
-### 3.2 Messages dans une conversation — en place
+### 2.2 Onglet "Historique"
 
-- **Affichage** : messages **user** et **assistant** dans l’ordre chronologique ; **scroll infini** (cursor, 20 par page) via `GET /api/rag/conversations/[id]/messages?cursor=...&limit=20`.
-- **Réponses assistant** : affichage des **citations** [1], [2]… dans le texte (sous le champ de saisie pour la dernière réponse).
-- **Sources** : pour chaque citation, infos document (titre, DOI, excerpt) ; évolution possible : point « i » au survol. Les **excerpts** sont dans la **même langue** que la réponse (FR ou EN).
+- Tableau des runs (`GET /api/veille/runs?limit=20`) : date/heure, statut (Terminé/En cours/Échec, badge coloré), nb extraits, nb pertinents ≥75%, nb analyses IA.
+- Clic sur une ligne → `/bibliographie/historique/[runId]` (détail du run : logs pipeline, thèmes, synthèse, liste complète des articles du run).
+- Le composant conserve un mapping de labels pour **les deux générations de pipeline** (`PHASE_LABELS` distingue phases legacy `sources/urls/items/summary` et phases actuelles `filter/openalex/crossref/insert/extracted/scoring/scored/recap_articles/recap_articles_done/recap_global/done`) — utile si d'anciens runs legacy restent affichés dans l'historique.
 
-### 3.3 Streaming de la réponse
+### 2.3 Onglet "Sources"
 
-- **Exigence** : la **réponse du chatbot s’affiche en streaming** (texte qui apparaît au fur et à mesure).
-- **Implémentation front** : envoi de la requête avec `stream: true` ; consommation du flux SSE (fetch + `response.body.getReader()` ou EventSource) ; mise à jour progressive du DOM (ou state) à chaque chunk reçu. Quand le stream est terminé, l’événement `done` contient conversationId, messageId, sources ; optionnellement mettre à jour la liste des messages côté client avec le message assistant final (ou le récupérer via les données renvoyées en fin de stream).
-- **Garde-fou** : dans ce cas pas de stream « token par token » ; le message garde-fou peut être affiché en une fois (ou en un seul chunk) pour garder la même forme de réponse côté UI.
-
-### 3.4 Titre de conversation — en place
-
-- **À la création** : le titre est généré côté back (troncature du premier message).
-- **Édition** : bouton **Renommer** dans la sidebar ; sauvegarde via **PATCH /api/rag/conversations/[id]**.
-
----
-
-## 4. RAG — Panneau admin — en place
-
-- **Page** : **/rag/settings** (lien « Paramètres RAG » depuis la page RAG). Même utilisateur que le reste.
-- **GET /api/rag/settings** : chargement des valeurs ; **PATCH /api/rag/settings** : enregistrement (validation des bornes côté back ; 400 sans modification en base en cas d’erreur).
-- **Paramètres** : context_turns, similarity_threshold, guard_message, match_count, match_threshold, fts_weight, vector_weight, rrf_k, hybrid_top_k — chaque champ avec libellé et bornes (input number ou textarea pour guard_message).
+- CRUD des sources de veille : liste groupée par éditeur, filtre par éditeur, filtre "actives seulement", toggle actif/inactif par source (`PATCH /api/veille/sources/[id]`), formulaire d'ajout (`POST /api/veille/sources` : nom, éditeur, ISSN, URL, URL RSS optionnelle → sinon fallback OpenAlex).
 
 ---
 
-## 5. Veille (Bibliographie) — état mai 2026
+## 3. Analyse (`/analyse`) — upload + 4 onglets
 
-### 5.1 Page `/bibliographie` — 2 onglets
+### 3.1 Page liste (`/analyse`)
 
-**Onglet "Cette semaine"** (défaut) :
-- Card "Lancer la recherche" : bouton start/stop, chronomètre, 4 pills de phases (Récupération RSS / Enrichissement OpenAlex / Scoring des articles / Résumé IA), barre de progression pendant le scoring (paliers de 50).
-- Card "Résumé de la semaine" : affiché après complétion, texte GPT-4o-mini avec thèmes + actions prioritaires (markdown rendu), compteur d’articles pertinents + seuil utilisé.
-- Card "Articles pertinents" : slider seuil (30–90%, défaut 75%), grille 2 colonnes de cards article (badge score coloré, titre cliquable, source, auteurs, abstract, badge "Dans le corpus", lien "Lire l’article →").
+- **Zone d'upload** : glisser-déposer ou clic, PDF uniquement, max 20 Mo. Un appel `GET /api/analyse/warmup` est déclenché en parallèle de l'upload pour préchauffer le modèle d'embedding Xenova (réduit la latence perçue).
+- **Liste "Articles pertinents à analyser"** : reprend les articles renvoyés par `GET /api/veille/items/top?page=1` (donc en réalité tous les articles **≥75%**), avec un bouton "Analyser le PDF" par article qui envoie directement le fichier local à `/api/analyse/upload`.
+  > ⚠️ **Le libellé affiché est trompeur** : le titre de section dit *"score ≥ 80%"*, mais la route appelée (`/api/veille/items/top`) filtre en réalité à **≥75%** (`MIN_SCORE=0.75` dans `app/api/veille/items/top/route.ts`) et le composant n'applique aucun filtre supplémentaire côté client. À corriger dans le code ou, a minima, à ne pas citer "80%" comme seuil réel de cette liste dans le mémoire.
 
-**Onglet "Historique"** :
-- Tableau des runs : date, statut, nb articles, nb pertinents + seuil, erreur, lien "Voir les articles".
-- Lien → `/bibliographie/historique/[runId]` : tableau complet avec colonnes Heur. / Vect. / Final / En DB.
+### 3.2 Page détail (`/analyse/[id]`) — 4 onglets
 
-### 5.2 API veille utilisées
+| Onglet (id interne) | Nom affiché | Contenu |
+|---|---|---|
+| `corpus` | Proximité corpus | `corpus_refs` (passages similaires), `author_score` |
+| `summary` | Résumé | Résumé structuré GPT (`{ intro, methods, results, discussion, tldr }`) |
+| `chat` | Discussion | Chat streaming SSE — **c'est ici que vit l'ancien chatbot RAG**, réutilisant `lib/rag/search.ts` + `lib/rag/openai.ts` |
+| `recommend` | Aller plus loin | Références citées (`cited_refs`, avec statut "dans le corpus" ou non) + recommandations Semantic Scholar (`ss_recs`) |
 
-| Endpoint | Usage |
-|----------|-------|
-| `POST /api/veille/scrape` | Déclenche pipeline → retourne `{ runId, run_id, message }` |
-| `GET /api/veille/runs/[id]` | Poll toutes les 2s → `{ status, phase, items_processed, items_total, ai_summary, high_score_count, score_threshold }` |
-| `GET /api/veille/items?runId=&minScore=&limit=` | Articles filtrés par seuil, triés similarity DESC NULLS LAST |
-| `GET /api/veille/runs?limit=20` | Liste runs pour historique |
-| `POST /api/veille/runs/[id]/stop` | Arrêt demandé |
-
-### 5.3 À faire (front veille)
-
-- Liens cliquables dans le texte du résumé IA → bloc "Articles cités" sous le résumé
-- Nettoyage des abstracts RSS (metadata citation en tête d’abstract)
-- Pagination articles (au-delà de 100)
-- Animation pendant la phase `summary` (pulse ou spinner)
+- Bouton "Intégrer au corpus" → `POST /api/analyse/[id]/integrate` (`is_temp=false`).
+- PDF affiché avec scroll synchronisé aux citations (`components/analyse/AnalysisPdfViewer.tsx`).
 
 ---
 
-## 6. Documents (section Bibliographie)
+## 4. Ce qui reste du chat RAG (dans Analyse, pas en page dédiée)
 
-- **Upload** : dépôt d’un ou plusieurs PDFs (front → API upload) ; enregistrement en base (document) ; déclenchement de l’ingestion (à la main ou via API selon implémentation).
-- **Liste** : affichage des documents indexés (titre, DOI, statut, date) avec possibilité d’ouvrir le PDF (via storage_path ou lien).
-- **Emplacement** : dans la section **Bibliographie** (ex. onglet ou sous-page « Documents »), pas en page racine.
+Les comportements ci-dessous, décrits auparavant pour une page `/rag` indépendante, s'appliquent maintenant à l'onglet **Discussion** du module Analyse :
 
----
-
-## 7. Synthèse : Fait / À faire (Front)
-
-| Fonctionnalité | Fait | À faire |
-|----------------|------|---------|
-| **Auth** | Login (email/mot de passe), cookies Supabase. | — |
-| **RAG — Champ requête** | Envoi à POST /api/rag/chat (stream: false), affichage réponse + sources + conversationId. | Activer stream: true et afficher la réponse en streaming. |
-| **RAG — Langue** | — | Aucun : le back gère la détection ; la réponse et les excerpts arrivent dans la bonne langue. |
-| **RAG — Garde-fou** | Le back renvoie guard_message ; le front l’affiche comme une réponse assistant (sans sources). | — |
-| **Sidebar conversations** | — | Liste (titre + date), clic pour ouvrir, bouton Nouvelle conversation ; GET conversations. |
-| **Messages / scroll infini** | — | GET messages (pagination cursor), affichage par page. |
-| **Citations + point « i »** | — | Affichage [1], [2]… et tooltip/modal avec titre, DOI, section, page (excerpt dans la langue de la réponse). |
-| **Titre conversation** | — | Champ éditable, PATCH ; modal ou inline. |
-| **Suppression conversation** | — | Bouton + modal de confirmation, DELETE puis redirection ou nouvelle conversation. |
-| **Panneau admin** | — | Page/section pour modifier rag_settings (context_turns, similarity_threshold, guard_message, etc.) avec descriptions et validation. |
-| **Veille — Liste** | Page Bibliographie existante. | Afficher liste rankée (titre, abstract, URL, score) depuis l’API veille. |
-| **Veille — Déclenchement** | — | Bouton pour lancer une run (job asynchrone), affichage du statut si prévu. |
-| **Documents** | — | Upload + liste des documents (titre, statut, lien PDF) dans la section Bibliographie. |
+- **Streaming** : `stream: true` par défaut, affichage progressif via SSE.
+- **Citations** `[1]`, `[2]`… dans le texte, avec sources (titre, DOI, extrait) — toujours en anglais (pas de traduction FR des extraits, voir `BACK_RAG.md` §4).
+- **Garde-fou** : message fixe si la requête est hors domaine (voir `BACK_RAG.md` §2.1/§2.3 pour le détail, y compris le mode "connaissances générales" non documenté auparavant).
+- **Pas de panneau admin front pour `rag_settings`** actuellement identifié dans le dashboard — les routes `GET`/`PATCH /api/rag/settings` existent côté back mais aucune page du dashboard actuel ne les appelle (à vérifier avant de citer un "panneau admin" dans le mémoire).
 
 ---
 
-## 8. Références vers les autres documents
+## 5. Documents et corpus — page Database (`/database`)
+
+- **Emplacement** : la gestion des documents (upload direct au corpus) est sur la page **Database**, pas Bibliographie. `app/(dashboard)/bibliographie/documents/page.tsx` n'est qu'une redirection vers `/database`, conservée pour compatibilité de lien.
+- Contenu de la page Database (aperçu, voir `CARTE_CORPUS.md` pour le détail UMAP) : carte "Ajouter des documents" (upload direct `POST /api/documents/upload`), KPIs top journaux, carte du corpus (clusters UMAP), position des articles auteur dans l'espace vectoriel, couverture temporelle, liste des articles auteur avec liens corpus.
+
+---
+
+## 6. Synthèse état actuel (remplace l'ancien tableau Fait/À faire, largement caduc)
+
+| Fonctionnalité | État |
+|---|---|
+| Auth (login Supabase) | ✅ |
+| Page RAG autonome + sidebar conversations | ❌ retirée — chat déplacé dans Analyse |
+| Détection de langue / bilingue UI | ❌ abandonné |
+| Bibliographie — liste veille ≥75%, paginée, filtres lu/pertinence | ✅ |
+| Bibliographie — déclenchement manuel | ❌ plus nécessaire (automatique GitHub Actions) |
+| Bibliographie — gestion des sources (CRUD) | ✅ onglet Sources |
+| Analyse — upload + 4 onglets | ✅ |
+| Analyse — intégration corpus | ✅ |
+| Documents — upload direct corpus | ✅ déplacé sur `/database` |
+| Panneau admin `rag_settings` | ⚠️ routes back existantes, pas de page front confirmée |
+
+---
+
+## 7. Références
 
 | Document | Contenu |
 |----------|---------|
-| **Vue d’ensemble projet** | Besoins, flows, structure. |
-| **Stack et technologies** | Rôle des technos (Next.js, Supabase, etc.). |
-| **Back RAG** | API chat, recherche, garde-fou, paramètres, bilingue, conversations (détail back). Fichier : `BACK_RAG.md`. |
-| **Veille** | Flux, garde-fous, similarité, tests. Fichier : `VEILLE.md`. |
-| **Schéma DB et données** | Tables, migrations, flows back ↔ DB. Fichier : `SCHEMA_DB_ET_DONNEES.md`. |
+| `BACK_RAG.md` | API chat, recherche, garde-fou, paramètres (détail back) |
+| `PIPELINE_VEILLE_CONSOLIDE.md` | Pipeline veille complet, seuils, cap 8/jour |
+| `SCHEMA_DB_ET_DONNEES.md` | Tables, migrations |
+| `CARTE_CORPUS.md` | Détail page Database / UMAP |

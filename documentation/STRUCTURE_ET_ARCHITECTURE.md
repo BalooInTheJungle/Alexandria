@@ -1,229 +1,178 @@
 # Structure et architecture du projet Alexandria
 
-**Objectif** : document de référence pour valider l’architecture et la structure des dossiers avant implémentation.
+**Objectif** : document de référence décrivant l'architecture et la structure des dossiers **telles qu'elles existent aujourd'hui** dans le code (juin 2026).
+
+> Ce document a été entièrement réécrit le 06/07/2026 : la version précédente décrivait un plan d'avant-implémentation (veille par scraping HTML + LLM, page RAG unique) qui n'a jamais été celui retenu. Voir `docs/DECISIONS.md` pour l'historique des choix.
 
 ---
 
-## 1. Rappel des besoins et décisions (historique)
+## 1. Les 3 modules actifs
 
-| Sujet | Décision |
-|-------|----------|
-| **Centralisation** | Une seule interface front : RAG + pertinence bibliographie. Tout sur la même base Supabase. À terme : articles de la veille peuvent alimenter le RAG (incrémentation). |
-| **Veille** | HTML scraping uniquement. Liste des sources (liens) récupérée depuis Supabase. Sortie : liste rankée sur le front avec URL de la page. Similarité : sur l’**abstract** uniquement (pas le texte complet). |
-| **Utilisateurs** | Au moins deux profils (toi + un autre user). Login requis. Documents scientifiques accessibles uniquement à certaines personnes → **upload manuel** des PDFs depuis le front par le prof/user. Pas d’ingestion automatique de PDFs depuis la veille dans le POC (à terme possible). |
-| **Stack** | Next.js (TS), Supabase (Postgres + pgvector + Storage), recherche hybride FTS + vectoriel, LLM/embeddings (Ollama si possible). |
+| Module | Rôle |
+|--------|------|
+| **Veille** | 49 sources actives (44 RSS + 2 OpenAlex + 1 Semantic Scholar, dont 2 RSS orphelines non fonctionnelles) → scoring sémantique quotidien vs corpus → synthèse IA |
+| **Lecture assistée / Analyse** | Upload PDF → résumé structuré + discussion IA + citations cliquables + PDF scroll sync + intégration corpus |
+| **Database** | KPIs corpus, carte UMAP 2D, comparaison articles auteur vs corpus |
+
+Le chatbot RAG autonome (page `/rag`) a été **retiré du front en juin 2026** : la tuyauterie (`lib/rag/`, `app/api/rag/`) est conservée et **réutilisée par le module Analyse** (recherche hybride, citations, réglages).
 
 ---
 
-## 2. Architecture logique (centralisée)
+## 2. Architecture logique
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        FRONT NEXT.JS (une seule app)                     │
-│  ┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────┐ │
-│  │ Recherche RAG        │  │ Bibliographie /     │  │ Auth / Profil   │ │
-│  │ (requête, réponses   │  │ Veille (liste       │  │ (login)         │ │
-│  │  sourcées, PDF)      │  │  rankée, URLs)      │  │                 │ │
-│  └──────────┬───────────┘  └──────────┬──────────┘  └────────┬────────┘ │
-└─────────────┼─────────────────────────┼─────────────────────┼──────────┘
-              │                         │                     │
-              ▼                         ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    API ROUTES / SERVER ACTIONS (Next)                    │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │ RAG: search  │  │ Veille:      │  │ Ingestion:   │  │ Auth         │  │
-│  │ hybrid +     │  │ scrape +     │  │ upload PDF,  │  │ (Supabase    │  │
-│  │ rerank + LLM │  │ score vs     │  │ parse,       │  │  Auth)       │  │
-│  │ + citations  │  │ corpus       │  │ chunk, embed │  │              │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
-└─────────┼─────────────────┼─────────────────┼─────────────────┼──────────┘
-          │                 │                 │                 │
-          ▼                 ▼                 ▼                 ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         SUPABASE                                         │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐   │
-│  │ Postgres +       │  │ Storage         │  │ Auth                    │   │
-│  │ pgvector         │  │ (PDFs)          │  │ (users)                 │   │
-│  │ (documents,      │  │                 │  │                         │   │
-│  │  chunks, sources,│  │                 │  │                         │   │
-│  │  veille runs)    │  │                 │  │                         │   │
-│  └─────────────────┘  └─────────────────┘  └─────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                        FRONT NEXT.JS 14 (App Router)                       │
+│  ┌──────────────┐  ┌──────────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │ Bibliographie │  │ Analyse           │  │ Database     │  │ Auth       │  │
+│  │ (veille ≥75%, │  │ (upload PDF,      │  │ (KPIs, UMAP, │  │ (login     │  │
+│  │  historique,   │  │  résumé, chat,    │  │  comparaison) │  │  Supabase) │  │
+│  │  sources)      │  │  intégration)     │  │              │  │            │  │
+│  └──────┬────────┘  └────────┬──────────┘  └──────┬───────┘  └─────┬──────┘  │
+└─────────┼────────────────────┼─────────────────────┼─────────────────┼───────┘
+          │                    │                     │                 │
+          ▼                    ▼                     ▼                 ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│                          API ROUTES (Next.js)                              │
+│  /api/veille/*       /api/analyse/*        /api/corpus/*      Supabase Auth │
+│  (list, items,       (upload, insights,     (map, timeline,                 │
+│   runs, stats)        chat SSE, integrate)   author-articles)               │
+└─────────┼────────────────────┼─────────────────────┼─────────────────┼───────┘
+          │                    │                     │                 │
+          ▼                    ▼                     ▼                 ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│                              SUPABASE (cloud)                              │
+│  ┌──────────────────────┐  ┌──────────────────┐  ┌─────────────────────┐   │
+│  │ Postgres + pgvector    │  │ Storage           │  │ Auth                 │   │
+│  │ (documents, chunks,    │  │ bucket "analyses" │  │ (users)              │   │
+│  │  veille_items/_runs,   │  │ (PDFs uploadés)   │  │                      │   │
+│  │  sources)              │  │                   │  │                      │   │
+│  └──────────────────────┘  └──────────────────┘  └─────────────────────┘   │
+└───────────────────────────────────────────────────────────────────────────┘
+          ▲
+          │ (hors requête utilisateur — job planifié)
+┌───────────────────────────────────────────────────────────────────────────┐
+│           GITHUB ACTIONS — pipeline veille (7h UTC, 4 jobs Node.js)         │
+│  extract.ts → score.ts → recap-articles.ts → recap-global.ts               │
+│  (+ extract-semanticscholar.ts en parallèle si activé)                     │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Une base, une app** : pas de séparation physique RAG / Veille côté code métier, mais **modules logiques** dans le même repo (voir §4).
+Point important par rapport à l'ancienne version de ce doc : **la veille ne tourne plus sur Vercel/API routes** mais entièrement dans **GitHub Actions** (scripts Node.js dans `scripts/veille/`), pour éviter le timeout 10s du plan Vercel Hobby. Les API routes `/api/veille/*` ne font que **lire** les résultats déjà en base pour le front.
 
 ---
 
 ## 3. Modèle de données (Supabase) — résumé
 
-- **auth.users** : utilisateurs (Supabase Auth).
-- **documents** : métadonnées PDF (titre, auteurs, DOI, journal, date, `storage_path`). PDFs stockés localement dans **data/pdfs/** ; `storage_path` = chemin relatif (ex. `data/pdfs/nom.pdf`) pour retrouver le document.
-- **chunks** : texte + embedding (pgvector) + `document_id`, position, page.
-- **sources** : liste des sources de veille (URL, nom, config) — déjà en place côté Supabase.
-- **veille_runs** : une exécution de scrape (date, statut).
-- **veille_items** : un article récupéré par run (titre, abstract, url, `similarity_score` vs corpus, `source_id`, `run_id`).
-- **Index** : GIN FTS sur `chunks`, index vectoriel sur `chunks.embedding`.
+- **auth.users** : utilisateurs (Supabase Auth), login requis pour tout le dashboard.
+- **documents** : métadonnées PDF (titre, auteurs, DOI, journal, date, `storage_path`), avec `is_author_article boolean` (articles publiés du chercheur, indexés séparément du corpus général).
+- **document_analyses** : documents uploadés via le module Analyse (`status`, lien Storage bucket `analyses`).
+- **chunks** : texte + `embedding vector(384)` (+ `embedding_fr`, hérité, non utilisé activement) + `document_id`, position, page, `is_temp` (chunks d'une analyse pas encore intégrée au corpus).
+- **sources** : 49 sources de veille actives (RSS, OpenAlex direct, ou Semantic Scholar), gérées en base — voir `documentation/SOURCES_JOURNAUX.md` pour le détail (2 sources RSS orphelines n'y contribuent en réalité rien).
+- **veille_runs** : une exécution quotidienne (statut, `phase`, `pipeline_logs`, `ai_summary` = `{ themes[], synthesis }`).
+- **veille_items** : un article détecté par un run — `similarity_score` (vs corpus complet), `author_score` (vs articles auteur uniquement), `corpus_refs` (passages ≥75% ayant déclenché le score), `ai_analysis` (`{ contribution, relevance, corpus_link }`, rempli seulement si ≥75%), `is_relevant` (évaluation manuelle du chercheur : `NULL`/`true`/`false`), `read_at`.
+- **ss_representative_papers** : articles auteur pré-calculés servant de base aux recommandations Semantic Scholar (Job 1b).
+- **rag_settings** : réglages relus à chaque requête chat (paramétrage dynamique de la génération).
+- **Index** : GIN FTS sur `chunks` (`content_tsv`), index IVFFlat vectoriel sur `chunks.embedding` (`lists=100`), à reconstruire après chaque ingestion bulk.
 
-Détail des champs et relations à figer en phase suivante (schéma SQL dans un autre doc si tu veux).
+Schéma SQL détaillé : `documentation/SCHEMA_DB_ET_DONNEES.md` + `supabase/migrations/` (52 migrations, ordre chronologique).
 
 ---
 
-## 4. Proposition de structure des dossiers (à valider)
-
-Structure **centralisée** dans un seul repo Next.js, avec séparation claire RAG / Veille / Shared.
+## 4. Structure réelle des dossiers
 
 ```
 alexandria/
-├── app/                          # Next.js App Router
-│   ├── (auth)/                   # Groupe : login, signup, redirect
-│   │   ├── login/
-│   │   └── ...
-│   ├── (dashboard)/              # Groupe : tout le reste (protégé)
-│   │   ├── layout.tsx            # Layout avec nav : RAG | Bibliographie (2 pages distinctes)
-│   │   ├── page.tsx              # Accueil ou redirection
-│   │   ├── rag/                  # Page 1 : RAG uniquement
-│   │   │   └── page.tsx          # Interface recherche RAG + résultats + citations
-│   │   └── bibliographie/        # Page 2 : Veille + Documents (tout côté « bibliographie »)
-│   │       ├── page.tsx          # Liste veille rankée (abstract, score, URL)
-│   │       └── documents/        # Upload + liste des PDFs (prof/user) — dans la section Bibliographie
-│   │           └── page.tsx
-│   ├── api/                      # API routes
-│   │   ├── rag/
-│   │   │   ├── search/           # Recherche hybride + rerank + context
-│   │   │   └── chat/             # Génération RAG + citations (si séparé)
-│   │   ├── veille/
-│   │   │   ├── scrape/           # Déclencher pipeline veille (cron ou manuel)
-│   │   │   └── list/             # Lister items rankés (sources depuis Supabase)
-│   │   ├── documents/
-│   │   │   └── upload/           # Upload PDF → Storage + création document (section Bibliographie)
-│   │   └── ingestion/            # Post-upload : parse, chunk, embed — à détailler plus tard
-│   ├── layout.tsx
-│   └── globals.css
+├── app/
+│   ├── page.tsx                       # Landing page publique FR/EN
+│   ├── (auth)/login/                  # Login Supabase Auth
+│   ├── (dashboard)/                   # Groupe protégé, layout commun (nav)
+│   │   ├── bibliographie/             # Veille ≥75% (tab) + historique runs + sources
+│   │   │   ├── documents/             # Liste/consultation des documents du corpus
+│   │   │   └── historique/[runId]/    # Détail d'un run de veille
+│   │   ├── analyse/                   # Liste analyses + upload
+│   │   │   └── [id]/                  # 4 onglets : Proximité / Résumé / Discussion / Aller plus loin
+│   │   ├── database/                  # KPIs, UMAP, comparaison auteur vs corpus
+│   │   └── veille/                    # Route legacy → redirect vers /bibliographie
+│   └── api/
+│       ├── analyse/                   # upload, insights, chat (SSE), pdf, integrate, suggestions, warmup
+│       ├── veille/                    # list, items, items/top, runs, stats, sources, days
+│       ├── corpus/                    # map (UMAP), timeline, author-articles, journals
+│       ├── documents/                 # count, stats, upload
+│       ├── rag/                       # search, chat, conversations, settings — legacy, réutilisé par Analyse
+│       └── cron/retention/            # Nettoyage conversations > 30 jours (cron Vercel)
 │
-├── lib/                          # Logique partagée
-│   ├── supabase/
-│   │   ├── client.ts             # Client navigateur
-│   │   ├── server.ts             # Client serveur
-│   │   └── admin.ts              # Si besoin (service role)
-│   ├── db/                       # Accès données (requêtes, types)
-│   │   ├── documents.ts
-│   │   ├── chunks.ts
-│   │   ├── sources.ts
-│   │   ├── veille.ts
-│   │   └── types.ts
-│   ├── rag/                      # Pipeline RAG
-│   │   ├── detect-lang.ts        # Détection heuristique FR/EN (requête)
-│   │   ├── search.ts             # FTS + vector + RRF ; selon lang → match_chunks(_fr) + search_chunks_fts(_fr)
-│   │   ├── embed.ts              # Embeddings 384D (Xenova/all-MiniLM-L6-v2)
-│   │   ├── openai.ts             # Génération LLM + instruction langue (FR/EN)
-│   │   ├── citations.ts         # Format réponses sourcées
-│   │   └── settings.ts           # Lecture rag_settings
-│   ├── veille/                    # Pipeline veille (sources 100 % en DB, pas de config fichier)
-│   │   ├── sources.ts            # Récup liste sources depuis Supabase
-│   │   ├── fetch-source-pages.ts # Récup HTML/XML des pages sources (fetch HTTP uniquement)
-│   │   ├── extract-urls.ts       # RSS/Atom/RDF → parse XML ; HTML → parse (cheerio) → URLs candidates
-│   │   ├── detect-bot-challenge.ts # Détection page anti-bot (0 URL, titre type « Client Challenge ») → log suggestion RSS
-│   │   ├── guardrails.ts         # Dédup DOI vs DB ; pré-filtre URLs avant LLM ; rate limit, quotas
-│   │   ├── filter-urls-llm.ts    # LLM : ne garder que les URLs de pages articles (après guardrails)
-│   │   ├── extract-article-llm.ts# Pré-nettoyage bloc article (trafilatura) → LLM : titre, auteurs, DOI, abstract, date (schéma fixe)
-│   │   └── score.ts              # Similarité abstract vs DB vectorielle (embedding vs corpus)
-│   ├── ingestion/
-│   │   ├── parse-pdf.ts          # Extraction texte (+ fallback OCR)
-│   │   ├── chunk.ts              # Chunking scientifique
-│   │   └── index.ts              # Orchestration : parse → chunk → embed → insert
-│   └── auth/
-│       └── middleware.ts         # Vérif session (ou dans middleware Next)
+├── lib/
+│   ├── supabase/                      # client.ts (browser), server.ts, admin.ts (service role)
+│   ├── db/                            # Accès données (documents, chunks, sources, veille, query-logs, types)
+│   ├── rag/                           # embed.ts (Xenova 384D), search.ts, openai.ts, rerank.ts,
+│   │                                  # citations.ts, settings.ts, conversation-persistence.ts
+│   ├── veille/                        # fetch-rss.ts, openalex.ts, crossref.ts, score.ts, summarize.ts,
+│   │                                  # sources.ts, pipeline.ts, clean-article-html.ts,
+│   │                                  # filter-article-display.ts, detect-bot-challenge.ts
+│   ├── ingestion/                     # parse-pdf.ts, chunk.ts, index.ts
+│   ├── auth/middleware.ts
+│   └── design/                        # Tokens couleurs/typo partagés
 │
 ├── components/
-│   ├── ui/                       # Composants génériques (boutons, inputs, etc.)
-│   ├── rag/                      # Recherche, résultats, citations, lien PDF
-│   ├── bibliographie/            # Liste veille, carte article, URL ; upload/liste documents
-│   └── layout/                   # Nav, sidebar, header
+│   ├── ui/                            # shadcn/ui
+│   ├── analyse/                       # AnalysisChatPanel, AnalysisPdfViewer
+│   ├── veille/                        # VeilleDashboard, VeilleArticleCard
+│   ├── bibliographie/
+│   ├── dashboard/                     # NavLinks
+│   └── layout/
 │
-├── data/                             # Données locales (hors Git : voir .gitignore)
-│   ├── README.md                     # Rôle des dossiers
-│   └── pdfs/                          # Dépôt des PDF à indexer pour le RAG
-│       └── .gitkeep                  # (fichiers *.pdf non versionnés)
+├── scripts/
+│   ├── ingest.py                      # Ingestion PDF bulk (Python) — flag --author
+│   ├── fix_author_titles.py, fix_spaced_chunks.py, compute_umap.py
+│   ├── compute-ss-representatives.ts
+│   ├── import-sources.ts
+│   └── veille/                        # Pipeline veille — tourne dans GitHub Actions, pas sur Vercel
+│       ├── extract.ts                 # Job 1 : fetch RSS + OpenAlex + filtre finalisation
+│       ├── extract-semanticscholar.ts # Job 1b (optionnel) : recs Semantic Scholar
+│       ├── score.ts                   # Job 2 : embedding + match_chunks + match_author_chunks
+│       ├── score-author.ts            # Script rétroactif author_score
+│       ├── recap-articles.ts          # Job 3 : GPT analyse individuelle ≥75%
+│       └── recap-global.ts            # Job 4 : GPT synthèse globale
 │
-├── documentation/
-│   ├── STRUCTURE_ET_ARCHITECTURE.md   # Ce fichier
-│   ├── VEILLE.md                     # Veille : flux, stratégies RSS/HTML, garde-fous, tests
-│   ├── CARTE_CORPUS.md                # Carte du corpus : dataviz 2D (UMAP, scatter)
-│   ├── BACK_RAG.md                    # Back RAG (ingestion, recherche, génération, paramètres)
-│   └── HISTORIQUE_DECISIONS.md        # Synthèse des choix
+├── data/                              # Hors Git (voir .gitignore)
+│   ├── pdfs2/YEAR/                    # Corpus PDF, organisé par année de publication
+│   └── Articles auteur/YEAR/          # Articles publiés du chercheur
 │
-├── public/
-├── supabase/                     # Config locale / migrations (optionnel)
-│   └── migrations/
-├── .env.local                    # SUPABASE_URL, KEY, etc.
-├── next.config.js
-├── package.json
-└── tsconfig.json
+├── documentation/                     # Docs techniques détaillées (ce dossier)
+├── docs/                              # Vision, architecture, roadmap, décisions, glossaire
+├── context/                           # État de session, profil de travail, logs
+├── agents/                            # Guides spécialisés (session, debug)
+├── skills/                            # Recettes réutilisables
+├── supabase/migrations/               # 52 migrations SQL
+├── .github/workflows/veille-cron.yml  # Cron GitHub Actions, 7h UTC
+└── vercel.json                        # Cron retention, 4h UTC
 ```
 
-**Points validés :**
-
-- **Deux pages distinctes** : **RAG** (une page) et **Bibliographie / Veille** (une page) ; même layout, nav commune (RAG | Bibliographie).
-- **Documents** : gestion des PDFs (upload + liste) se trouve **dans la section Bibliographie** (`bibliographie/documents/`), pas en page racine.
-- **Veille** : **aucun fichier de config sources** ; tout est en base (Supabase). Liste des sources lue depuis la DB.
-- **Ingestion** (parse → chunk → embed après upload) : à détailler et implémenter plus tard.
+**Écarts avec l'ancien plan (pour mémoire)** :
+- Pas de page `rag/` dans le dashboard (retirée) ; la nav ne montre plus que Bibliographie / Analyse / Database.
+- Pas de `lib/veille/filter-urls-llm.ts` ni `extract-article-llm.ts` : le filtrage par LLM d'URLs scrapées a été abandonné au profit de flux RSS structurés + vérification de finalisation via OpenAlex/CrossRef (pas de LLM dans cette étape).
+- `documents/` (upload manuel PDF par le prof) n'est plus le flux principal d'ingestion : le corpus est alimenté par ingestion bulk Python (`scripts/ingest.py`), le module **Analyse** gère l'upload ponctuel côté utilisateur avec option d'intégration au corpus.
 
 ---
 
-## 4.1 Pipeline Veille (stratégie de scraping intelligent)
+## 5. Flux principaux
 
-Objectif : une pipeline **cohérente, stable et performante**, avec garde-fous pour ne pas surcharger (LLM, dédup, volume).
+### Veille (automatique, sans action utilisateur)
+Cron GitHub Actions 7h UTC → **Job 1** `extract.ts` (fetch sources RSS + OpenAlex direct, **fenêtre 3 jours** — `LOOKBACK_DAYS` dans `extract.ts` ; le pipeline legacy manuel reste à 7 jours, voir `PIPELINE_VEILLE_CONSOLIDE.md` §4 — filtre finalisation DOI via OpenAlex batch + fallback CrossRef, dédup DOI) → **Job 1b** optionnel `extract-semanticscholar.ts` en parallèle (recommandations SS basées sur `ss_representative_papers`) → **Job 2** `score.ts` (embedding abstract Xenova 384D → `match_chunks` + `match_author_chunks` en parallèle → `similarity_score` + `author_score` + `corpus_refs`) → **Job 3** `recap-articles.ts` (GPT-4o-mini sur articles ≥75% → `ai_analysis`) → **Job 4** `recap-global.ts` (GPT-4o-mini → synthèse `ai_summary`, run marqué `completed`) → front `/bibliographie` affiche les articles ≥75%, pagination, lu/non lu, évaluation pertinence manuelle.
 
-### Étapes prévues
+### Analyse (module Lecture assistée)
+Upload PDF → `POST /api/analyse/upload` (parse, chunk, embed, `document_analyses` status=ready, chunks `is_temp=true`) → `GET /api/analyse/[id]/insights` (résumé GPT + `corpus_refs` + `author_score` + références citées Semantic Scholar + recommandations SS, calcul parallèle avec cache) → page `/analyse/[id]` (4 onglets) → `POST /api/analyse/[id]/chat` (discussion streaming SSE, citations [N], sync scroll PDF) → `POST /api/analyse/[id]/integrate` (`is_temp=false`, intégration définitive au corpus).
 
-1. **Récupération des pages sources**  
-   URLs des sources récupérées depuis la DB → fetch HTML des pages (pas de config en dur).
-
-2. **Nettoyage HTML → extraction d’URLs**  
-   Nettoyer le code HTML pour extraire **uniquement les URLs** ; cibler en priorité les URLs susceptibles d’être des **pages d’article** (filtres heuristiques si besoin).
-
-3. **Filtrage des URLs par LLM**  
-   Envoyer la liste d’URLs candidates au LLM → le LLM ne renvoie **que les URLs de pages d’articles** (réduction du bruit, pas de surcharge avec du contenu inutile).
-
-4. **Extraction des données article (LLM)**  
-   Pour chaque URL de page article : récupérer le HTML → envoyer au LLM pour extraire **auteur(s), DOI, abstract, titre, etc.**  
-   Ne pas envoyer tout le HTML : éviter le contenu sans donnée utile (menus, pubs, footer) pour ne pas surcharger le LLM.
-
-5. **Garde-fous**  
-   - Ne pas scraper ce qui est **déjà en base** (dédup par **DOI** ; s’appuyer sur la DB pour couper / filtrer le flux en amont).  
-   - **Bloquer avant le LLM** : filtrage heuristique ou règles (ex. depuis la DB) pour ne pas envoyer de coûts inutiles au LLM.  
-   - Limiter la charge : rate limiting, quotas ; run asynchrone (peut durer longtemps).
-
-6. **À terme**  
-   - Comparer les sources récupérées avec la **DB vectorielle** pour une **analyse de similarité** (embedding abstract vs corpus → score → liste rankée).
-
-Sources très variées → scraping **le plus intelligent possible**, tout en maîtrisant coût et stabilité.
-
-### Décisions Veille (validées)
-
-| Sujet | Décision |
-|-------|----------|
-| **Déclenchement** | **UI** (bouton manuel) pour l’instant. Run peut durer très longtemps → prévoir **job asynchrone** (queue). |
-| **Run** | **Toutes les sources d’un coup** : une run = toutes les sources (pas une run par source). |
-| **Dédup** | **DOI suffit**. S’appuyer sur ce qu’on a en DB pour **couper le HTML / le flux** qu’on envoie au LLM : au trigger, les articles déjà présents (DOI en base) sont considérés comme déjà scrappés → garde-fou côté URL / DOI. |
-| **Filtrage URLs** | **Bloquer avant le LLM** (règles / heuristiques depuis la DB ou par source) pour éviter coûts inutiles ; à affiner selon qualité des réponses. |
-| **Extraction article** | **Bloc article seul** (pré-nettoyage type trafilatura / readability) puis envoi de ce bloc au LLM. **Schéma de sortie fixe** pour toutes les sources (ex. title, authors, doi, abstract, date). |
-| **Erreurs** | **Skip + log** : en cas d’échec (timeout, 403, LLM), on skip et on log, on continue. **Logs sur la ligne en DB** suffisent (ex. champ `last_error` sur item ou run), pas de table veille_errors dédiée pour le POC. |
-| **Similarité** | À terme : comparer les items récupérés avec la **DB vectorielle** pour analyse de similarité (score vs corpus → priorisation). |
+### Ingestion bulk (corpus général)
+`data/pdfs2/YEAR/` → `python3 scripts/ingest.py` (parse, chunk, embed, insert `documents`+`chunks`, rebuild IVFFlat automatique) ; `--author` pour `data/Articles auteur/` (puis relancer `compute-ss-representatives.ts` pour les recs Semantic Scholar).
 
 ---
 
-## 5. Flux principaux (rappel)
+## 6. Pour aller plus loin
 
-- **RAG** : Requête → **détection langue** (fr/en) → embedding → FTS + vector (EN ou FR selon lang) → fusion RRF → context → LLM (instruction « Réponds en français » / « en anglais ») → réponses + citations + lien Storage PDF.
-- **Veille** : Bouton UI → job asynchrone → lecture sources depuis Supabase → fetch HTML pages sources → nettoyage HTML → extraction URLs → **guardrails** (dédup DOI vs DB, pré-filtre URLs avant LLM) → LLM filtre URLs (pages articles uniquement) → pour chaque page article : pré-nettoyage bloc article → LLM extrait titre, auteurs, DOI, abstract, date (schéma fixe) ; skip + log en cas d’erreur → embedding abstract → **similarité vs DB vectorielle** → écriture `veille_items` (last_error si échec) → front affiche liste rankée avec URL.
-- **Documents / Ingestion RAG** : PDFs déposés dans **data/pdfs/** → processus d’ingestion lancé **à la main** → lecture du dossier, parse PDF (métadonnées extraites depuis le PDF), chunking, embeddings → écriture `documents` + `chunks` en base. `storage_path` = chemin relatif vers le fichier. Recherche possible ensuite par titre, DOI, auteurs. (À terme : possibilité d’ajouter des documents via l’interface.)
-
----
-
-## 6. Suite après validation
-
-- **Structure de dossiers et fichiers squelettes** : créée (app, lib, components, api, documentation).
-- **Doc Veille** : voir **VEILLE.md** (flux, stratégies, structure du code, tests).
-- Prochaines étapes : schéma SQL détaillé (migrations Supabase) si besoin ; implémentation par brique : auth → documents/upload → ingestion → RAG → veille.
+- Détail des seuils veille (75%, finalisation, etc.) : `documentation/PIPELINE_VEILLE_CONSOLIDE.md`.
+- Page Database (KPIs, cartographie, routes orphelines) : `documentation/DATABASE_PAGE.md`.
+- Schéma SQL complet : `documentation/SCHEMA_DB_ET_DONNEES.md`.
+- Historique des décisions d'architecture : `docs/DECISIONS.md`.
+- Roadmap et état d'avancement : `docs/ROADMAP.md`, `CLAUDE.md` (section "État actuel").
