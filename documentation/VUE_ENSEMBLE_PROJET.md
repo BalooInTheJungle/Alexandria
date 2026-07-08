@@ -62,7 +62,7 @@
 | **Structure** | Bien structurés : métadonnées (titre, auteurs, revue, DOI), sections, figures, tables |
 | **Cas marginaux** | PDF scannés → **OCR en fallback** à prévoir |
 
-> **Attention à ne pas confondre** avec le corpus **déjà ingéré dans Alexandria** à ce jour : ~3 700 documents corpus (années 2024-2026) + 521 articles auteur, selon `CLAUDE.md` (section "État actuel"). Le chiffre ci-dessus (~10 000, 20 ans) est l'archive personnelle complète du chercheur, cible finale de l'ingestion, pas l'état actuel de la base — une ingestion bulk plus large (2015-2026, ~15 000 PDFs) était en cours au 14/05/2026 selon les notes de session. Pour un chiffre à jour, se référer à `CLAUDE.md` ou interroger la base directement plutôt que ce document.
+> **Attention à ne pas confondre** avec le corpus **déjà ingéré dans Alexandria** à ce jour : ~3 700 documents corpus (années 2024-2026) + 521 articles auteur, selon `CLAUDE.md` (section "État actuel"). Le chiffre ci-dessus (~10 000, 20 ans) est l'archive personnelle complète du chercheur, cible finale de l'ingestion, pas l'état actuel de la base. Pour un chiffre à jour, se référer à `CLAUDE.md` ou interroger la base directement plutôt que ce document.
 
 ---
 
@@ -78,7 +78,7 @@ L'ancienne version de cette section décrivait 2 axes visés avant développemen
 - Résultat : liste d'articles ≥75% affichée sur `/bibliographie`, avec analyse IA individuelle (GPT-4o-mini) pour les mieux classés, et synthèse globale du jour.
 - Détail complet : `documentation/PIPELINE_VEILLE_CONSOLIDE.md`.
 
-### 5.2 Lecture assistée / Analyse (absent de la vision initiale)
+### 5.2 Analyse de document (absent de la vision initiale)
 
 Ce module n'existait pas dans le plan d'origine. Il permet d'uploader un PDF individuel (hors ingestion bulk) et d'obtenir : résumé structuré GPT, proximité avec le corpus, références citées croisées avec Semantic Scholar, discussion IA (chat), et une intégration en un clic au corpus permanent. Détail : `CLAUDE.md` (section Analyse), `documentation/BACK_RAG.md`.
 

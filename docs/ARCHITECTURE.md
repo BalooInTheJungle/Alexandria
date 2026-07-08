@@ -17,7 +17,7 @@ Next.js 14 (App Router) — hébergé sur Vercel
     │       app/(auth)/login               → login Supabase Auth
     │       app/(dashboard)/bibliographie  → veille + historique runs + sources
     │       app/(dashboard)/database       → KPIs corpus, UMAP, analytics
-    │       app/(dashboard)/analyse        → upload PDF + lecture assistée + analyse
+    │       app/(dashboard)/analyse        → upload PDF + analyse de document
     │         └── [id]/page.tsx            → 4 onglets : Proximité / Résumé / Discussion / Aller plus loin
     │
     └── API Routes
@@ -60,8 +60,8 @@ Scripts Python (manuels, hors Vercel)
 | `document_analyses` | Analyses de documents uploadés (summary, corpus_refs, cited_refs, ss_recs, is_integrated) |
 | `ss_representative_papers` | Articles auteur représentatifs pour les recommandations Semantic Scholar |
 | `rag_settings` | Paramètres dynamiques RAG (seuils, poids, k) — legacy, utilisé par /api/rag/* |
-| `conversations` | Sessions de chat RAG — toujours écrites par l'onglet Discussion du module Analyse (0 lignes constatées en base au 06/07/2026, pas parce que la fonctionnalité est retirée, mais probablement peu utilisée / nettoyée) |
-| `messages` | Messages user + assistant — idem, table active mais vide au 06/07/2026 |
+| `conversations` | Sessions de chat RAG — legacy, utilisées uniquement par les routes `/api/rag/conversations/*`. Le chat de l'onglet Discussion du module Analyse (`/api/analyse/[id]/chat`) n'y écrit jamais (0 lignes constatées en base au 06/07/2026 : normal, pas un signe de sous-utilisation) |
+| `messages` | Messages user + assistant — idem, table legacy `/api/rag/*` uniquement, non utilisée par le module Analyse |
 
 ### Table chunks (critique)
 

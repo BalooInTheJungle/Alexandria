@@ -11,7 +11,7 @@
 | Module | Rôle |
 |--------|------|
 | **Veille** | 49 sources actives (44 RSS + 2 OpenAlex + 1 Semantic Scholar, dont 2 RSS orphelines non fonctionnelles) → scoring sémantique quotidien vs corpus → synthèse IA |
-| **Lecture assistée / Analyse** | Upload PDF → résumé structuré + discussion IA + citations cliquables + PDF scroll sync + intégration corpus |
+| **Analyse de document** | Upload PDF → résumé structuré + discussion IA + citations cliquables + PDF scroll sync + intégration corpus |
 | **Database** | KPIs corpus, carte UMAP 2D, comparaison articles auteur vs corpus |
 
 Le chatbot RAG autonome (page `/rag`) a été **retiré du front en juin 2026** : la tuyauterie (`lib/rag/`, `app/api/rag/`) est conservée et **réutilisée par le module Analyse** (recherche hybride, citations, réglages).
@@ -161,7 +161,7 @@ alexandria/
 ### Veille (automatique, sans action utilisateur)
 Cron GitHub Actions 7h UTC → **Job 1** `extract.ts` (fetch sources RSS + OpenAlex direct, **fenêtre 3 jours** — `LOOKBACK_DAYS` dans `extract.ts` ; le pipeline legacy manuel reste à 7 jours, voir `PIPELINE_VEILLE_CONSOLIDE.md` §4 — filtre finalisation DOI via OpenAlex batch + fallback CrossRef, dédup DOI) → **Job 1b** optionnel `extract-semanticscholar.ts` en parallèle (recommandations SS basées sur `ss_representative_papers`) → **Job 2** `score.ts` (embedding abstract Xenova 384D → `match_chunks` + `match_author_chunks` en parallèle → `similarity_score` + `author_score` + `corpus_refs`) → **Job 3** `recap-articles.ts` (GPT-4o-mini sur articles ≥75% → `ai_analysis`) → **Job 4** `recap-global.ts` (GPT-4o-mini → synthèse `ai_summary`, run marqué `completed`) → front `/bibliographie` affiche les articles ≥75%, pagination, lu/non lu, évaluation pertinence manuelle.
 
-### Analyse (module Lecture assistée)
+### Analyse (module Analyse de document)
 Upload PDF → `POST /api/analyse/upload` (parse, chunk, embed, `document_analyses` status=ready, chunks `is_temp=true`) → `GET /api/analyse/[id]/insights` (résumé GPT + `corpus_refs` + `author_score` + références citées Semantic Scholar + recommandations SS, calcul parallèle avec cache) → page `/analyse/[id]` (4 onglets) → `POST /api/analyse/[id]/chat` (discussion streaming SSE, citations [N], sync scroll PDF) → `POST /api/analyse/[id]/integrate` (`is_temp=false`, intégration définitive au corpus).
 
 ### Ingestion bulk (corpus général)

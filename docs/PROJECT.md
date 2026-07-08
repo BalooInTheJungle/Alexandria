@@ -10,12 +10,12 @@ Référence : vision, utilisateurs, flows d'usage.
 |---------|-------------|
 | **Porteur** | Chercheur CNRS — Molecular Materials & Magnetism |
 | **Problème** | 1h30/semaine de veille manuelle, ~10 000 articles accumulés sur 20 ans, capital scientifique inexploité |
-| **Solution** | Outil cloud unique : veille automatisée + lecture assistée + analyse approfondie |
+| **Solution** | Outil cloud unique : veille automatisée + analyse de document |
 | **Hébergement** | Cloud uniquement (Supabase + Vercel) — pas d'on-prem |
 
 ---
 
-## Trois modules fonctionnels
+## Deux modules fonctionnels
 
 ### Module 1 — Veille bibliographique (automatisée)
 Surveiller la littérature mondiale et ne remonter que ce qui est pertinent pour le chercheur :
@@ -25,17 +25,13 @@ Surveiller la littérature mondiale et ne remonter que ce qui est pertinent pour
 - Synthèse IA quotidienne (thèmes + analyse individuelle des articles ≥ 75%, top 8/jour max ; synthèse globale des thèmes ≥ 80%)
 - Lecture/non-lu par article, historique des runs
 
-### Module 2 — Lecture assistée (sur upload PDF)
-Aider le chercheur à comprendre et contextualiser un article pertinent :
+### Module 2 — Analyse de document (sur upload PDF)
+Aider le chercheur à comprendre, contextualiser et croiser un article pertinent avec sa bibliographie existante :
 - Upload PDF (max 20 Mo) → parse → chunk → embed EN (384D)
 - Résumé structuré GPT : tldr / problème & contexte / méthodes / résultats / discussion & limites
 - Passages corpus les plus proches (match_chunks sur embedding moyen de l'article)
 - Discussion IA en langage naturel : questions libres, citations `[N]` cliquables, scroll PDF synchronisé
-
-### Module 3 — Analyse approfondie (sur le même article)
-Croiser l'article analysé avec la bibliographie existante :
-- Références citées dans l'article : croisement avec le corpus (DOI matching)
-- Métadonnées Semantic Scholar pour chaque référence (titre, auteurs, année)
+- Références citées dans l'article : croisement avec le corpus (DOI matching) + métadonnées Semantic Scholar (titre, auteurs, année)
 - Recommandations Semantic Scholar (10 articles similaires)
 - Intégration corpus : les chunks temporaires deviennent permanents d'un clic
 
@@ -45,7 +41,7 @@ Croiser l'article analysé avec la bibliographie existante :
 
 | Persona | Besoins | Contraintes |
 |---------|---------|-------------|
-| **Chercheur (porteur)** | Veille quotidienne + lecture assistée + analyse | Temps limité, critères exigeants |
+| **Chercheur (porteur)** | Veille quotidienne + analyse de document | Temps limité, critères exigeants |
 | **Système (cron)** | Pipeline veille GitHub Actions | Coût maîtrisé, 9h Paris chaque matin |
 
 Login obligatoire (Supabase Auth) pour tout accès. Page publique `/` accessible sans connexion.
@@ -63,7 +59,7 @@ Login obligatoire (Supabase Auth) pour tout accès. Page publique `/` accessible
 6. Job 4 : GPT synthèse globale sur les articles ≥ **80%** ayant un `ai_analysis` → `ai_summary` dans `veille_runs` (seuil différent de l'analyse individuelle, voir `PIPELINE_VEILLE_CONSOLIDE.md`)
 7. Chercheur voit la liste `/bibliographie` → articles ≥ 75% → marque lu, consulte le détail run
 
-### Flow Lecture assistée + Analyse
+### Flow Analyse de document
 1. Chercheur va sur `/analyse` → upload PDF
 2. `POST /api/analyse/upload` → parse → chunk → embed → stocke dans `document_analyses` + `chunks (is_temp=true)`
 3. Page `/analyse/[id]` se charge → appelle `GET /api/analyse/[id]/insights`

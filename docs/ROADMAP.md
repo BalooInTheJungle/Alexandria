@@ -87,7 +87,7 @@ Plan d'évolution. Mettre à jour à chaque jalon atteint.
 
 ---
 
-## V1.9 — Module Lecture assistée + Analyse ✅ (terminé — Juin 2026)
+## V1.9 — Module Analyse de document ✅ (terminé — Juin 2026)
 
 **Objectif** : aider le chercheur à lire et contextualiser un article pertinent via upload PDF.
 

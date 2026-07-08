@@ -134,7 +134,7 @@ CREATE INDEX CONCURRENTLY idx_chunks_embedding
 - 2015-2026 : ~7,4 Go → compatible plan Pro
 - Choix retenu (à l'époque) : **2015-2026** (~15 477 PDFs), ingestion lancée le 14/05/2026
 
-**⚠️ Ce n'est pas l'état final.** Vérifié en base le 06/07/2026 : la table `documents` contient **3 887 documents corpus** (dont 3 798 réellement datés 2024-2026, le reste étant du bruit métadonnées/placeholders) **+ 521 articles auteur** = 4 408 documents, **849 454 chunks**. Le plan "2015-2026, ~15 477 PDFs" décrit ici n'a donc pas été conservé tel quel — soit l'ingestion bulk a été interrompue et redémarrée sur un périmètre plus restreint (2024-2026), soit une purge/`TRUNCATE` a suivi ce run pour rester sous la limite Supabase Pro. **Cette décision est à mettre à jour** avec la raison réelle du changement de périmètre si elle est reconnue — actuellement cette doc et l'état réel de la base divergent sans explication tracée.
+**Mise à jour** : le plan "2015-2026, ~15 477 PDFs" lancé le 14/05/2026 n'a pas été conservé — cet essai est abandonné et sans suite. Vérifié en base le 06/07/2026 : la table `documents` contient **3 887 documents corpus** (dont 3 798 réellement datés 2024-2026) **+ 521 articles auteur** = 4 408 documents, **849 454 chunks**. C'est l'état actuel de référence ; toute nouvelle extension de corpus repart de là.
 
 ---
 

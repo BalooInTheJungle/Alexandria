@@ -1,12 +1,11 @@
 # CLAUDE.md — Alexandria
 
-Outil d'aide à la recherche scientifique : veille automatisée + lecture assistée + analyse approfondie sur corpus PDF.
+Outil d'aide à la recherche scientifique : veille automatisée + analyse de document sur corpus PDF.
 Porteur : chercheur CNRS (Molecular Materials & Magnetism). Stack : Next.js 14, Supabase, OpenAI.
 
-**3 modules actifs :**
+**2 modules actifs :**
 - **Veille** — 44 sources RSS + Semantic Scholar, scoring sémantique quotidien, synthèse IA
-- **Lecture assistée** — upload PDF → résumé structuré + discussion IA + citations cliquables + PDF scroll sync
-- **Analyse** — proximité corpus + références croisées + recommandations Semantic Scholar + intégration corpus
+- **Analyse de document** — upload PDF → résumé structuré + discussion IA + citations cliquables + PDF scroll sync + proximité corpus + références croisées + recommandations Semantic Scholar + intégration corpus
 
 > ⚠️ Le chatbot RAG (`/rag`) a été retiré du front en juin 2026. La tuyauterie (`lib/rag/`, `/api/rag/`) reste pour les routes Analyse.
 

@@ -68,7 +68,7 @@ Historique des sessions de développement. Une entrée par session significative
 - Index HNSW : **présents** (à dropper avant prochaine ingestion bulk)
 - PDFs restants à ingérer : ~15 477 (dans `data/pdfs/2015/` → `data/pdfs/2026/`)
 
-> **Suite (vérifiée en base le 06/07/2026)** : cette cible de ~15 477 PDFs (2015-2026) n'a pas été atteinte telle quelle — le corpus final ne compte que 3 887 documents (quasi tous 2024-2026). Voir `docs/DECISIONS.md` D13 pour la divergence constatée, non expliquée dans les logs de session suivants.
+> **Suite (vérifiée en base le 06/07/2026)** : cette cible de ~15 477 PDFs (2015-2026) est un ancien essai abandonné, sans suite. Le corpus de référence actuel compte 3 887 documents (quasi tous 2024-2026) + 521 articles auteur. Voir `docs/DECISIONS.md` D13.
 
 ### Décisions techniques prises
 - D11 : pas de traduction EN→FR pour l'ingestion bulk
